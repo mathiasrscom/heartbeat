@@ -1,6 +1,9 @@
-import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
+import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TanStackDevtools } from "@tanstack/react-devtools";
+import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/app-sidebar";
+import { Separator } from "@/components/ui/separator";
 
 import appCss from "../styles.css?url";
 
@@ -15,7 +18,7 @@ export const Route = createRootRoute({
         content: "width=device-width, initial-scale=1",
       },
       {
-        title: "TanStack Start Starter",
+        title: "Heartbeat",
       },
     ],
     links: [
@@ -27,6 +30,7 @@ export const Route = createRootRoute({
   }),
 
   shellComponent: RootDocument,
+  component: RootLayout,
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
@@ -51,5 +55,27 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         <Scripts />
       </body>
     </html>
+  );
+}
+
+function RootLayout() {
+  return (
+    <SidebarProvider>
+      <div className="flex h-screen w-full bg-background">
+        <AppSidebar />
+        <SidebarInset>
+          {/* Top bar with sidebar trigger */}
+          <header className="flex h-14 items-center gap-2 border-b px-4">
+            <SidebarTrigger />
+            <Separator orientation="vertical" className="h-6" />
+            <div className="flex-1" />
+          </header>
+          {/* Main content */}
+          <main className="flex-1 overflow-auto">
+            <Outlet />
+          </main>
+        </SidebarInset>
+      </div>
+    </SidebarProvider>
   );
 }

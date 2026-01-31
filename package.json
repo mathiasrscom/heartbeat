@@ -14,7 +14,9 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:pull": "drizzle-kit pull",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "workers": "tsx jobs/index.ts",
+    "dev:all": "concurrently \"pnpm dev\" \"pnpm workers\""
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.6",
@@ -37,7 +39,14 @@
     "tailwind-merge": "^3.0.2",
     "tailwindcss": "^4.0.6",
     "tw-animate-css": "^1.3.6",
-    "vite-tsconfig-paths": "^6.0.2"
+    "vite-tsconfig-paths": "^6.0.2",
+    "bullmq": "^5.30.0",
+    "ioredis": "^5.4.1",
+    "@ai-sdk/openai": "^1.0.0",
+    "@ai-sdk/anthropic": "^1.0.0",
+    "ai": "^4.0.0",
+    "date-fns": "^4.1.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.2.4",
@@ -55,6 +64,7 @@
     "typescript": "^5.7.2",
     "vite": "^7.1.7",
     "vitest": "^3.0.5",
-    "web-vitals": "^5.1.0"
+    "web-vitals": "^5.1.0",
+    "concurrently": "^9.1.0"
   }
 }
