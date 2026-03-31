@@ -14,22 +14,31 @@ import {
 } from "@/components/ui/sidebar"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
-  Target,
-  Zap,
+  LayoutDashboard,
   Settings,
   ChevronsUpDown,
+  Monitor,
+  LineChart,
 } from "lucide-react"
 
-const mainNav = [
+const primaryNav = [
   {
-    label: "Focus",
+    label: "Dashboard",
     href: "/",
-    icon: Target,
+    icon: LayoutDashboard,
+  },
+]
+
+const wallboardNav = [
+  {
+    label: "Live Wallboard",
+    href: "/wallboard/live",
+    icon: Monitor,
   },
   {
-    label: "Actions",
-    href: "/actions",
-    icon: Zap,
+    label: "Trends Wallboard",
+    href: "/wallboard/trends",
+    icon: LineChart,
   },
 ]
 
@@ -52,12 +61,32 @@ export function AppSidebar() {
 
       {/* Main content */}
       <SidebarContent>
-        {/* Main navigation */}
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel>Overview</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {mainNav.map((item) => {
+              {primaryNav.map((item) => {
+                const isActive = location.pathname === item.href
+                return (
+                  <SidebarMenuItem key={item.href}>
+                    <Link to={item.href}>
+                      <SidebarMenuButton isActive={isActive} tooltip={item.label}>
+                        <item.icon className="h-4 w-4" />
+                        <SidebarMenuButtonText>{item.label}</SidebarMenuButtonText>
+                      </SidebarMenuButton>
+                    </Link>
+                  </SidebarMenuItem>
+                )
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Wallboards</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {wallboardNav.map((item) => {
                 const isActive = location.pathname === item.href
                 return (
                   <SidebarMenuItem key={item.href}>

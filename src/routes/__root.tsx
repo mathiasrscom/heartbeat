@@ -1,4 +1,10 @@
-import { HeadContent, Outlet, Scripts, createRootRoute } from "@tanstack/react-router";
+import {
+  HeadContent,
+  Outlet,
+  Scripts,
+  createRootRoute,
+  useLocation,
+} from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import { SidebarProvider, SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
@@ -59,6 +65,12 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 }
 
 function RootLayout() {
+  const location = useLocation()
+
+  if (location.pathname.startsWith("/wallboard/")) {
+    return <Outlet />
+  }
+
   return (
     <SidebarProvider>
       <div className="flex h-screen w-full bg-background">

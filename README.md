@@ -1,12 +1,64 @@
-Welcome to your new TanStack app! 
+Welcome to Heartbeat.
 
 # Getting Started
 
-To run this application:
+## Local setup
+
+1. Install dependencies:
 
 ```bash
 pnpm install
+```
+
+2. Copy the environment template:
+
+```bash
+cp .env.example .env
+```
+
+3. Start Postgres with Docker Compose:
+
+```bash
+docker compose up -d
+```
+
+4. Apply the database schema:
+
+```bash
+pnpm db:push
+```
+
+5. Start the app:
+
+```bash
 pnpm dev
+```
+
+If you want the 5-minute Intercom worker locally as well, run:
+
+```bash
+pnpm dev:all
+```
+
+## Database
+
+The repo ships with a local Postgres service in [docker-compose.yml](./docker-compose.yml).
+It uses the `pgvector/pgvector` image so the `vector` extension is available from day one.
+The extension is enabled automatically on first boot via
+[docker/postgres/init/01-enable-extensions.sql](./docker/postgres/init/01-enable-extensions.sql).
+
+Common commands:
+
+```bash
+docker compose up -d
+docker compose ps
+docker compose down
+```
+
+If you need a completely fresh database, remove the named volume as well:
+
+```bash
+docker compose down -v
 ```
 
 # Building For Production
@@ -61,9 +113,10 @@ pnpm dlx shadcn@latest add button
 
 2. Visit the [Better Auth documentation](https://www.better-auth.com) to unlock the full potential of authentication in your app.
 
-### Adding a Database (Optional)
+### Adding a Database
 
-Better Auth can work in stateless mode, but to persist user data, add a database:
+Heartbeat expects `DATABASE_URL` to point at Postgres. The default local value in
+`.env.example` matches the Docker Compose service:
 
 ```typescript
 // src/lib/auth.ts

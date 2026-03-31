@@ -10,8 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
-import { Route as ActionsRouteImport } from './routes/actions'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WallboardTrendsRouteImport } from './routes/wallboard/trends'
+import { Route as WallboardLiveRouteImport } from './routes/wallboard/live'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -19,14 +20,19 @@ const SettingsRoute = SettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ActionsRoute = ActionsRouteImport.update({
-  id: '/actions',
-  path: '/actions',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WallboardTrendsRoute = WallboardTrendsRouteImport.update({
+  id: '/wallboard/trends',
+  path: '/wallboard/trends',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WallboardLiveRoute = WallboardLiveRouteImport.update({
+  id: '/wallboard/live',
+  path: '/wallboard/live',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
@@ -37,35 +43,55 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/actions': typeof ActionsRoute
   '/settings': typeof SettingsRoute
+  '/wallboard/live': typeof WallboardLiveRoute
+  '/wallboard/trends': typeof WallboardTrendsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/actions': typeof ActionsRoute
   '/settings': typeof SettingsRoute
+  '/wallboard/live': typeof WallboardLiveRoute
+  '/wallboard/trends': typeof WallboardTrendsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/actions': typeof ActionsRoute
   '/settings': typeof SettingsRoute
+  '/wallboard/live': typeof WallboardLiveRoute
+  '/wallboard/trends': typeof WallboardTrendsRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/actions' | '/settings' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/settings'
+    | '/wallboard/live'
+    | '/wallboard/trends'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/actions' | '/settings' | '/api/auth/$'
-  id: '__root__' | '/' | '/actions' | '/settings' | '/api/auth/$'
+  to:
+    | '/'
+    | '/settings'
+    | '/wallboard/live'
+    | '/wallboard/trends'
+    | '/api/auth/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/settings'
+    | '/wallboard/live'
+    | '/wallboard/trends'
+    | '/api/auth/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  ActionsRoute: typeof ActionsRoute
   SettingsRoute: typeof SettingsRoute
+  WallboardLiveRoute: typeof WallboardLiveRoute
+  WallboardTrendsRoute: typeof WallboardTrendsRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -78,18 +104,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/actions': {
-      id: '/actions'
-      path: '/actions'
-      fullPath: '/actions'
-      preLoaderRoute: typeof ActionsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wallboard/trends': {
+      id: '/wallboard/trends'
+      path: '/wallboard/trends'
+      fullPath: '/wallboard/trends'
+      preLoaderRoute: typeof WallboardTrendsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wallboard/live': {
+      id: '/wallboard/live'
+      path: '/wallboard/live'
+      fullPath: '/wallboard/live'
+      preLoaderRoute: typeof WallboardLiveRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/auth/$': {
@@ -104,8 +137,9 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  ActionsRoute: ActionsRoute,
   SettingsRoute: SettingsRoute,
+  WallboardLiveRoute: WallboardLiveRoute,
+  WallboardTrendsRoute: WallboardTrendsRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

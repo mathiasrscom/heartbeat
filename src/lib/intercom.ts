@@ -6,6 +6,7 @@
  */
 
 const INTERCOM_API_BASE = "https://api.intercom.io"
+const INTERCOM_API_VERSION = "2.14"
 
 interface IntercomConfig {
   accessToken: string
@@ -17,6 +18,8 @@ export interface IntercomConversation {
   type: "conversation"
   created_at: number
   updated_at: number
+  waiting_since?: number | null
+  snoozed_until?: number | null
   state: "open" | "closed" | "snoozed"
   priority: "priority" | "not_priority" | null
   source: {
@@ -43,6 +46,10 @@ export interface IntercomConversation {
     name?: string
     email?: string
   }
+  team?: {
+    id: string
+    name?: string
+  }
   team_assignee_id?: string
   tags: {
     tags: Array<{
@@ -53,12 +60,63 @@ export interface IntercomConversation {
   statistics?: {
     first_contact_reply_at?: number
     first_admin_reply_at?: number
+    last_contact_reply_at?: number
+    last_admin_reply_at?: number
     time_to_first_reply?: number
+    time_to_admin_reply?: number
+    time_to_last_close?: number
+    time_to_first_close?: number
+  }
+  sla_applied?: {
+    sla_name?: string
+    sla_status?: string | null
+    first_response?: {
+      due_at?: number | null
+    }
   }
   conversation_rating?: {
     rating: number
     remark?: string
     created_at: number
+  }
+}
+
+export interface IntercomTicket {
+  id: string
+  type: "ticket"
+  ticket_id?: string
+  category?: string
+  open?: boolean
+  created_at: number
+  updated_at: number
+  ticket_attributes?: Record<string, unknown>
+  ticket_state?:
+    | string
+    | {
+        id?: string
+        name?: string
+        state?: string
+      }
+    | null
+  ticket_state_internal_label?: string
+  ticket_state_external_label?: string
+  ticket_type?: {
+    id: string
+    name?: string
+  } | null
+  contacts?: {
+    contacts: Array<{
+      id: string
+      external_id?: string
+    }>
+  }
+  admin_assignee_id?: string | null
+  team_assignee_id?: string | null
+  tags?: {
+    tags: Array<{
+      id: string
+      name: string
+    }>
   }
 }
 
@@ -88,12 +146,24 @@ export interface IntercomAdmin {
   team_ids?: string[]
 }
 
+export interface IntercomTeam {
+  id: string
+  type: "team"
+  name: string
+}
+
 export interface IntercomListResponse<T> {
   type: "list" | "conversation.list"
   data?: T[]
   conversations?: T[]
+  tickets?: T[]
   pages?: {
-    next?: string
+    next?:
+      | string
+      | {
+          starting_after?: string
+          page?: number
+        }
     page: number
     per_page: number
     total_pages: number
@@ -116,6 +186,7 @@ export function createIntercomClient(config: IntercomConfig) {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         Accept: "application/json",
+        "Intercom-Version": INTERCOM_API_VERSION,
         ...options.headers,
       },
     })
@@ -182,9 +253,29 @@ export function createIntercomClient(config: IntercomConfig) {
       return request(`/contacts/${id}`)
     },
 
+    async listTickets(params?: {
+      per_page?: number
+      starting_after?: string
+    }): Promise<IntercomListResponse<IntercomTicket>> {
+      const searchParams = new URLSearchParams()
+      if (params?.per_page) searchParams.set("per_page", String(params.per_page))
+      if (params?.starting_after) searchParams.set("starting_after", params.starting_after)
+
+      const query = searchParams.toString()
+      return request(`/tickets${query ? `?${query}` : ""}`)
+    },
+
+    async getTicket(id: string): Promise<IntercomTicket> {
+      return request(`/tickets/${id}`)
+    },
+
     // List admins (team members)
     async listAdmins(): Promise<IntercomListResponse<IntercomAdmin>> {
       return request("/admins")
+    },
+
+    async listTeams(): Promise<IntercomListResponse<IntercomTeam>> {
+      return request("/teams")
     },
 
     // Get current admin (for testing auth)

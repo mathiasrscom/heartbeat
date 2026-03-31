@@ -1,14 +1,20 @@
 /**
  * Intercom Sync Logic
  *
- * Syncs conversations, contacts, and team members from Intercom
- * into our local database for analysis.
+ * Syncs conversations, tickets, contacts, and team members from Intercom
+ * into the local database for wallboard reporting.
  */
 
-import { db } from "@/db"
-import { entities, teamMembers, nodes, syncState } from "@/db/schema"
-import { createIntercomClient, type IntercomConversation, type IntercomContact, type IntercomAdmin } from "./intercom"
 import { eq } from "drizzle-orm"
+import { db } from "@/db"
+import { entities, nodes, syncState, teamMembers } from "@/db/schema"
+import {
+  createIntercomClient,
+  type IntercomAdmin,
+  type IntercomContact,
+  type IntercomConversation,
+  type IntercomTicket,
+} from "./intercom"
 
 interface SyncResult {
   success: boolean
@@ -21,73 +27,110 @@ interface SyncResult {
 export async function syncIntercom(accessToken: string): Promise<SyncResult> {
   const client = createIntercomClient({ accessToken })
   const errors: string[] = []
+  const teamNamesById = new Map<string, string>()
   let nodesSynced = 0
   let entitiesSynced = 0
   let teamMembersSynced = 0
 
   try {
-    // 1. Sync team members (admins)
-    console.log("Syncing team members...")
     try {
-      const adminsResponse = await client.listAdmins()
-      const admins = adminsResponse.data || []
-
-      for (const admin of admins) {
-        await upsertTeamMember(admin)
-        teamMembersSynced++
+      const teamsResponse = await client.listTeams()
+      for (const team of teamsResponse.data || []) {
+        teamNamesById.set(team.id, team.name)
       }
-    } catch (err) {
-      errors.push(`Team members sync failed: ${err}`)
+    } catch (error) {
+      errors.push(`Teams sync failed: ${error}`)
     }
 
-    // 2. Sync conversations (with pagination)
-    console.log("Syncing conversations...")
-    let hasMore = true
-    let cursor: string | undefined
+    try {
+      const adminsResponse = await client.listAdmins()
+      for (const admin of adminsResponse.data || []) {
+        await upsertTeamMember(admin, teamNamesById)
+        teamMembersSynced++
+      }
+    } catch (error) {
+      errors.push(`Team members sync failed: ${error}`)
+    }
 
-    while (hasMore) {
+    const conversationIds = new Set<string>()
+
+    let hasMoreConversations = true
+    let conversationCursor: string | undefined
+    while (hasMoreConversations) {
       try {
         const response = await client.listConversations({
           per_page: 50,
-          starting_after: cursor,
+          starting_after: conversationCursor,
         })
-
         const conversations = response.conversations || response.data || []
 
-        for (const conv of conversations) {
-          // Sync the contact as an entity
-          if (conv.contacts?.contacts?.[0]) {
+        for (const conversation of conversations) {
+          conversationIds.add(conversation.id)
+
+          const contactId = conversation.contacts?.contacts?.[0]?.id
+          if (contactId) {
             try {
-              const contact = await client.getContact(conv.contacts.contacts[0].id)
+              const contact = await client.getContact(contactId)
               await upsertEntity(contact)
               entitiesSynced++
-            } catch (err) {
-              // Contact might not exist, skip
+            } catch {
+              // Skip missing contacts. We still want the conversation node.
             }
           }
 
-          // Sync the conversation as a node
-          await upsertNode(conv)
+          await upsertConversationNode(conversation)
           nodesSynced++
         }
 
-        // Check for more pages
-        if (response.pages?.next) {
-          cursor = response.pages.next
-        } else {
-          hasMore = false
-        }
-
-        // Rate limiting - be nice to the API
+        conversationCursor = getNextCursor(response.pages?.next)
+        hasMoreConversations = Boolean(conversationCursor)
         await sleep(100)
-      } catch (err) {
-        errors.push(`Conversations sync failed: ${err}`)
-        hasMore = false
+      } catch (error) {
+        errors.push(`Conversations sync failed: ${error}`)
+        hasMoreConversations = false
       }
     }
 
-    // 3. Update sync state
-    await updateSyncState(nodesSynced, entitiesSynced, teamMembersSynced)
+    let hasMoreTickets = true
+    let ticketCursor: string | undefined
+    while (hasMoreTickets) {
+      try {
+        const response = await client.listTickets({
+          per_page: 50,
+          starting_after: ticketCursor,
+        })
+        const tickets = response.tickets || response.data || []
+
+        for (const ticket of tickets) {
+          if (conversationIds.has(ticket.id)) {
+            continue
+          }
+
+          const contactId = ticket.contacts?.contacts?.[0]?.id
+          if (contactId) {
+            try {
+              const contact = await client.getContact(contactId)
+              await upsertEntity(contact)
+              entitiesSynced++
+            } catch {
+              // Skip missing contacts. We still want the ticket node.
+            }
+          }
+
+          await upsertTicketNode(ticket)
+          nodesSynced++
+        }
+
+        ticketCursor = getNextCursor(response.pages?.next)
+        hasMoreTickets = Boolean(ticketCursor)
+        await sleep(100)
+      } catch (error) {
+        errors.push(`Tickets sync failed: ${error}`)
+        hasMoreTickets = false
+      }
+    }
+
+    await updateSyncState(nodesSynced, entitiesSynced, teamMembersSynced, errors)
 
     return {
       success: errors.length === 0,
@@ -96,30 +139,56 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
       teamMembersSynced,
       errors,
     }
-  } catch (err) {
+  } catch (error) {
+    const syncError = `Sync failed: ${error}`
+    const allErrors = [...errors, syncError]
+    await updateSyncState(nodesSynced, entitiesSynced, teamMembersSynced, allErrors)
+
     return {
       success: false,
       nodesSynced,
       entitiesSynced,
       teamMembersSynced,
-      errors: [`Sync failed: ${err}`],
+      errors: allErrors,
     }
   }
 }
 
-// Upsert a team member
-async function upsertTeamMember(admin: IntercomAdmin) {
+function getNextCursor(
+  next:
+    | string
+    | {
+        starting_after?: string
+        page?: number
+      }
+    | undefined
+) {
+  if (typeof next === "string") return next
+  return next?.starting_after
+}
+
+async function upsertTeamMember(
+  admin: IntercomAdmin,
+  teamNamesById: Map<string, string>
+) {
   const existing = await db
     .select()
     .from(teamMembers)
     .where(eq(teamMembers.externalId, admin.id))
     .limit(1)
 
+  const teamName =
+    admin.team_ids
+      ?.map((teamId) => teamNamesById.get(teamId))
+      .filter((name): name is string => Boolean(name))
+      .join(", ") || null
+
   const data = {
     externalId: admin.id,
     source: "intercom" as const,
     name: admin.name,
     email: admin.email,
+    teamName,
     updatedAt: new Date(),
   }
 
@@ -136,7 +205,6 @@ async function upsertTeamMember(admin: IntercomAdmin) {
   }
 }
 
-// Upsert an entity (contact/customer)
 async function upsertEntity(contact: IntercomContact) {
   const existing = await db
     .select()
@@ -144,7 +212,6 @@ async function upsertEntity(contact: IntercomContact) {
     .where(eq(entities.externalId, contact.id))
     .limit(1)
 
-  // Try to extract plan from custom attributes
   const plan = contact.custom_attributes?.plan as string | undefined
   const mrr = contact.custom_attributes?.mrr as number | undefined
 
@@ -156,9 +223,11 @@ async function upsertEntity(contact: IntercomContact) {
     name: contact.name || null,
     value: {
       plan: plan || null,
+      tier: normalizeTier(plan),
       mrr: mrr || null,
       company: contact.companies?.companies?.[0]?.name || null,
     },
+    rawData: contact as unknown as Record<string, unknown>,
     updatedAt: new Date(),
   }
 
@@ -175,83 +244,191 @@ async function upsertEntity(contact: IntercomContact) {
   }
 }
 
-// Upsert a node from conversation
-async function upsertNode(conv: IntercomConversation) {
+function normalizeTier(plan?: string | null) {
+  if (!plan) return "unknown"
+  const normalized = plan.toLowerCase()
+  if (
+    normalized === "free" ||
+    normalized === "starter" ||
+    normalized === "pro" ||
+    normalized === "enterprise"
+  ) {
+    return normalized
+  }
+  return "unknown"
+}
+
+async function resolveEntityId(contactId?: string) {
+  if (!contactId) return null
+
+  const entity = await db
+    .select()
+    .from(entities)
+    .where(eq(entities.externalId, contactId))
+    .limit(1)
+
+  return entity[0]?.id ?? null
+}
+
+async function resolveAssigneeId(adminId?: string | null) {
+  if (!adminId) return null
+
+  const assignee = await db
+    .select()
+    .from(teamMembers)
+    .where(eq(teamMembers.externalId, adminId))
+    .limit(1)
+
+  return assignee[0]?.id ?? null
+}
+
+function mapConversationStatus(state: IntercomConversation["state"]) {
+  if (state === "snoozed") return "pending" as const
+  if (state === "closed") return "closed" as const
+  return "open" as const
+}
+
+function mapTicketStatus(ticket: IntercomTicket) {
+  if (ticket.open === false) return "closed" as const
+
+  const stateValue =
+    typeof ticket.ticket_state === "string"
+      ? ticket.ticket_state
+      : ticket.ticket_state?.state || ticket.ticket_state?.name
+
+  const normalized = stateValue?.toLowerCase() || ""
+  if (normalized.includes("resolved")) return "resolved" as const
+  if (normalized.includes("closed")) return "closed" as const
+  if (normalized.includes("customer")) return "pending" as const
+  return "open" as const
+}
+
+async function upsertConversationNode(conversation: IntercomConversation) {
   const existing = await db
     .select()
     .from(nodes)
-    .where(eq(nodes.externalId, conv.id))
+    .where(eq(nodes.externalId, conversation.id))
     .limit(1)
 
-  // Map Intercom state to our status
-  const statusMap: Record<string, "open" | "pending" | "resolved" | "closed"> = {
-    open: "open",
-    snoozed: "pending",
-    closed: "closed",
-  }
-
-  // Get entity ID if we have one
-  let entityId: string | null = null
-  if (conv.contacts?.contacts?.[0]) {
-    const entity = await db
-      .select()
-      .from(entities)
-      .where(eq(entities.externalId, conv.contacts.contacts[0].id))
-      .limit(1)
-    if (entity.length > 0) {
-      entityId = entity[0].id
-    }
-  }
-
-  // Get assignee ID if we have one
-  let assigneeId: string | null = null
-  if (conv.assignee?.id) {
-    const assignee = await db
-      .select()
-      .from(teamMembers)
-      .where(eq(teamMembers.externalId, conv.assignee.id))
-      .limit(1)
-    if (assignee.length > 0) {
-      assigneeId = assignee[0].id
-    }
-  }
+  const entityId = await resolveEntityId(conversation.contacts?.contacts?.[0]?.id)
+  const assigneeId = await resolveAssigneeId(conversation.assignee?.id)
+  const responseTimeSeconds =
+    conversation.statistics?.time_to_admin_reply ??
+    conversation.statistics?.time_to_first_reply
+  const resolutionSeconds =
+    conversation.statistics?.time_to_first_close ??
+    conversation.statistics?.time_to_last_close
 
   const data = {
-    externalId: conv.id,
+    externalId: conversation.id,
     source: "intercom" as const,
-    title: conv.source?.subject || null,
-    description: conv.source?.body?.slice(0, 500) || null,
+    title: conversation.source?.subject || "Conversation",
+    description: conversation.source?.body?.slice(0, 500) || null,
     type: "conversation",
-    status: statusMap[conv.state] || "open",
-    priority: conv.priority === "priority" ? "high" as const : "normal" as const,
-    tags: conv.tags?.tags?.map((t) => t.name) || [],
+    status: mapConversationStatus(conversation.state),
+    priority: conversation.priority === "priority" ? "high" as const : "normal" as const,
+    tags: conversation.tags?.tags?.map((tag) => tag.name) || [],
     entityId,
     assigneeId,
-    responseTimeMinutes: conv.statistics?.time_to_first_reply
-      ? Math.floor(conv.statistics.time_to_first_reply / 60)
+    valueSignals: {
+      team: conversation.team?.name || null,
+      tier: null,
+      slaStatus: conversation.sla_applied?.sla_status || null,
+    },
+    effortSignals: {
+      waitingSince: conversation.waiting_since || null,
+    },
+    responseTimeMinutes: responseTimeSeconds
+      ? Math.floor(responseTimeSeconds / 60)
       : null,
-    cxScore: conv.conversation_rating?.rating
-      ? conv.conversation_rating.rating * 2 // Convert 1-5 to 1-10
+    resolutionTimeHours: resolutionSeconds
+      ? Number((resolutionSeconds / 3600).toFixed(2))
       : null,
-    cxComment: conv.conversation_rating?.remark || null,
-    updatedAt: new Date(),
+    cxScore: conversation.conversation_rating?.rating
+      ? conversation.conversation_rating.rating * 2
+      : null,
+    cxComment: conversation.conversation_rating?.remark || null,
+    rawData: conversation as unknown as Record<string, unknown>,
+    resolvedAt:
+      mapConversationStatus(conversation.state) === "closed"
+        ? new Date(conversation.updated_at * 1000)
+        : null,
+    updatedAt: new Date(conversation.updated_at * 1000),
   }
 
   if (existing.length > 0) {
-    await db
-      .update(nodes)
-      .set(data)
-      .where(eq(nodes.externalId, conv.id))
+    await db.update(nodes).set(data).where(eq(nodes.externalId, conversation.id))
   } else {
     await db.insert(nodes).values({
       ...data,
-      createdAt: new Date(conv.created_at * 1000),
+      createdAt: new Date(conversation.created_at * 1000),
     })
   }
 }
 
-// Update sync state
-async function updateSyncState(nodesSynced: number, entitiesSynced: number, teamMembersSynced: number) {
+async function upsertTicketNode(ticket: IntercomTicket) {
+  const existing = await db
+    .select()
+    .from(nodes)
+    .where(eq(nodes.externalId, ticket.id))
+    .limit(1)
+
+  const entityId = await resolveEntityId(ticket.contacts?.contacts?.[0]?.id)
+  const assigneeId = await resolveAssigneeId(ticket.admin_assignee_id)
+  const ticketAttributes =
+    (ticket.ticket_attributes as Record<string, unknown> | undefined) || {}
+
+  const title =
+    typeof ticketAttributes.subject === "string"
+      ? ticketAttributes.subject
+      : typeof ticketAttributes.title === "string"
+        ? ticketAttributes.title
+        : `Ticket ${ticket.ticket_id || ticket.id}`
+  const description =
+    typeof ticketAttributes.description === "string"
+      ? ticketAttributes.description.slice(0, 500)
+      : null
+
+  const data = {
+    externalId: ticket.id,
+    source: "intercom" as const,
+    title,
+    description,
+    type: "ticket",
+    status: mapTicketStatus(ticket),
+    priority: "normal" as const,
+    tags: ticket.tags?.tags?.map((tag) => tag.name) || [],
+    entityId,
+    assigneeId,
+    valueSignals: {
+      teamAssigneeId: ticket.team_assignee_id || null,
+      ticketType: ticket.ticket_type?.name || null,
+    },
+    effortSignals: {},
+    rawData: ticket as unknown as Record<string, unknown>,
+    resolvedAt:
+      mapTicketStatus(ticket) === "resolved" || mapTicketStatus(ticket) === "closed"
+        ? new Date(ticket.updated_at * 1000)
+        : null,
+    updatedAt: new Date(ticket.updated_at * 1000),
+  }
+
+  if (existing.length > 0) {
+    await db.update(nodes).set(data).where(eq(nodes.externalId, ticket.id))
+  } else {
+    await db.insert(nodes).values({
+      ...data,
+      createdAt: new Date(ticket.created_at * 1000),
+    })
+  }
+}
+
+async function updateSyncState(
+  nodesSynced: number,
+  entitiesSynced: number,
+  teamMembersSynced: number,
+  errors: string[]
+) {
   const existing = await db
     .select()
     .from(syncState)
@@ -263,14 +440,13 @@ async function updateSyncState(nodesSynced: number, entitiesSynced: number, team
     nodesSynced,
     entitiesSynced,
     teamMembersSynced,
+    lastError: errors.length > 0 ? errors.join(" | ") : null,
+    lastErrorAt: errors.length > 0 ? new Date() : null,
     updatedAt: new Date(),
   }
 
   if (existing.length > 0) {
-    await db
-      .update(syncState)
-      .set(data)
-      .where(eq(syncState.adapterId, "intercom"))
+    await db.update(syncState).set(data).where(eq(syncState.adapterId, "intercom"))
   } else {
     await db.insert(syncState).values({
       adapterId: "intercom",
@@ -283,7 +459,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-// Get sync status
 export async function getSyncStatus() {
   const state = await db
     .select()
