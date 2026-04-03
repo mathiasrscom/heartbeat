@@ -5,6 +5,7 @@ interface WallboardShellProps {
   title: string
   refreshedAt: string | null
   stale: boolean
+  toolbar?: React.ReactNode
   children: React.ReactNode
 }
 
@@ -12,6 +13,7 @@ export function WallboardShell({
   title,
   refreshedAt,
   stale,
+  toolbar,
   children,
 }: WallboardShellProps) {
   const refreshedDate = refreshedAt ? new Date(refreshedAt) : null
@@ -24,6 +26,7 @@ export function WallboardShell({
             <h1 className="text-[2rem] font-semibold tracking-tight text-stone-50">
               {title}
             </h1>
+            {toolbar ? <div className="mt-3">{toolbar}</div> : null}
           </div>
           <div className="flex items-center gap-6 text-right">
             <div>

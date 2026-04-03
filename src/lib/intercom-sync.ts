@@ -7,33 +7,70 @@
 
 import { eq } from "drizzle-orm"
 import { db } from "@/db"
-import { entities, nodes, syncState, teamMembers } from "@/db/schema"
+import { adapterConfigs, entities, nodes, syncState, teamMembers } from "@/db/schema"
 import {
   createIntercomClient,
+  isIntercomApiError,
   type IntercomAdmin,
   type IntercomContact,
   type IntercomConversation,
   type IntercomTicket,
 } from "./intercom"
+import { extractIntercomCx } from "./intercom-cx"
+import {
+  claimIntercomSyncRuntime,
+  finishIntercomSyncRuntime,
+  updateIntercomSyncRuntime,
+} from "./intercom-sync-runtime"
 
 interface SyncResult {
   success: boolean
+  skipped?: boolean
   nodesSynced: number
   entitiesSynced: number
   teamMembersSynced: number
   errors: string[]
 }
 
-export async function syncIntercom(accessToken: string): Promise<SyncResult> {
-  const client = createIntercomClient({ accessToken })
+type JsonRecord = Record<string, unknown>
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+function normalizeAppUrl(value: unknown) {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : null
+}
+
+async function getConfiguredIntercomAppUrl() {
+  const configRow = await db
+    .select({ settings: adapterConfigs.settings })
+    .from(adapterConfigs)
+    .where(eq(adapterConfigs.adapterId, "intercom"))
+    .limit(1)
+
+  const settings = isRecord(configRow[0]?.settings) ? configRow[0].settings : {}
+  return normalizeAppUrl(settings.appUrl) ?? normalizeAppUrl(process.env.INTERCOM_APP_URL)
+}
+
+async function runIntercomSync(accessToken: string): Promise<SyncResult> {
+  const appUrl = await getConfiguredIntercomAppUrl()
+  const client = createIntercomClient({ accessToken, appUrl })
   const errors: string[] = []
   const teamNamesById = new Map<string, string>()
+  const entityIdCache = new Map<string, string | null>()
   let nodesSynced = 0
   let entitiesSynced = 0
   let teamMembersSynced = 0
 
   try {
+    const previousSync = await getLatestSyncTimestamp()
+    const syncCutoff = previousSync ? Math.floor(previousSync.getTime() / 1000) : null
+
     try {
+      await updateIntercomSyncRuntime("teams", "Syncing teams")
       const teamsResponse = await client.listTeams()
       for (const team of teamsResponse.data || []) {
         teamNamesById.set(team.id, team.name)
@@ -43,6 +80,7 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
     }
 
     try {
+      await updateIntercomSyncRuntime("team-members", "Syncing team members")
       const adminsResponse = await client.listAdmins()
       for (const admin of adminsResponse.data || []) {
         await upsertTeamMember(admin, teamNamesById)
@@ -52,16 +90,43 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
       errors.push(`Team members sync failed: ${error}`)
     }
 
+    if (!previousSync) {
+      try {
+        await updateIntercomSyncRuntime("contacts", "Syncing contacts")
+        entitiesSynced += await syncContacts(client)
+      } catch (error) {
+        errors.push(String(error))
+      }
+    }
+
     const conversationIds = new Set<string>()
 
     let hasMoreConversations = true
     let conversationCursor: string | undefined
     while (hasMoreConversations) {
       try {
-        const response = await client.listConversations({
-          per_page: 50,
-          starting_after: conversationCursor,
-        })
+        await updateIntercomSyncRuntime(
+          "conversations",
+          previousSync ? "Syncing changed conversations" : "Syncing conversations"
+        )
+        const response = previousSync
+          ? await client.searchConversations(
+              [
+                {
+                  field: "updated_at",
+                  operator: ">",
+                  value: syncCutoff ?? 0,
+                },
+              ],
+              {
+                per_page: 50,
+                starting_after: conversationCursor,
+              }
+            )
+          : await client.listConversations({
+              per_page: 50,
+              starting_after: conversationCursor,
+            })
         const conversations = response.conversations || response.data || []
 
         for (const conversation of conversations) {
@@ -69,13 +134,7 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
 
           const contactId = conversation.contacts?.contacts?.[0]?.id
           if (contactId) {
-            try {
-              const contact = await client.getContact(contactId)
-              await upsertEntity(contact)
-              entitiesSynced++
-            } catch {
-              // Skip missing contacts. We still want the conversation node.
-            }
+            entitiesSynced += await ensureContactEntity(client, contactId, entityIdCache)
           }
 
           await upsertConversationNode(conversation)
@@ -95,10 +154,28 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
     let ticketCursor: string | undefined
     while (hasMoreTickets) {
       try {
-        const response = await client.listTickets({
-          per_page: 50,
-          starting_after: ticketCursor,
-        })
+        await updateIntercomSyncRuntime(
+          "tickets",
+          previousSync ? "Syncing changed tickets" : "Syncing tickets"
+        )
+        const response = previousSync
+          ? await client.searchTickets(
+              [
+                {
+                  field: "updated_at",
+                  operator: ">",
+                  value: syncCutoff ?? 0,
+                },
+              ],
+              {
+                per_page: 50,
+                starting_after: ticketCursor,
+              }
+            )
+          : await client.listTickets({
+              per_page: 50,
+              starting_after: ticketCursor,
+            })
         const tickets = response.tickets || response.data || []
 
         for (const ticket of tickets) {
@@ -108,13 +185,7 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
 
           const contactId = ticket.contacts?.contacts?.[0]?.id
           if (contactId) {
-            try {
-              const contact = await client.getContact(contactId)
-              await upsertEntity(contact)
-              entitiesSynced++
-            } catch {
-              // Skip missing contacts. We still want the ticket node.
-            }
+            entitiesSynced += await ensureContactEntity(client, contactId, entityIdCache)
           }
 
           await upsertTicketNode(ticket)
@@ -125,11 +196,24 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
         hasMoreTickets = Boolean(ticketCursor)
         await sleep(100)
       } catch (error) {
+        if (isIntercomApiError(error) && error.status === 404) {
+          await updateIntercomSyncRuntime(
+            "tickets",
+            "Tickets endpoint unavailable for this workspace. Skipping ticket sync."
+          )
+          console.warn(
+            "[intercom-sync] Tickets endpoint returned 404. Skipping tickets for this sync run."
+          )
+          hasMoreTickets = false
+          continue
+        }
+
         errors.push(`Tickets sync failed: ${error}`)
         hasMoreTickets = false
       }
     }
 
+    await updateIntercomSyncRuntime("finalizing", "Finalizing sync")
     await updateSyncState(nodesSynced, entitiesSynced, teamMembersSynced, errors)
 
     return {
@@ -151,7 +235,42 @@ export async function syncIntercom(accessToken: string): Promise<SyncResult> {
       teamMembersSynced,
       errors: allErrors,
     }
+  } finally {
+    await finishIntercomSyncRuntime()
   }
+}
+
+function skippedSyncResult(): SyncResult {
+  return {
+    success: false,
+    skipped: true,
+    nodesSynced: 0,
+    entitiesSynced: 0,
+    teamMembersSynced: 0,
+    errors: ["Sync already running."],
+  }
+}
+
+export async function syncIntercom(accessToken: string): Promise<SyncResult> {
+  const claimed = await claimIntercomSyncRuntime()
+  if (!claimed) {
+    return skippedSyncResult()
+  }
+
+  return runIntercomSync(accessToken)
+}
+
+export async function startIntercomSyncInBackground(accessToken: string) {
+  const claimed = await claimIntercomSyncRuntime()
+  if (!claimed) {
+    return false
+  }
+
+  void runIntercomSync(accessToken).catch((error) => {
+    console.error("[intercom-sync] Background sync failed", error)
+  })
+
+  return true
 }
 
 function getNextCursor(
@@ -165,6 +284,72 @@ function getNextCursor(
 ) {
   if (typeof next === "string") return next
   return next?.starting_after
+}
+
+async function getLatestSyncTimestamp() {
+  const existing = await db
+    .select()
+    .from(syncState)
+    .where(eq(syncState.adapterId, "intercom"))
+    .limit(1)
+
+  return existing[0]?.lastSyncAt ?? null
+}
+
+async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
+  let entitiesSynced = 0
+  let hasMoreContacts = true
+  let contactCursor: string | undefined
+
+  while (hasMoreContacts) {
+    try {
+      const response = await client.listContacts({
+        per_page: 50,
+        starting_after: contactCursor,
+      })
+      const contacts = response.data || []
+
+      for (const contact of contacts) {
+        await upsertEntity(contact)
+        entitiesSynced++
+      }
+
+      contactCursor = getNextCursor(response.pages?.next)
+      hasMoreContacts = Boolean(contactCursor)
+      await sleep(100)
+    } catch (error) {
+      throw new Error(`Contacts sync failed: ${error}`)
+    }
+  }
+
+  return entitiesSynced
+}
+
+async function ensureContactEntity(
+  client: ReturnType<typeof createIntercomClient>,
+  contactId: string,
+  entityIdCache: Map<string, string | null>
+) {
+  if (entityIdCache.has(contactId)) {
+    return 0
+  }
+
+  const existing = await resolveEntityId(contactId)
+  if (existing) {
+    entityIdCache.set(contactId, existing)
+    return 0
+  }
+
+  try {
+    const contact = await client.getContact(contactId)
+    await upsertEntity(contact)
+    const entityId = await resolveEntityId(contactId)
+    entityIdCache.set(contactId, entityId)
+    return 1
+  } catch {
+    entityIdCache.set(contactId, null)
+    return 0
+  }
 }
 
 async function upsertTeamMember(
@@ -318,6 +503,7 @@ async function upsertConversationNode(conversation: IntercomConversation) {
   const resolutionSeconds =
     conversation.statistics?.time_to_first_close ??
     conversation.statistics?.time_to_last_close
+  const cx = extractIntercomCx(conversation as unknown as Record<string, unknown>)
 
   const data = {
     externalId: conversation.id,
@@ -344,10 +530,8 @@ async function upsertConversationNode(conversation: IntercomConversation) {
     resolutionTimeHours: resolutionSeconds
       ? Number((resolutionSeconds / 3600).toFixed(2))
       : null,
-    cxScore: conversation.conversation_rating?.rating
-      ? conversation.conversation_rating.rating * 2
-      : null,
-    cxComment: conversation.conversation_rating?.remark || null,
+    cxScore: cx.score,
+    cxComment: cx.comment,
     rawData: conversation as unknown as Record<string, unknown>,
     resolvedAt:
       mapConversationStatus(conversation.state) === "closed"

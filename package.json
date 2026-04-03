@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev --port 3000",
+    "dev": "concurrently \"vite dev --port 3000\" \"tsx jobs/index.ts\"",
+    "dev:web": "vite dev --port 3000",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -16,7 +17,7 @@
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
     "workers": "tsx jobs/index.ts",
-    "dev:all": "concurrently \"pnpm dev\" \"pnpm workers\""
+    "dev:all": "pnpm dev"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.6",

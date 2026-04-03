@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { createFileRoute } from "@tanstack/react-router"
 import { useServerFn } from "@tanstack/react-start"
 import { Card, CardContent } from "@/components/ui/card"
@@ -11,13 +11,14 @@ import {
   LoaderCircle,
   Plug,
   RefreshCcw,
-  ScreenShare,
   ShieldAlert,
   XCircle,
 } from "lucide-react"
 import {
   getIntercomConnectionState,
+  removeIntercomConnection,
   saveIntercomConnection,
+  saveIntercomWorkspaceLink,
   triggerIntercomSync,
   type IntercomConnectionState,
 } from "@/lib/intercom-admin"
@@ -30,16 +31,38 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
   const initialState = Route.useLoaderData()
+  const refreshIntercomState = useServerFn(getIntercomConnectionState)
   const connectIntercom = useServerFn(saveIntercomConnection)
+  const saveWorkspaceLink = useServerFn(saveIntercomWorkspaceLink)
+  const removeIntercom = useServerFn(removeIntercomConnection)
   const syncIntercom = useServerFn(triggerIntercomSync)
 
   const [state, setState] = useState(initialState)
   const [accessToken, setAccessToken] = useState("")
+  const [appUrl, setAppUrl] = useState(initialState.appUrl ?? "")
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(
     null
   )
   const [isSaving, setIsSaving] = useState(false)
-  const [isSyncing, setIsSyncing] = useState(false)
+  const [isSavingAppUrl, setIsSavingAppUrl] = useState(false)
+  const [isRemoving, setIsRemoving] = useState(false)
+  const [isStartingSync, setIsStartingSync] = useState(false)
+
+  useEffect(() => {
+    if (!state.isSyncRunning) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshIntercomState().then((nextState) => {
+        setState(nextState)
+      })
+    }, 2000)
+
+    return () => {
+      window.clearInterval(intervalId)
+    }
+  }, [refreshIntercomState, state.isSyncRunning])
 
   async function handleConnect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -55,6 +78,7 @@ function SettingsPage() {
 
       setState(result.state)
       setAccessToken("")
+      setAppUrl(result.state.appUrl ?? "")
       setFeedback({ tone: "success", text: result.message })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to connect to Intercom."
@@ -64,27 +88,72 @@ function SettingsPage() {
     }
   }
 
+  async function handleSaveWorkspaceLink(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setFeedback(null)
+    setIsSavingAppUrl(true)
+
+    try {
+      const result = await saveWorkspaceLink({
+        data: {
+          appUrl,
+        },
+      })
+      setState(result.state)
+      setAppUrl(result.state.appUrl ?? "")
+      setFeedback({ tone: "success", text: result.message })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save the Intercom workspace link."
+      setFeedback({ tone: "error", text: message })
+    } finally {
+      setIsSavingAppUrl(false)
+    }
+  }
+
   async function handleSync() {
     setFeedback(null)
-    setIsSyncing(true)
+    setIsStartingSync(true)
 
     try {
       const result = await syncIntercom()
       setState(result.state)
-      setFeedback({
-        tone: result.sync?.success ? "success" : "error",
-        text:
-          result.sync?.success || !result.sync?.errors.length
-            ? result.message
-            : `${result.message} ${result.sync.errors[0]}`,
-      })
+      setFeedback({ tone: "success", text: result.message })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to run Intercom sync."
       setFeedback({ tone: "error", text: message })
     } finally {
-      setIsSyncing(false)
+      setIsStartingSync(false)
     }
   }
+
+  async function handleRemoveToken() {
+    setFeedback(null)
+    setIsRemoving(true)
+
+    try {
+      const result = await removeIntercom()
+      setState(result.state)
+      setAccessToken("")
+      setFeedback({ tone: "success", text: result.message })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to remove the stored Intercom token."
+      setFeedback({ tone: "error", text: message })
+    } finally {
+      setIsRemoving(false)
+    }
+  }
+
+  const tokenPlaceholder = state.hasStoredToken
+    ? "Paste a new token to replace the stored one"
+    : state.tokenSource === "environment"
+      ? "Store a database fallback token"
+      : "Access token"
+  const saveLabel = state.hasStoredToken ? "Replace and verify" : "Save and verify"
+  const syncButtonLabel = state.isSyncRunning
+    ? state.syncStageLabel || "Syncing"
+    : "Sync now"
 
   return (
     <div className="p-4 lg:p-6 max-w-3xl">
@@ -127,10 +196,62 @@ function SettingsPage() {
               />
             </div>
 
+            {state.isSyncRunning ? (
+              <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <div className="flex items-center gap-2 font-medium">
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                  {state.syncStageLabel || "Intercom sync is running"}
+                </div>
+                {state.syncStartedAt ? (
+                  <div className="mt-1 text-[10px] text-amber-800/80">
+                    Started {formatTimestamp(state.syncStartedAt, "Unknown")}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="mb-3 rounded-lg border bg-muted/20 px-3 py-2">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1 text-xs">
+                  <div className="font-medium text-foreground">Token storage</div>
+                  <div className="text-muted-foreground">
+                    {state.hasStoredToken
+                      ? `${state.storedTokenHint} is stored in the database for background sync.`
+                      : "No Intercom token is stored in the database yet."}
+                  </div>
+                  {state.tokenSource === "environment" ? (
+                    <div className="text-muted-foreground">
+                      The active sync is using `INTERCOM_ACCESS_TOKEN` from the environment.
+                    </div>
+                  ) : state.hasStoredToken ? (
+                    <div className="text-muted-foreground">
+                      The active sync is using the stored database token.
+                    </div>
+                  ) : null}
+                </div>
+
+                {state.hasStoredToken ? (
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    className="h-8 text-xs px-3"
+                    onClick={handleRemoveToken}
+                    disabled={isRemoving}
+                  >
+                    {isRemoving ? (
+                      <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                    ) : null}
+                    Remove stored token
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
             <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleConnect}>
               <Input
                 type="password"
-                placeholder="Access token"
+                placeholder={tokenPlaceholder}
                 className="flex-1 h-7 text-xs"
                 value={accessToken}
                 onChange={(event) => setAccessToken(event.target.value)}
@@ -142,7 +263,7 @@ function SettingsPage() {
                 disabled={isSaving || accessToken.trim().length === 0}
               >
                 {isSaving ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
-                Save and verify
+                {saveLabel}
               </Button>
               <Button
                 size="sm"
@@ -150,22 +271,53 @@ function SettingsPage() {
                 variant="outline"
                 className="h-7 text-xs px-3"
                 onClick={handleSync}
-                disabled={isSyncing || !state.hasAccessToken}
+                disabled={isStartingSync || state.isSyncRunning || !state.hasAccessToken}
               >
-                {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
-                Sync now
+                {isStartingSync || state.isSyncRunning ? (
+                  <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCcw className="h-3.5 w-3.5" />
+                )}
+                {syncButtonLabel}
               </Button>
             </form>
             <p className="text-[10px] text-muted-foreground mt-1">
               Get from Intercom → Settings → Developers → Access Token
             </p>
 
-            {state.tokenSource === "environment" ? (
-              <p className="mt-1 text-[10px] text-muted-foreground">
-                The app is currently using `INTERCOM_ACCESS_TOKEN` from the environment. Saving
-                a token here will store a database fallback for the worker.
-              </p>
-            ) : null}
+            <form className="mt-3 flex flex-col gap-2 sm:flex-row" onSubmit={handleSaveWorkspaceLink}>
+              <Input
+                type="url"
+                placeholder="Intercom workspace link"
+                className="flex-1 h-7 text-xs"
+                value={appUrl}
+                onChange={(event) => setAppUrl(event.target.value)}
+              />
+              <Button
+                size="sm"
+                className="h-7 text-xs px-3"
+                type="submit"
+                disabled={isSavingAppUrl || appUrl.trim().length === 0}
+              >
+                {isSavingAppUrl ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+                Save workspace link
+              </Button>
+            </form>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Example: https://app.eu.intercom.com/a/inbox/zah460bv/inbox/conversation/215560824562362
+            </p>
+
+            <div className="mt-3 rounded-lg border bg-muted/20 px-3 py-2 text-xs">
+              <div className="font-medium text-foreground">CX source</div>
+              <div className="mt-1 text-muted-foreground">
+                Primary: <code>conversation_rating.rating</code>. Fallbacks:{" "}
+                <code>custom_attributes[&quot;CX Score rating&quot;]</code> and{" "}
+                <code>ai_agent.rating</code>.
+              </div>
+              <div className="mt-1 text-muted-foreground">
+                CX period metrics use resolved conversations only.
+              </div>
+            </div>
 
             {feedback ? (
               <div
@@ -214,22 +366,6 @@ function SettingsPage() {
                 <div className="text-muted-foreground mb-1">Stale warning</div>
                 <div className="font-medium">After {state.staleAfterMinutes} minutes</div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="p-1.5 rounded-md bg-green-500/10">
-                <ScreenShare className="h-3.5 w-3.5 text-green-600" />
-              </div>
-              <span className="text-xs font-medium">Wallboard behavior</span>
-            </div>
-            <div className="space-y-2 text-xs text-muted-foreground">
-              <p>The live wallboard is the operational entrypoint for the app.</p>
-              <p>The trends wallboard shows month, quarter, and year CX context.</p>
-              <p>Customer names stay off the monitors so the display is safe for the office.</p>
             </div>
           </CardContent>
         </Card>

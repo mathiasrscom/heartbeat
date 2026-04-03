@@ -1,209 +1,268 @@
-import { createFileRoute } from "@tanstack/react-router"
-import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react"
-import { Sparkline } from "@/components/wallboard/sparkline"
+import { startTransition } from "react"
+import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { InfoTooltip } from "@/components/info-tooltip"
+import { SupportCxSummary } from "@/components/support-cx-summary"
+import { SupportPeriodFilter } from "@/components/support-period-filter"
+import { SupportProductFilter } from "@/components/support-product-filter"
 import { WallboardSection, WallboardShell } from "@/components/wallboard/wallboard-shell"
+import { buildIntercomCaseUrl } from "@/lib/intercom-links"
+import { normalizeSupportProductFilterInput } from "@/lib/support-health/filter"
+import { normalizeSupportPeriodInput, type SupportPeriodInput } from "@/lib/support-health/period"
 import { getTrendsWallboard } from "@/lib/support-health/server"
+import type { CaseLookupItem } from "@/lib/support-health/types"
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/wallboard/trends")({
-  loader: async () => getTrendsWallboard(),
+  validateSearch: (search: Record<string, unknown>) =>
+    ({
+      ...normalizeSupportPeriodInput(search as SupportPeriodInput),
+      ...normalizeSupportProductFilterInput(search),
+    }),
+  loaderDeps: ({ search }) => ({
+    ...normalizeSupportPeriodInput(search),
+    ...normalizeSupportProductFilterInput(search),
+  }),
+  loader: async ({ deps }) => getTrendsWallboard({ data: deps }),
   component: TrendsWallboardPage,
 })
 
 function TrendsWallboardPage() {
   const data = Route.useLoaderData()
-  const month = data.periods[0]
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: Route.fullPath })
+
+  function handlePeriodChange(next: {
+    period: "current-week" | "previous-week" | "custom"
+    from?: string
+    to?: string
+  }) {
+    startTransition(() => {
+      navigate({
+        search: {
+          period: next.period,
+          from: next.period === "custom" ? next.from : undefined,
+          to: next.period === "custom" ? next.to : undefined,
+          products: search.products,
+        },
+        replace: true,
+      })
+    })
+  }
+
+  function handleProductChange(products: string[]) {
+    startTransition(() => {
+      navigate({
+        search: {
+          period: search.period,
+          from: search.period === "custom" ? search.from : undefined,
+          to: search.period === "custom" ? search.to : undefined,
+          products: products.length > 0 ? products : undefined,
+        },
+        replace: true,
+      })
+    })
+  }
 
   return (
     <WallboardShell
-      title="Support Quality"
+      title="Product Health"
       refreshedAt={data.snapshot.freshnessTimestamp ?? data.refreshedAt}
       stale={data.snapshot.stale}
+      toolbar={
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="text-sm text-stone-400">{data.period.label}</div>
+          <SupportPeriodFilter
+            period={search.period}
+            from={data.period.from}
+            to={data.period.to}
+            onChange={handlePeriodChange}
+            mode="wallboard"
+          />
+          <SupportProductFilter
+            availableProducts={data.availableProducts}
+            selectedProducts={data.selectedProducts}
+            onChange={handleProductChange}
+            mode="wallboard"
+          />
+        </div>
+      }
     >
-      <div className="grid h-full grid-cols-[minmax(0,1.35fr)_minmax(360px,0.85fr)] gap-6">
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-6">
-          <WallboardSection title="CX score">
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
-              <div className="rounded-md border border-white/10 bg-black/10 p-5">
-                <div className="text-base text-stone-400">Current month</div>
-                <div className="mt-2 flex items-end gap-4">
-                  <div className="text-7xl font-semibold tracking-tight text-stone-50">
-                    {month?.score?.toFixed(1) ?? "—"}
-                  </div>
-                  <PeriodDelta value={month?.deltaFromPrevious ?? null} />
-                </div>
-                <div className="mt-4 text-lg text-stone-300">
-                  Response rate {month?.responseRatePercent ?? 0}% • {month?.ratedCount ?? 0} of{" "}
-                  {month?.eligibleCount ?? 0} eligible conversations rated
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                {data.periods.slice(1).map((period) => (
-                  <div
-                    key={period.label}
-                    className="rounded-md border border-white/10 bg-white/[0.03] p-4"
-                  >
-                    <div className="text-sm text-stone-400">{period.label}</div>
-                    <div className="mt-2 text-4xl font-semibold tracking-tight text-stone-50">
-                      {period.score?.toFixed(1) ?? "—"}
-                    </div>
-                    <div className="mt-2 text-sm text-stone-300">
-                      Response rate {period.responseRatePercent}%
-                    </div>
-                    <div className="mt-3">
-                      <PeriodDelta value={period.deltaFromPrevious} compact />
-                    </div>
-                  </div>
-                ))}
-              </div>
+      <div className="grid h-full grid-cols-[minmax(0,1.45fr)_420px] gap-6">
+        <WallboardSection title="Products">
+          <div className="space-y-6">
+            <div className="grid gap-4 xl:grid-cols-5">
+              <SummaryTile
+                label="Open now"
+                tooltip="Count of currently open cases in the selected products."
+                value={String(data.periodSummary.openNowCount)}
+              />
+              <SummaryTile
+                label="Waiting on us"
+                tooltip="Open cases where support owes the next reply."
+                value={String(data.periodSummary.awaitingTeamNowCount)}
+              />
+              <SummaryTile
+                label="Over SLA now"
+                tooltip="Open cases currently past SLA due time."
+                value={String(data.periodSummary.breachedNowCount)}
+                danger
+              />
+              <SummaryTile
+                label={`SLA ${data.period.label.toLowerCase()}`}
+                tooltip={`SLA adherence for the ${data.period.label.toLowerCase()} period.`}
+                value={
+                  data.periodSummary.slaAdherencePercent === null
+                    ? "—"
+                    : `${data.periodSummary.slaAdherencePercent}%`
+                }
+                danger={
+                  data.periodSummary.slaAdherencePercent !== null &&
+                  data.periodSummary.slaAdherencePercent < 90
+                }
+              />
+              <SummaryTile
+                label={`CX in ${data.period.label.toLowerCase()}`}
+                tooltip={`Average CX score from rated conversations resolved in ${data.period.label.toLowerCase()}.`}
+                value={
+                  data.periodSummary.cxScore === null
+                    ? "—"
+                    : data.periodSummary.cxScore.toFixed(1)
+                }
+              />
             </div>
-          </WallboardSection>
 
-          <div className="grid min-h-0 grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)] gap-6">
-            <WallboardSection title="Current month trend" className="min-h-0">
-              <div className="flex h-full flex-col justify-between gap-6">
-                <div className="text-lg text-stone-300">
-                  The month view leads the screen. Quarter and year stay visible as context,
-                  but the current run rate stays dominant.
-                </div>
-                <div className="rounded-md border border-white/10 bg-black/10 p-4">
-                  <Sparkline
-                    values={data.cxSeries.map((point) => point.value)}
-                    className="h-48"
-                    strokeClassName="stroke-[#d6d3d1]"
-                  />
-                  <div className="mt-4 grid grid-cols-6 gap-2 text-sm text-stone-500">
-                    {data.cxSeries
-                      .filter((_, index, list) => index === 0 || index === list.length - 1 || index % 5 === 0)
-                      .map((point) => (
-                        <div key={point.label}>{point.label}</div>
-                      ))}
-                  </div>
-                </div>
-              </div>
-            </WallboardSection>
+            <div className="grid grid-cols-[minmax(0,1.4fr)_110px_110px_110px_120px_90px_90px] gap-x-4 border-b border-white/10 pb-3 text-sm text-stone-400">
+              <div>Product</div>
+              <div className="text-right">Waiting</div>
+              <div className="text-right">Over SLA</div>
+              <div className="text-right">Open</div>
+              <div className="text-right">SLA period</div>
+              <div className="text-right">CX</div>
+              <div className="text-right">Rated</div>
+            </div>
 
-            <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] gap-6">
-              <WallboardSection title="Recurring themes" className="min-h-0">
-                <div className="space-y-4">
-                  {data.themeTrends.length === 0 ? (
-                    <div className="text-base text-stone-400">No theme trends yet.</div>
-                  ) : (
-                    data.themeTrends.map((theme) => (
-                      <div key={theme.label} className="flex items-center justify-between gap-4">
-                        <div className="min-w-0">
-                          <div className="truncate text-lg font-medium text-stone-100">
-                            {theme.label}
-                          </div>
-                          <div className="text-sm text-stone-400">
-                            {theme.currentCount} this period • {theme.previousCount} prior
-                          </div>
-                        </div>
-                        <div
-                          className={cn(
-                            "text-lg font-medium",
-                            theme.delta > 0
-                              ? "text-amber-300"
-                              : theme.delta < 0
-                                ? "text-emerald-300"
-                                : "text-stone-400"
-                          )}
-                        >
-                          {theme.delta > 0 ? "+" : ""}
-                          {theme.delta}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </WallboardSection>
-
-              <WallboardSection title="Reopen trend" className="min-h-0">
-                <div className="rounded-md border border-white/10 bg-black/10 p-4">
-                  <Sparkline
-                    values={data.reopenTrend.map((point) => point.value)}
-                    className="h-28"
-                    strokeClassName="stroke-[#f59e0b]"
-                  />
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  {data.reopenTrend.slice(-4).map((point) => (
-                    <div key={point.label} className="rounded-md border border-white/10 px-3 py-3">
-                      <div className="text-sm text-stone-400">{point.label}</div>
-                      <div className="mt-1 text-2xl font-semibold text-stone-50">
-                        {point.value ?? 0}
+            <div className="divide-y divide-white/10">
+              {data.productHealth.length === 0 ? (
+                <div className="py-10 text-lg text-stone-400">No product activity in this view.</div>
+              ) : (
+                data.productHealth.map((row) => (
+                  <div
+                    key={`${row.serviceBucket}-${row.productName}`}
+                    className="grid grid-cols-[minmax(0,1.4fr)_110px_110px_110px_120px_90px_90px] gap-x-4 py-4"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-xl font-medium text-stone-100">
+                        {row.productName}
                       </div>
                     </div>
-                  ))}
-                </div>
-              </WallboardSection>
+                    <Cell value={row.awaitingTeamCount} warning={row.awaitingTeamCount > 0} />
+                    <Cell value={row.breachedNowCount} danger={row.breachedNowCount > 0} />
+                    <Cell value={row.openNowCount} />
+                    <Cell
+                      value={
+                        row.slaAdherencePercent === null ? "—" : `${row.slaAdherencePercent}%`
+                      }
+                      danger={row.slaAdherencePercent !== null && row.slaAdherencePercent < 90}
+                    />
+                    <Cell value={row.cxScore === null ? "—" : row.cxScore.toFixed(1)} />
+                    <Cell
+                      value={`${row.responseRatePercent}%`}
+                      warning={row.responseRatePercent > 0 && row.responseRatePercent < 20}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+            <div className="rounded-md border border-white/10 bg-black/10 px-4 py-3 text-sm text-stone-300">
+              SLA score for selected period:{" "}
+              {data.periodSummary.slaAdherencePercent === null
+                ? "—"
+                : `${data.periodSummary.slaAdherencePercent}%`}{" "}
+              ({data.periodSummary.slaMissedCount} breached of{" "}
+              {data.periodSummary.slaTrackedCount} tracked). Target: 90%.
             </div>
           </div>
-        </div>
+        </WallboardSection>
 
-        <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-6">
-          <WallboardSection title="Live support context">
-            <div className="grid grid-cols-2 gap-5">
-              <Fact label="SLA now" value={`${data.snapshot.slaAdherencePercent}%`} />
-              <Fact label="Breached" value={String(data.snapshot.breachedCount)} />
-              <Fact label="Due soon" value={String(data.snapshot.dueSoonCount)} />
-              <Fact label="High-risk" value={String(data.snapshot.urgentHighRiskCount)} />
-            </div>
-          </WallboardSection>
-
-          <WallboardSection title="Queues under pressure" className="min-h-0">
-            <div className="space-y-4">
-              {data.queuePressure.length === 0 ? (
-                <div className="text-base text-stone-400">No pressure shifts yet.</div>
+        <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto] gap-6">
+          <WallboardSection title="Top 5 IDs to inspect" className="min-h-0">
+            <div className="space-y-2">
+              {data.lookupCases.length === 0 ? (
+                <div className="text-base text-stone-400">
+                  No open cases need support in the selected products.
+                </div>
               ) : (
-                data.queuePressure.map((queue) => (
-                  <div key={queue.teamName} className="rounded-md border border-white/10 px-4 py-4">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="truncate text-lg font-medium text-stone-100">
-                          {queue.teamName}
-                        </div>
-                        <div className="text-sm text-stone-400">
-                          {queue.currentOpenCount} opened in the last 7 days
-                        </div>
+                data.lookupCases.map((item) => (
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-[220px_minmax(0,1fr)_160px] items-center gap-4 rounded-md border border-white/10 bg-black/10 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <CaseLink item={item} appUrl={data.intercomAppUrl} />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-medium text-stone-100">
+                        {formatProductName(item.productName)}
                       </div>
-                      <div
-                        className={cn(
-                          "text-xl font-medium",
-                          queue.delta > 0
-                            ? "text-amber-300"
-                            : queue.delta < 0
-                              ? "text-emerald-300"
-                              : "text-stone-400"
-                        )}
-                      >
-                        {queue.delta > 0 ? "+" : ""}
-                        {queue.delta}
+                      <div className="truncate text-xs text-stone-400">
+                        {item.queueName} • {formatLookupSubtype(item.subtype)}
                       </div>
                     </div>
-                    <div className="mt-3 h-2 rounded-full bg-white/5">
+                    <div className="text-right">
                       <div
                         className={cn(
-                          "h-2 rounded-full",
-                          queue.delta > 0 ? "bg-amber-400" : "bg-stone-300"
+                          "text-sm font-medium",
+                          item.isBreached && "text-red-300",
+                          !item.isBreached && item.isDueSoon && "text-amber-300",
+                          !item.isBreached && !item.isDueSoon && "text-stone-200"
                         )}
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            Math.max(
-                              8,
-                              (queue.currentOpenCount /
-                                Math.max(...data.queuePressure.map((item) => item.currentOpenCount), 1)) *
-                                100
-                            )
-                          )}%`,
-                        }}
-                      />
+                      >
+                        {item.stateLabel}
+                      </div>
+                      <div className="mt-1 text-sm text-stone-400">{item.ageLabel}</div>
                     </div>
                   </div>
                 ))
               )}
+            </div>
+          </WallboardSection>
+
+          <WallboardSection title="Customer happiness">
+            <div className="space-y-3">
+              <div className="rounded-md border border-white/10 bg-black/10 px-4 py-4">
+                <SupportCxSummary
+                  label={data.period.label}
+                  score={data.periodSummary.cxScore}
+                  ratedCount={data.periodSummary.ratedCount}
+                  positiveCount={data.periodSummary.positiveCount}
+                  responseRatePercent={data.periodSummary.responseRatePercent}
+                  ratingMix={data.periodSummary.ratingMix}
+                  variant="wallboard"
+                />
+              </div>
+              <div className="grid gap-3">
+                {data.periods.map((period) => (
+                  <div
+                    key={period.label}
+                    className="rounded-md border border-white/10 bg-black/10 px-4 py-4"
+                  >
+                    <div className="flex items-end justify-between gap-4">
+                      <div>
+                        <div className="text-sm text-stone-400">{period.label}</div>
+                        <div className="mt-2 text-4xl font-semibold tracking-tight text-stone-50">
+                          {period.score?.toFixed(1) ?? "—"}
+                        </div>
+                      </div>
+                      <div className="text-right text-sm text-stone-400">
+                        <div>Rated</div>
+                        <div className="mt-1 text-lg text-stone-200">
+                          {period.responseRatePercent}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </WallboardSection>
         </div>
@@ -212,48 +271,92 @@ function TrendsWallboardPage() {
   )
 }
 
-function PeriodDelta({
-  value,
-  compact,
+function CaseLink({
+  item,
+  appUrl,
 }: {
-  value: number | null
-  compact?: boolean
+  item: CaseLookupItem
+  appUrl: string | null
 }) {
-  if (value === null) {
-    return <div className="text-sm text-stone-500">No prior comparison</div>
-  }
+  const href = buildIntercomCaseUrl(appUrl, {
+    externalId: item.externalId,
+    subtype: item.subtype,
+  })
 
-  if (value > 0) {
-    return (
-      <div className={cn("flex items-center gap-2 text-emerald-300", compact ? "text-sm" : "text-lg")}>
-        <ArrowUpRight className={cn(compact ? "h-4 w-4" : "h-5 w-5")} />
-        {value.toFixed(1)} vs previous
-      </div>
-    )
-  }
-
-  if (value < 0) {
-    return (
-      <div className={cn("flex items-center gap-2 text-red-300", compact ? "text-sm" : "text-lg")}>
-        <ArrowDownRight className={cn(compact ? "h-4 w-4" : "h-5 w-5")} />
-        {Math.abs(value).toFixed(1)} vs previous
-      </div>
-    )
+  if (!href) {
+    return <>#{formatLookupId(item)}</>
   }
 
   return (
-    <div className={cn("flex items-center gap-2 text-stone-400", compact ? "text-sm" : "text-lg")}>
-      <Minus className={cn(compact ? "h-4 w-4" : "h-5 w-5")} />
-      Flat vs previous
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="block truncate font-mono text-[1.05rem] font-semibold tabular-nums text-stone-50 underline decoration-white/30 underline-offset-4 transition hover:text-sky-300"
+    >
+      #{formatLookupId(item)}
+    </a>
+  )
+}
+
+function formatLookupId(item: CaseLookupItem) {
+  return item.externalId || item.id
+}
+
+function formatLookupSubtype(subtype: CaseLookupItem["subtype"]) {
+  return subtype === "ticket" ? "Ticket" : "Conversation"
+}
+
+function formatProductName(productName: string) {
+  return productName === "Unmapped" ? "Needs mapping" : productName
+}
+
+function SummaryTile({
+  label,
+  tooltip,
+  value,
+  danger,
+}: {
+  label: string
+  tooltip?: string
+  value: string
+  danger?: boolean
+}) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/10 px-4 py-4">
+      <div className="text-sm text-stone-400">
+        <InfoTooltip label={label} tooltip={tooltip} />
+      </div>
+      <div
+        className={cn(
+          "mt-2 text-4xl font-semibold tracking-tight text-stone-50",
+          danger && "text-red-300"
+        )}
+      >
+        {value}
+      </div>
     </div>
   )
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+function Cell({
+  value,
+  warning,
+  danger,
+}: {
+  value: string | number
+  warning?: boolean
+  danger?: boolean
+}) {
   return (
-    <div className="rounded-md border border-white/10 bg-black/10 px-4 py-4">
-      <div className="text-sm text-stone-400">{label}</div>
-      <div className="mt-2 text-4xl font-semibold tracking-tight text-stone-50">{value}</div>
+    <div
+      className={cn(
+        "text-right text-2xl font-medium text-stone-100",
+        warning && "text-amber-300",
+        danger && "text-red-300"
+      )}
+    >
+      {value}
     </div>
   )
 }

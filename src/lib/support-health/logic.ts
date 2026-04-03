@@ -1,5 +1,6 @@
 import {
   differenceInMinutes,
+  differenceInCalendarDays,
   eachDayOfInterval,
   endOfDay,
   format,
@@ -17,21 +18,29 @@ import {
 import type {
   ActionItem,
   ActionableState,
+  CaseLookupItem,
+  ClassificationHint,
   CxPeriodSummary,
   LiveWallboardData,
+  CaseStatusBreakdown,
+  ProductHealthRow,
+  ProductHealthSummary,
   QueueHealth,
   SupportCasePriority,
   SupportCaseRecord,
   SupportHealthSnapshot,
+  SupportServiceBucket,
   TrendPoint,
   TrendsWallboardData,
   SupportTier,
 } from "./types"
+import type { ResolvedSupportPeriod } from "./period"
 
 interface ActionableStateInput {
   status: string
-  assigneeName: string | null
+  hasAssignment: boolean
   rawSlaStatus: string | null
+  hasSlaTracking: boolean
   nextDueAt: Date | null
   waitingSinceAt: Date | null
   priority: SupportCasePriority
@@ -40,12 +49,55 @@ interface ActionableStateInput {
   now: Date
 }
 
+const GENERIC_QUEUE_NAMES = new Set([
+  "general",
+  "support",
+  "customer support",
+  "shared inbox",
+  "inbox",
+  "team inbox",
+])
+
 function round(value: number, digits = 1) {
   return Number(value.toFixed(digits))
 }
 
+function formatAgeLabel(minutes: number) {
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  const remainder = minutes % 60
+  if (hours < 24) {
+    return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`
+  }
+
+  const days = Math.floor(hours / 24)
+  const hourRemainder = hours % 24
+  return hourRemainder === 0 ? `${days}d` : `${days}d ${hourRemainder}h`
+}
+
+function getOverdueMinutes(item: SupportCaseRecord, now: Date) {
+  if (!item.isBreached || !item.nextDueAt) return 0
+  return Math.max(0, differenceInMinutes(now, item.nextDueAt))
+}
+
+function getMinutesUntilDue(item: SupportCaseRecord, now: Date) {
+  if (!item.isDueSoon || !item.nextDueAt) return Number.POSITIVE_INFINITY
+  return Math.max(0, differenceInMinutes(item.nextDueAt, now))
+}
+
+function normalizeLabel(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+}
+
 function isResolvedStatus(status: string) {
   return ["resolved", "closed"].includes(status)
+}
+
+function isGenericQueueName(value: string) {
+  return GENERIC_QUEUE_NAMES.has(normalizeLabel(value))
 }
 
 export function resolveResponseTargetMinutes(
@@ -62,6 +114,7 @@ export function resolveResponseTargetMinutes(
 export function isCaseBreached(input: ActionableStateInput) {
   if (isResolvedStatus(input.status)) return false
   if (input.rawSlaStatus?.toLowerCase() === "missed") return true
+  if (!input.hasSlaTracking) return false
   if (!input.nextDueAt) return false
   return isBefore(input.nextDueAt, input.now)
 }
@@ -69,16 +122,11 @@ export function isCaseBreached(input: ActionableStateInput) {
 export function isCaseDueSoon(input: ActionableStateInput) {
   if (isResolvedStatus(input.status)) return false
   if (isCaseBreached(input)) return false
+  if (!input.hasSlaTracking) return false
   if (input.nextDueAt) {
     return differenceInMinutes(input.nextDueAt, input.now) <= 60
   }
-  if (!input.waitingSinceAt) return false
-  const targetMinutes = resolveResponseTargetMinutes(
-    input.priority,
-    input.customerTier
-  )
-  const age = differenceInMinutes(input.now, input.waitingSinceAt)
-  return age >= Math.max(targetMinutes - 60, Math.floor(targetMinutes * 0.75))
+  return false
 }
 
 export function classifyActionableState(
@@ -87,13 +135,20 @@ export function classifyActionableState(
   if (isResolvedStatus(input.status)) return "resolved"
   if (isCaseBreached(input)) return "breached"
   if (isCaseDueSoon(input)) return "due-soon"
-  if (!input.assigneeName) return "unassigned"
+  if (!input.hasAssignment) return "unassigned"
   if (input.isAwaitingCustomer) return "awaiting-customer"
   return "awaiting-team"
 }
 
 function isActionableCase(item: SupportCaseRecord) {
   return item.actionableState !== "resolved"
+}
+
+function filterCasesByBucket(
+  cases: SupportCaseRecord[],
+  bucket: SupportServiceBucket
+) {
+  return cases.filter((item) => item.serviceBucket === bucket)
 }
 
 function getOldestActionableAgeMinutes(cases: SupportCaseRecord[], now: Date) {
@@ -118,6 +173,8 @@ export function calculateHealthStatus(input: {
   dueSoonCount: number
   urgentHighRiskCount: number
   unassignedCount: number
+  unknownCaseCount: number
+  unknownBreachedCount: number
   stale: boolean
   queueOffTrack: boolean
 }): SupportHealthSnapshot["status"] {
@@ -133,7 +190,9 @@ export function calculateHealthStatus(input: {
     input.stale ||
     input.breachedCount > 0 ||
     input.dueSoonCount >= 3 ||
-    input.unassignedCount >= 3
+    input.unassignedCount >= 3 ||
+    input.unknownBreachedCount > 0 ||
+    input.unknownCaseCount >= 3
   ) {
     return "yellow"
   }
@@ -146,20 +205,43 @@ export function buildSupportHealthSnapshot(
   lastSyncAt: Date | null,
   now: Date
 ): SupportHealthSnapshot {
-  const activeCases = cases.filter(isActionableCase)
+  const headlineCases = filterCasesByBucket(cases, "headline")
+  const exceptionCases = filterCasesByBucket(cases, "exception")
+  const unknownCases = filterCasesByBucket(cases, "unknown")
+
+  const activeCases = headlineCases.filter(isActionableCase)
+  const currentActiveCases = cases.filter(isActionableCase)
+  const exceptionActiveCases = exceptionCases.filter(isActionableCase)
+  const unknownActiveCases = unknownCases.filter(isActionableCase)
+
   const dueSoonCount = activeCases.filter((item) => item.isDueSoon).length
+  const currentDueSoonCount = currentActiveCases.filter((item) => item.isDueSoon).length
   const breachedCount = activeCases.filter((item) => item.isBreached).length
-  const unassignedCount = activeCases.filter(
-    (item) => item.actionableState === "unassigned"
+  const currentBreachedCount = currentActiveCases.filter((item) => item.isBreached).length
+  const unassignedCount = activeCases.filter((item) => !item.hasAssignment).length
+  const currentUnassignedCount = currentActiveCases.filter(
+    (item) => !item.hasAssignment
   ).length
   const urgentHighRiskCount = activeCases.filter((item) => item.isHighRisk).length
+  const currentUrgentHighRiskCount = currentActiveCases.filter(
+    (item) => item.isHighRisk
+  ).length
   const awaitingTeamCount = activeCases.filter(
     (item) =>
       item.actionableState === "awaiting-team" ||
       item.actionableState === "due-soon" ||
       item.actionableState === "breached"
   ).length
+  const currentAwaitingTeamCount = currentActiveCases.filter(
+    (item) =>
+      item.actionableState === "awaiting-team" ||
+      item.actionableState === "due-soon" ||
+      item.actionableState === "breached"
+  ).length
   const awaitingCustomerCount = activeCases.filter(
+    (item) => item.actionableState === "awaiting-customer"
+  ).length
+  const currentAwaitingCustomerCount = currentActiveCases.filter(
     (item) => item.actionableState === "awaiting-customer"
   ).length
 
@@ -180,7 +262,7 @@ export function buildSupportHealthSnapshot(
     lastSyncAt === null ? Number.POSITIVE_INFINITY : differenceInMinutes(now, lastSyncAt)
   const stale = freshnessMinutes > 10
 
-  const queues = buildQueueHealth(cases, now)
+  const queues = buildQueueHealth(cases, now, "headline")
   const queueOffTrack = queues.some(
     (queue) => queue.breachedCount >= 2 || queue.dueSoonCount >= 6
   )
@@ -190,6 +272,8 @@ export function buildSupportHealthSnapshot(
     dueSoonCount,
     urgentHighRiskCount,
     unassignedCount,
+    unknownCaseCount: unknownActiveCases.length,
+    unknownBreachedCount: unknownActiveCases.filter((item) => item.isBreached).length,
     stale,
     queueOffTrack,
   })
@@ -198,24 +282,44 @@ export function buildSupportHealthSnapshot(
     status,
     statusLabel: buildStatusLabel(status),
     activeCaseCount: activeCases.length,
+    currentActiveCaseCount: currentActiveCases.length,
     slaAdherencePercent,
     dueSoonCount,
+    currentDueSoonCount,
     breachedCount,
+    currentBreachedCount,
     unassignedCount,
+    currentUnassignedCount,
     urgentHighRiskCount,
+    currentUrgentHighRiskCount,
     awaitingTeamCount,
+    currentAwaitingTeamCount,
     awaitingCustomerCount,
-    oldestActionableAgeMinutes: getOldestActionableAgeMinutes(cases, now),
+    currentAwaitingCustomerCount,
+    exceptionCaseCount: exceptionActiveCases.length,
+    exceptionBreachedCount: exceptionActiveCases.filter((item) => item.isBreached).length,
+    unknownCaseCount: unknownActiveCases.length,
+    unknownBreachedCount: unknownActiveCases.filter((item) => item.isBreached).length,
+    oldestActionableAgeMinutes: getOldestActionableAgeMinutes(headlineCases, now),
+    oldestExceptionAgeMinutes: getOldestActionableAgeMinutes(exceptionCases, now),
     freshnessTimestamp: lastSyncAt?.toISOString() ?? null,
     stale,
   }
 }
 
-export function buildQueueHealth(cases: SupportCaseRecord[], now: Date) {
+export function buildQueueHealth(
+  cases: SupportCaseRecord[],
+  now: Date,
+  bucket?: SupportServiceBucket
+) {
   const grouped = new Map<string, SupportCaseRecord[]>()
 
-  for (const item of cases.filter(isActionableCase)) {
-    const key = item.teamName || "Unassigned"
+  const filteredCases = cases
+    .filter(isActionableCase)
+    .filter((item) => (bucket ? item.serviceBucket === bucket : true))
+
+  for (const item of filteredCases) {
+    const key = item.productName || "Unmapped"
     const list = grouped.get(key)
     if (list) {
       list.push(item)
@@ -227,6 +331,15 @@ export function buildQueueHealth(cases: SupportCaseRecord[], now: Date) {
   const queues: QueueHealth[] = Array.from(grouped.entries()).map(
     ([teamName, items]) => ({
       teamName,
+      sourceQueues: Array.from(
+        new Set(
+          items
+            .map((item) => item.teamName)
+            .filter((value) => value && value !== teamName)
+        )
+      ).sort(),
+      serviceBucket: items[0]?.serviceBucket ?? "headline",
+      servicePolicyName: items[0]?.servicePolicyName ?? "Standard workflow",
       activeCaseCount: items.length,
       awaitingTeamCount: items.filter(
         (item) =>
@@ -236,8 +349,7 @@ export function buildQueueHealth(cases: SupportCaseRecord[], now: Date) {
       ).length,
       dueSoonCount: items.filter((item) => item.isDueSoon).length,
       breachedCount: items.filter((item) => item.isBreached).length,
-      unassignedCount: items.filter((item) => item.actionableState === "unassigned")
-        .length,
+      unassignedCount: items.filter((item) => !item.hasAssignment).length,
       urgentCount: items.filter((item) => item.priority === "urgent").length,
       enterpriseCount: items.filter((item) => item.customerTier === "enterprise")
         .length,
@@ -257,47 +369,100 @@ export function buildQueueHealth(cases: SupportCaseRecord[], now: Date) {
     })
   )
 
-  return queues.sort((left, right) => {
-    const leftScore =
-      left.breachedCount * 100 +
-      left.dueSoonCount * 20 +
-      left.unassignedCount * 15 +
-      (left.oldestActionableAgeMinutes ?? 0)
-    const rightScore =
-      right.breachedCount * 100 +
-      right.dueSoonCount * 20 +
-      right.unassignedCount * 15 +
-      (right.oldestActionableAgeMinutes ?? 0)
-    return rightScore - leftScore
-  })
+  return sortQueuesByRisk(queues)
 }
 
 export function buildActionItems(queues: QueueHealth[]): ActionItem[] {
-  return queues.slice(0, 3).map((queue, index) => {
-    const severity = queue.breachedCount > 0 || queue.urgentCount > 0 ? "red" : "yellow"
+  return sortQueuesByRisk(
+    queues.filter(
+      (queue) =>
+        queue.breachedCount > 0 || queue.dueSoonCount > 0 || queue.unassignedCount > 0
+    )
+  )
+    .slice(0, 3)
+    .map((queue, index) => {
+      const severity = queue.breachedCount > 0 || queue.urgentCount > 0 ? "red" : "yellow"
 
-    let label = `${queue.teamName} is on track`
-    let detail = `${queue.activeCaseCount} active cases`
+      let label = `Reply to ${queue.teamName}`
+      let detail = `${queue.awaitingTeamCount} customers are waiting on the team`
 
-    if (queue.breachedCount > 0) {
-      label = `${queue.teamName} has ${queue.breachedCount} breached`
-      detail = `${queue.dueSoonCount} more due soon`
-    } else if (queue.dueSoonCount > 0) {
-      label = `${queue.teamName} has ${queue.dueSoonCount} due soon`
-      detail = `${queue.unassignedCount} unassigned, ${queue.urgentCount} urgent`
-    } else if (queue.unassignedCount > 0) {
-      label = `${queue.teamName} has ${queue.unassignedCount} unassigned`
-      detail = `${queue.activeCaseCount} active in queue`
+      if (queue.breachedCount > 0) {
+        detail = `${queue.breachedCount} are over SLA now`
+      } else if (queue.dueSoonCount > 0) {
+        label = `Watch ${queue.teamName}`
+        detail = `${queue.dueSoonCount} are due within the next 60 minutes`
+      } else if (queue.unassignedCount > 0) {
+        label = `Assign ${queue.teamName}`
+        detail = `${queue.unassignedCount} are still unassigned`
+      }
+
+      if (queue.breachedCount > 0 && queue.dueSoonCount > 0) {
+        detail = `${detail} • ${queue.dueSoonCount} more are due soon`
+      } else if (queue.unassignedCount > 0 && queue.breachedCount === 0) {
+        detail = `${detail} • ${queue.awaitingTeamCount} total are waiting on the team`
+      }
+
+      return {
+        id: `${queue.teamName}-${index}`,
+        severity,
+        label,
+        detail,
+        queueName: queue.teamName,
+      }
+    })
+}
+
+export function buildCoverageActionItems(queues: QueueHealth[]) {
+  return buildActionItems(queues)
+}
+
+export function buildUnknownSignals(cases: SupportCaseRecord[]): ClassificationHint[] {
+  const unknownCases = filterCasesByBucket(cases, "unknown").filter(isActionableCase)
+  const counts = new Map<string, ClassificationHint>()
+
+  const add = (kind: ClassificationHint["kind"], label: string) => {
+    const normalized = normalizeLabel(label)
+    if (!normalized) return
+    const key = `${kind}:${normalized}`
+    const current = counts.get(key)
+    if (current) {
+      current.count += 1
+      return
     }
-
-    return {
-      id: `${queue.teamName}-${index}`,
-      severity,
+    counts.set(key, {
       label,
-      detail,
-      queueName: queue.teamName,
+      count: 1,
+      kind,
+    })
+  }
+
+  for (const item of unknownCases) {
+    if (item.teamName && !isGenericQueueName(item.teamName)) {
+      add("queue", item.teamName)
     }
-  })
+
+    for (const tag of item.tags) {
+      if (tag.trim()) {
+        add("tag", tag)
+      }
+    }
+  }
+
+  if (counts.size === 0) {
+    for (const item of unknownCases) {
+      if (item.teamName) {
+        add("queue", item.teamName)
+      }
+    }
+  }
+
+  return Array.from(counts.values())
+    .sort((left, right) => {
+      if (right.count !== left.count) return right.count - left.count
+      if (left.kind !== right.kind) return left.kind.localeCompare(right.kind)
+      return left.label.localeCompare(right.label)
+    })
+    .slice(0, 6)
 }
 
 function getPeriodEligibleCases(
@@ -307,8 +472,166 @@ function getPeriodEligibleCases(
 ) {
   return cases.filter((item) => {
     const resolvedAt = item.resolvedAt ?? item.updatedAt
-    return isWithinInterval(resolvedAt, { start, end }) && item.actionableState === "resolved"
+    return (
+      item.subtype === "conversation" &&
+      isWithinInterval(resolvedAt, { start, end }) &&
+      item.actionableState === "resolved"
+    )
   })
+}
+
+function toFivePointRating(score: number): 1 | 2 | 3 | 4 | 5 {
+  const normalized = Math.round(score / 2)
+  if (normalized <= 1) return 1
+  if (normalized >= 5) return 5
+  return normalized as 1 | 2 | 3 | 4 | 5
+}
+
+function buildCxAggregate(eligible: SupportCaseRecord[]) {
+  const rated = eligible.filter((item) => item.cxScore !== null)
+  const ratingMix: Record<1 | 2 | 3 | 4 | 5, number> = {
+    1: 0,
+    2: 0,
+    3: 0,
+    4: 0,
+    5: 0,
+  }
+
+  for (const item of rated) {
+    const bucket = toFivePointRating(item.cxScore ?? 0)
+    ratingMix[bucket] += 1
+  }
+
+  const positiveCount = ratingMix[4] + ratingMix[5]
+
+  return {
+    score:
+      rated.length === 0
+        ? null
+        : round(rated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) / rated.length, 2),
+    responseRatePercent:
+      eligible.length === 0 ? 0 : round((rated.length / eligible.length) * 100),
+    ratedCount: rated.length,
+    eligibleCount: eligible.length,
+    positiveCount,
+    ratingMix,
+  }
+}
+
+function isSlaMissedForPeriod(item: SupportCaseRecord, now: Date) {
+  if (isActionableCase(item)) {
+    return item.isBreached
+  }
+
+  if (item.rawSlaStatus?.toLowerCase() === "missed") return true
+  if (item.rawSlaStatus?.toLowerCase() === "hit") return false
+  if (!item.nextDueAt) return false
+
+  const resolvedReference = item.resolvedAt ?? item.updatedAt
+  return isBefore(item.nextDueAt, resolvedReference)
+}
+
+function scoreQueueRisk(queue: QueueHealth) {
+  return (
+    queue.breachedCount * 100 +
+    queue.dueSoonCount * 20 +
+    queue.unassignedCount * 15 +
+    queue.urgentCount * 10 +
+    (queue.oldestActionableAgeMinutes ?? 0)
+  )
+}
+
+function sortQueuesByRisk(queues: QueueHealth[]) {
+  return [...queues].sort((left, right) => scoreQueueRisk(right) - scoreQueueRisk(left))
+}
+
+function compareLookupCases(
+  left: SupportCaseRecord,
+  right: SupportCaseRecord,
+  now: Date
+) {
+  if (left.isBreached !== right.isBreached) {
+    return left.isBreached ? -1 : 1
+  }
+
+  if (left.isBreached && right.isBreached) {
+    const overdueDiff = getOverdueMinutes(right, now) - getOverdueMinutes(left, now)
+    if (overdueDiff !== 0) return overdueDiff
+  }
+
+  if (left.isDueSoon !== right.isDueSoon) {
+    return left.isDueSoon ? -1 : 1
+  }
+
+  if (left.isDueSoon && right.isDueSoon) {
+    const dueDiff = getMinutesUntilDue(left, now) - getMinutesUntilDue(right, now)
+    if (dueDiff !== 0) return dueDiff
+  }
+
+  if (left.actionableState === "unassigned" && right.actionableState !== "unassigned") {
+    return -1
+  }
+  if (right.actionableState === "unassigned" && left.actionableState !== "unassigned") {
+    return 1
+  }
+
+  if (left.isHighRisk !== right.isHighRisk) {
+    return left.isHighRisk ? -1 : 1
+  }
+
+  const ageDiff =
+    differenceInMinutes(now, right.waitingSinceAt ?? right.createdAt) -
+    differenceInMinutes(now, left.waitingSinceAt ?? left.createdAt)
+  if (ageDiff !== 0) return ageDiff
+
+  return right.updatedAt.getTime() - left.updatedAt.getTime()
+}
+
+function toCaseStateLabel(item: SupportCaseRecord) {
+  if (item.isBreached) return "Over SLA"
+  if (item.isDueSoon) return "Due in 60m"
+  if (item.actionableState === "unassigned") return "Unassigned"
+  if (item.actionableState === "awaiting-customer") return "Waiting on customer"
+  return "Waiting on us"
+}
+
+function toCaseTimingLabel(item: SupportCaseRecord, now: Date) {
+  if (item.isBreached) {
+    return `${formatAgeLabel(getOverdueMinutes(item, now))} overdue`
+  }
+
+  if (item.isDueSoon && item.nextDueAt) {
+    return `Due in ${formatAgeLabel(getMinutesUntilDue(item, now))}`
+  }
+
+  return `Waiting ${formatAgeLabel(
+    differenceInMinutes(now, item.waitingSinceAt ?? item.createdAt)
+  )}`
+}
+
+export function buildLookupCases(
+  cases: SupportCaseRecord[],
+  now: Date,
+  limit = 5
+): CaseLookupItem[] {
+  return [...cases]
+    .filter(isActionableCase)
+    .sort((left, right) => compareLookupCases(left, right, now))
+    .slice(0, limit)
+    .map((item) => {
+      return {
+        id: item.id,
+        externalId: item.externalId,
+        productName: item.productName || "Unmapped",
+        queueName: item.teamName,
+        subtype: item.subtype,
+        stateLabel: toCaseStateLabel(item),
+        ageLabel: toCaseTimingLabel(item, now),
+        isBreached: item.isBreached,
+        isDueSoon: item.isDueSoon,
+        isHighRisk: item.isHighRisk,
+      }
+    })
 }
 
 export function buildCxPeriodSummary(
@@ -320,39 +643,173 @@ export function buildCxPeriodSummary(
   previousEnd: Date
 ): CxPeriodSummary {
   const eligible = getPeriodEligibleCases(cases, start, end)
-  const rated = eligible.filter((item) => item.cxScore !== null)
-  const previousRated = getPeriodEligibleCases(cases, previousStart, previousEnd).filter(
-    (item) => item.cxScore !== null
-  )
-
-  const score =
-    rated.length === 0
-      ? null
-      : round(rated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) / rated.length, 2)
-  const previousScore =
-    previousRated.length === 0
-      ? null
-      : round(
-          previousRated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) /
-            previousRated.length,
-          2
-        )
+  const current = buildCxAggregate(eligible)
+  const previous = buildCxAggregate(getPeriodEligibleCases(cases, previousStart, previousEnd))
 
   return {
     label,
-    score,
-    responseRatePercent:
-      eligible.length === 0 ? 0 : round((rated.length / eligible.length) * 100),
-    ratedCount: rated.length,
-    eligibleCount: eligible.length,
+    score: current.score,
+    responseRatePercent: current.responseRatePercent,
+    ratedCount: current.ratedCount,
+    eligibleCount: current.eligibleCount,
+    positiveCount: current.positiveCount,
+    ratingMix: current.ratingMix,
     deltaFromPrevious:
-      score === null || previousScore === null ? null : round(score - previousScore, 2),
+      current.score === null || previous.score === null
+        ? null
+        : round(current.score - previous.score, 2),
   }
 }
 
-export function buildCxSeries(cases: SupportCaseRecord[], now: Date): TrendPoint[] {
-  const start = startOfMonth(now)
-  const days = eachDayOfInterval({ start, end: endOfDay(now) })
+export function buildProductHealthRows(
+  cases: SupportCaseRecord[],
+  period: ResolvedSupportPeriod,
+  now: Date
+): ProductHealthRow[] {
+  const grouped = new Map<
+    string,
+    {
+      productName: string
+      serviceBucket: SupportServiceBucket
+      servicePolicyName: string
+      openItems: SupportCaseRecord[]
+      periodItems: SupportCaseRecord[]
+      periodResolvedItems: SupportCaseRecord[]
+    }
+  >()
+
+  const visibleCases = cases.filter((item) => item.serviceBucket !== "unknown")
+
+  for (const item of visibleCases) {
+    const key = `${item.serviceBucket}:${item.productName}`
+    const current = grouped.get(key) ?? {
+      productName: item.productName,
+      serviceBucket: item.serviceBucket,
+      servicePolicyName: item.servicePolicyName,
+      openItems: [],
+      periodItems: [],
+      periodResolvedItems: [],
+    }
+
+    if (isActionableCase(item)) {
+      current.openItems.push(item)
+    }
+
+    if (isWithinInterval(item.createdAt, { start: period.from, end: period.to })) {
+      current.periodItems.push(item)
+    }
+
+    const resolvedAt = item.resolvedAt ?? item.updatedAt
+    if (
+      item.actionableState === "resolved" &&
+      isWithinInterval(resolvedAt, { start: period.from, end: period.to })
+    ) {
+      current.periodResolvedItems.push(item)
+    }
+
+    grouped.set(key, current)
+  }
+
+  return Array.from(grouped.values())
+    .filter((group) => group.openItems.length > 0 || group.periodItems.length > 0)
+    .map((group) => {
+      const awaitingTeamCount = group.openItems.filter(
+        (item) =>
+          item.actionableState === "awaiting-team" ||
+          item.actionableState === "due-soon" ||
+          item.actionableState === "breached"
+      ).length
+      const breachedNowCount = group.openItems.filter((item) => item.isBreached).length
+      const slaTracked = group.periodItems.filter((item) => item.hasSlaTracking)
+      const slaMissedCount = slaTracked.filter((item) =>
+        isSlaMissedForPeriod(item, now)
+      ).length
+      const rated = group.periodResolvedItems.filter((item) => item.cxScore !== null)
+
+      return {
+        productName: group.productName,
+        serviceBucket: group.serviceBucket,
+        servicePolicyName: group.servicePolicyName,
+        openNowCount: group.openItems.length,
+        awaitingTeamCount,
+        breachedNowCount,
+        slaTrackedCount: slaTracked.length,
+        slaAdherencePercent:
+          slaTracked.length === 0
+            ? null
+            : round(((slaTracked.length - slaMissedCount) / slaTracked.length) * 100),
+        slaMissedCount,
+        cxScore:
+          rated.length === 0
+            ? null
+            : round(rated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) / rated.length, 2),
+        responseRatePercent:
+          group.periodResolvedItems.length === 0
+            ? 0
+            : round((rated.length / group.periodResolvedItems.length) * 100),
+        ratedCount: rated.length,
+        eligibleCount: group.periodResolvedItems.length,
+      }
+    })
+    .sort((left, right) => {
+      if (left.serviceBucket !== right.serviceBucket) {
+        const order = { headline: 0, exception: 1, unknown: 2 }
+        return order[left.serviceBucket] - order[right.serviceBucket]
+      }
+
+      const leftScore =
+        left.breachedNowCount * 100 +
+        left.openNowCount * 10 +
+        (left.slaAdherencePercent === null ? -1 : 100 - left.slaAdherencePercent) * 100 +
+        (left.cxScore === null ? 0 : Math.max(0, 10 - left.cxScore) * 10)
+      const rightScore =
+        right.breachedNowCount * 100 +
+        right.openNowCount * 10 +
+        (right.slaAdherencePercent === null ? -1 : 100 - right.slaAdherencePercent) * 100 +
+        (right.cxScore === null ? 0 : Math.max(0, 10 - right.cxScore) * 10)
+      if (rightScore !== leftScore) return rightScore - leftScore
+      return left.productName.localeCompare(right.productName)
+    })
+}
+
+export function buildProductHealthSummary(
+  rows: ProductHealthRow[],
+  cases: SupportCaseRecord[],
+  period: ResolvedSupportPeriod
+): ProductHealthSummary {
+  const openNowCount = rows.reduce((sum, row) => sum + row.openNowCount, 0)
+  const awaitingTeamNowCount = rows.reduce((sum, row) => sum + row.awaitingTeamCount, 0)
+  const breachedNowCount = rows.reduce((sum, row) => sum + row.breachedNowCount, 0)
+  const cx = buildCxAggregate(getPeriodEligibleCases(cases, period.from, period.to))
+
+  const slaMissedCount = rows.reduce((sum, row) => sum + row.slaMissedCount, 0)
+  const slaTrackedCount = rows.reduce((sum, row) => sum + row.slaTrackedCount, 0)
+
+  return {
+    openNowCount,
+    awaitingTeamNowCount,
+    breachedNowCount,
+    slaAdherencePercent:
+      slaTrackedCount === 0
+        ? null
+        : round(((slaTrackedCount - slaMissedCount) / slaTrackedCount) * 100),
+    slaTrackedCount,
+    slaMissedCount,
+    cxScore: cx.score,
+    responseRatePercent: cx.responseRatePercent,
+    ratedCount: cx.ratedCount,
+    eligibleCount: cx.eligibleCount,
+    positiveCount: cx.positiveCount,
+    ratingMix: cx.ratingMix,
+  }
+}
+
+export function buildCxSeries(
+  cases: SupportCaseRecord[],
+  start: Date,
+  end: Date
+): TrendPoint[] {
+  const days = eachDayOfInterval({ start, end: endOfDay(end) })
   return days.map((day) => {
     const dayEnd = endOfDay(day)
     const rated = cases.filter((item) => {
@@ -382,16 +839,24 @@ function collectTagCounts(cases: SupportCaseRecord[]) {
   return counts
 }
 
-export function buildThemeTrends(cases: SupportCaseRecord[], now: Date) {
-  const currentStart = subDays(startOfDay(now), 29)
-  const previousStart = subDays(currentStart, 30)
-  const previousEnd = subDays(currentStart, 1)
+export function buildThemeTrends(
+  cases: SupportCaseRecord[],
+  currentStart: Date,
+  currentEnd: Date
+) {
+  const periodDays = Math.max(1, differenceInCalendarDays(currentEnd, currentStart) + 1)
+  const previousEnd = new Date(currentStart.getTime() - 1)
+  const previousStart = startOfDay(subDays(currentStart, periodDays))
 
-  const currentCases = cases.filter((item) =>
-    isWithinInterval(item.createdAt, { start: currentStart, end: now })
+  const currentCases = cases.filter(
+    (item) =>
+      isActionableCase(item) &&
+      isWithinInterval(item.createdAt, { start: currentStart, end: currentEnd })
   )
-  const previousCases = cases.filter((item) =>
-    isWithinInterval(item.createdAt, { start: previousStart, end: previousEnd })
+  const previousCases = cases.filter(
+    (item) =>
+      isActionableCase(item) &&
+      isWithinInterval(item.createdAt, { start: previousStart, end: previousEnd })
   )
 
   const currentCounts = collectTagCounts(currentCases)
@@ -411,25 +876,35 @@ export function buildThemeTrends(cases: SupportCaseRecord[], now: Date) {
     .slice(0, 5)
 }
 
-export function buildQueuePressure(cases: SupportCaseRecord[], now: Date) {
-  const currentStart = subDays(startOfDay(now), 6)
-  const previousStart = subDays(currentStart, 7)
-  const previousEnd = subDays(currentStart, 1)
+export function buildQueuePressure(
+  cases: SupportCaseRecord[],
+  currentStart: Date,
+  currentEnd: Date
+) {
+  const periodDays = Math.max(1, differenceInCalendarDays(currentEnd, currentStart) + 1)
+  const previousEnd = new Date(currentStart.getTime() - 1)
+  const previousStart = startOfDay(subDays(currentStart, periodDays))
 
   const countByTeam = (items: SupportCaseRecord[]) => {
     const counts = new Map<string, number>()
     for (const item of items) {
-      counts.set(item.teamName, (counts.get(item.teamName) ?? 0) + 1)
+      counts.set(item.productName, (counts.get(item.productName) ?? 0) + 1)
     }
     return counts
   }
 
   const currentCounts = countByTeam(
-    cases.filter((item) => isWithinInterval(item.createdAt, { start: currentStart, end: now }))
+    cases.filter(
+      (item) =>
+        isActionableCase(item) &&
+        isWithinInterval(item.createdAt, { start: currentStart, end: currentEnd })
+    )
   )
   const previousCounts = countByTeam(
-    cases.filter((item) =>
-      isWithinInterval(item.createdAt, { start: previousStart, end: previousEnd })
+    cases.filter(
+      (item) =>
+        isActionableCase(item) &&
+        isWithinInterval(item.createdAt, { start: previousStart, end: previousEnd })
     )
   )
 
@@ -444,9 +919,12 @@ export function buildQueuePressure(cases: SupportCaseRecord[], now: Date) {
     .slice(0, 4)
 }
 
-export function buildReopenTrend(cases: SupportCaseRecord[], now: Date) {
-  const start = subDays(startOfDay(now), 13)
-  const days = eachDayOfInterval({ start, end: endOfDay(now) })
+export function buildReopenTrend(
+  cases: SupportCaseRecord[],
+  start: Date,
+  end: Date
+) {
+  const days = eachDayOfInterval({ start, end: endOfDay(end) })
   return days.map((day) => {
     const dayEnd = endOfDay(day)
     const reopenCount = cases
@@ -466,11 +944,26 @@ export function buildLiveWallboardData(
   now: Date
 ): LiveWallboardData {
   const snapshot = buildSupportHealthSnapshot(cases, lastSyncAt, now)
-  const queues = buildQueueHealth(cases, now)
+  const queues = buildQueueHealth(cases, now, "headline")
+  const exceptionQueues = buildQueueHealth(cases, now, "exception")
+  const unknownQueues = buildQueueHealth(cases, now, "unknown")
+  const mappedQueues = sortQueuesByRisk([...queues, ...exceptionQueues])
+  const statusBreakdown: CaseStatusBreakdown = {
+    open: cases.filter((item) => item.status === "open").length,
+    pending: cases.filter((item) => item.status === "pending").length,
+    resolved: cases.filter((item) => item.status === "resolved").length,
+    closed: cases.filter((item) => item.status === "closed").length,
+  }
   return {
     snapshot,
+    statusBreakdown,
+    mappedQueues,
     queues,
-    actionItems: buildActionItems(queues),
+    exceptionQueues,
+    unknownQueues,
+    unknownSignals: buildUnknownSignals(cases),
+    actionItems: buildCoverageActionItems(mappedQueues),
+    lookupCases: buildLookupCases(cases, now),
     refreshedAt: now.toISOString(),
   }
 }
@@ -478,11 +971,17 @@ export function buildLiveWallboardData(
 export function buildTrendsWallboardData(
   cases: SupportCaseRecord[],
   lastSyncAt: Date | null,
-  now: Date
+  now: Date,
+  period: ResolvedSupportPeriod
 ): TrendsWallboardData {
   const snapshot = buildSupportHealthSnapshot(cases, lastSyncAt, now)
+  const headlineCases = filterCasesByBucket(cases, "headline")
+  const productHealth = buildProductHealthRows(cases, period, now)
   return {
     snapshot,
+    period: period.range,
+    periodSummary: buildProductHealthSummary(productHealth, cases, period),
+    productHealth,
     periods: [
       buildCxPeriodSummary(
         cases,
@@ -509,10 +1008,13 @@ export function buildTrendsWallboardData(
         subDays(startOfYear(now), 1)
       ),
     ],
-    cxSeries: buildCxSeries(cases, now),
-    themeTrends: buildThemeTrends(cases, now),
-    queuePressure: buildQueuePressure(cases, now),
-    reopenTrend: buildReopenTrend(cases, now),
+    cxSeries: buildCxSeries(cases, period.from, period.to),
+    themeTrends: buildThemeTrends(cases, period.from, period.to),
+    queuePressure: buildQueuePressure(headlineCases, period.from, period.to),
+    reopenTrend: buildReopenTrend(cases, period.from, period.to),
+    exceptionQueues: buildQueueHealth(cases, now, "exception"),
+    unknownQueues: buildQueueHealth(cases, now, "unknown"),
+    lookupCases: buildLookupCases(cases, now),
     refreshedAt: now.toISOString(),
   }
 }

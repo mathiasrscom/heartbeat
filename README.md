@@ -34,10 +34,10 @@ pnpm db:push
 pnpm dev
 ```
 
-If you want the 5-minute Intercom worker locally as well, run:
+`pnpm dev` starts both the web app and the 5-minute Intercom worker. If you only want the web UI without the worker, run:
 
 ```bash
-pnpm dev:all
+pnpm dev:web
 ```
 
 ## Database

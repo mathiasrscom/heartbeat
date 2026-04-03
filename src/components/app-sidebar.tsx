@@ -2,7 +2,6 @@ import { Link, useLocation } from "@tanstack/react-router"
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -12,11 +11,9 @@ import {
   SidebarMenuButton,
   SidebarMenuButtonText,
 } from "@/components/ui/sidebar"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   LayoutDashboard,
   Settings,
-  ChevronsUpDown,
   Monitor,
   LineChart,
 } from "lucide-react"
@@ -90,12 +87,12 @@ export function AppSidebar() {
                 const isActive = location.pathname === item.href
                 return (
                   <SidebarMenuItem key={item.href}>
-                    <Link to={item.href}>
+                    <a href={item.href} target="_blank" rel="noreferrer">
                       <SidebarMenuButton isActive={isActive} tooltip={item.label}>
                         <item.icon className="h-4 w-4" />
                         <SidebarMenuButtonText>{item.label}</SidebarMenuButtonText>
                       </SidebarMenuButton>
-                    </Link>
+                    </a>
                   </SidebarMenuItem>
                 )
               })}
@@ -123,26 +120,6 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-
-      {/* Footer with user */}
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton className="h-auto py-2">
-              <Avatar className="h-8 w-8">
-                <AvatarFallback className="text-xs">MR</AvatarFallback>
-              </Avatar>
-              <SidebarMenuButtonText>
-                <div className="flex flex-col items-start">
-                  <span className="text-sm font-medium">Mathias</span>
-                  <span className="text-xs text-muted-foreground">m.riis91@gmail.com</span>
-                </div>
-              </SidebarMenuButtonText>
-              <ChevronsUpDown className="ml-auto h-4 w-4 text-muted-foreground" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
     </Sidebar>
   )
 }

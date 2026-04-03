@@ -35,20 +35,29 @@ async function runSyncCycle() {
   const { syncIntercom } = await import("@/lib/intercom-sync")
   const accessToken = await getAccessToken()
 
-  if (!accessToken) {
-    console.warn("[workers] No Intercom access token configured. Skipping sync.")
-    return
-  }
+  try {
+    if (!accessToken) {
+      console.warn("[workers] No Intercom access token configured. Skipping sync.")
+      return
+    }
 
-  console.info("[workers] Starting Intercom sync")
-  const result = await syncIntercom(accessToken)
+    console.info("[workers] Starting Intercom sync")
+    const result = await syncIntercom(accessToken)
 
-  if (result.success) {
-    console.info(
-      `[workers] Intercom sync complete: ${result.nodesSynced} nodes, ${result.entitiesSynced} entities`
-    )
-  } else {
-    console.error("[workers] Intercom sync finished with errors", result.errors)
+    if (result.skipped) {
+      console.info("[workers] Intercom sync already running. Skipping this interval.")
+      return
+    }
+
+    if (result.success) {
+      console.info(
+        `[workers] Intercom sync complete: ${result.nodesSynced} nodes, ${result.entitiesSynced} entities`
+      )
+    } else {
+      console.error("[workers] Intercom sync finished with errors", result.errors)
+    }
+  } catch (error) {
+    console.error("[workers] Intercom sync crashed", error)
   }
 }
 

@@ -5,11 +5,79 @@
  * Docs: https://developers.intercom.com/docs/references/rest-api/api.intercom.io/
  */
 
-const INTERCOM_API_BASE = "https://api.intercom.io"
+const DEFAULT_INTERCOM_API_BASE = "https://api.intercom.io"
 const INTERCOM_API_VERSION = "2.14"
 
 interface IntercomConfig {
   accessToken: string
+  appUrl?: string | null
+  apiBaseUrl?: string | null
+  apiVersion?: string
+}
+
+const EUROPE_APP_HOST = "app.eu.intercom.com"
+const AUSTRALIA_APP_HOST = "app.au.intercom.com"
+const EUROPE_API_BASE = "https://api.eu.intercom.io"
+const AUSTRALIA_API_BASE = "https://api.au.intercom.io"
+
+function normalizeBaseUrl(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.origin.replace(/\/$/, "")
+  } catch {
+    return null
+  }
+}
+
+function resolveBaseUrlFromAppUrl(appUrl?: string | null) {
+  if (!appUrl) return null
+
+  try {
+    const parsed = new URL(appUrl)
+    if (parsed.hostname === EUROPE_APP_HOST) return EUROPE_API_BASE
+    if (parsed.hostname === AUSTRALIA_APP_HOST) return AUSTRALIA_API_BASE
+    return DEFAULT_INTERCOM_API_BASE
+  } catch {
+    return null
+  }
+}
+
+export function resolveIntercomApiBaseUrl(config: {
+  appUrl?: string | null
+  apiBaseUrl?: string | null
+}) {
+  const explicit = config.apiBaseUrl ? normalizeBaseUrl(config.apiBaseUrl) : null
+  if (explicit) return explicit
+
+  const fromAppUrl = resolveBaseUrlFromAppUrl(config.appUrl)
+  if (fromAppUrl) return fromAppUrl
+
+  return DEFAULT_INTERCOM_API_BASE
+}
+
+export class IntercomApiError extends Error {
+  status: number
+  endpoint: string
+  responseBody: string
+
+  constructor(input: {
+    status: number
+    endpoint: string
+    responseBody: string
+  }) {
+    super(`Intercom API error (${input.status}): ${input.responseBody}`)
+    this.name = "IntercomApiError"
+    this.status = input.status
+    this.endpoint = input.endpoint
+    this.responseBody = input.responseBody
+  }
+}
+
+export function isIntercomApiError(error: unknown): error is IntercomApiError {
+  return error instanceof IntercomApiError
 }
 
 // Types for Intercom API responses
@@ -78,6 +146,11 @@ export interface IntercomConversation {
     rating: number
     remark?: string
     created_at: number
+  }
+  custom_attributes?: Record<string, unknown>
+  ai_agent?: {
+    rating?: number | string | null
+    rating_remark?: string | null
   }
 }
 
@@ -173,12 +246,17 @@ export interface IntercomListResponse<T> {
 // Create the client
 export function createIntercomClient(config: IntercomConfig) {
   const { accessToken } = config
+  const apiBaseUrl = resolveIntercomApiBaseUrl({
+    appUrl: config.appUrl,
+    apiBaseUrl: config.apiBaseUrl,
+  })
+  const apiVersion = config.apiVersion ?? INTERCOM_API_VERSION
 
   async function request<T>(
     endpoint: string,
     options: RequestInit = {}
   ): Promise<T> {
-    const url = `${INTERCOM_API_BASE}${endpoint}`
+    const url = `${apiBaseUrl}${endpoint}`
 
     const response = await fetch(url, {
       ...options,
@@ -186,14 +264,18 @@ export function createIntercomClient(config: IntercomConfig) {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         Accept: "application/json",
-        "Intercom-Version": INTERCOM_API_VERSION,
+        "Intercom-Version": apiVersion,
         ...options.headers,
       },
     })
 
     if (!response.ok) {
       const error = await response.text()
-      throw new Error(`Intercom API error (${response.status}): ${error}`)
+      throw new IntercomApiError({
+        status: response.status,
+        endpoint,
+        responseBody: error,
+      })
     }
 
     return response.json()
@@ -219,17 +301,29 @@ export function createIntercomClient(config: IntercomConfig) {
     },
 
     // Search conversations (more flexible)
-    async searchConversations(query: {
-      field: string
-      operator: string
-      value: string | number | boolean
-    }[]): Promise<IntercomListResponse<IntercomConversation>> {
+    async searchConversations(
+      query: {
+        field: string
+        operator: string
+        value: string | number | boolean
+      }[],
+      params?: {
+        per_page?: number
+        starting_after?: string
+      }
+    ): Promise<IntercomListResponse<IntercomConversation>> {
       return request("/conversations/search", {
         method: "POST",
         body: JSON.stringify({
           query: {
             operator: "AND",
             value: query,
+          },
+          pagination: {
+            per_page: params?.per_page ?? 50,
+            ...(params?.starting_after
+              ? { starting_after: params.starting_after }
+              : {}),
           },
         }),
       })
@@ -253,16 +347,48 @@ export function createIntercomClient(config: IntercomConfig) {
       return request(`/contacts/${id}`)
     },
 
+    async searchTickets(
+      query: {
+        field: string
+        operator: string
+        value: string | number | boolean
+      }[],
+      params?: {
+        per_page?: number
+        starting_after?: string
+      }
+    ): Promise<IntercomListResponse<IntercomTicket>> {
+      return request("/tickets/search", {
+        method: "POST",
+        body: JSON.stringify({
+          query: {
+            operator: "AND",
+            value: query,
+          },
+          pagination: {
+            per_page: params?.per_page ?? 50,
+            ...(params?.starting_after
+              ? { starting_after: params.starting_after }
+              : {}),
+          },
+        }),
+      })
+    },
+
     async listTickets(params?: {
       per_page?: number
       starting_after?: string
     }): Promise<IntercomListResponse<IntercomTicket>> {
-      const searchParams = new URLSearchParams()
-      if (params?.per_page) searchParams.set("per_page", String(params.per_page))
-      if (params?.starting_after) searchParams.set("starting_after", params.starting_after)
-
-      const query = searchParams.toString()
-      return request(`/tickets${query ? `?${query}` : ""}`)
+      return this.searchTickets(
+        [
+          {
+            field: "created_at",
+            operator: ">",
+            value: 0,
+          },
+        ],
+        params
+      )
     },
 
     async getTicket(id: string): Promise<IntercomTicket> {

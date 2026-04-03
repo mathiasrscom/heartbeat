@@ -13,7 +13,6 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WallboardTrendsRouteImport } from './routes/wallboard/trends'
 import { Route as WallboardLiveRouteImport } from './routes/wallboard/live'
-import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -35,25 +34,18 @@ const WallboardLiveRoute = WallboardLiveRouteImport.update({
   path: '/wallboard/live',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
-  id: '/api/auth/$',
-  path: '/api/auth/$',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
   '/wallboard/live': typeof WallboardLiveRoute
   '/wallboard/trends': typeof WallboardTrendsRoute
-  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
   '/wallboard/live': typeof WallboardLiveRoute
   '/wallboard/trends': typeof WallboardTrendsRoute
-  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -61,30 +53,13 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/wallboard/live': typeof WallboardLiveRoute
   '/wallboard/trends': typeof WallboardTrendsRoute
-  '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/settings'
-    | '/wallboard/live'
-    | '/wallboard/trends'
-    | '/api/auth/$'
+  fullPaths: '/' | '/settings' | '/wallboard/live' | '/wallboard/trends'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/settings'
-    | '/wallboard/live'
-    | '/wallboard/trends'
-    | '/api/auth/$'
-  id:
-    | '__root__'
-    | '/'
-    | '/settings'
-    | '/wallboard/live'
-    | '/wallboard/trends'
-    | '/api/auth/$'
+  to: '/' | '/settings' | '/wallboard/live' | '/wallboard/trends'
+  id: '__root__' | '/' | '/settings' | '/wallboard/live' | '/wallboard/trends'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -92,7 +67,6 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   WallboardLiveRoute: typeof WallboardLiveRoute
   WallboardTrendsRoute: typeof WallboardTrendsRoute
-  ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -125,13 +99,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WallboardLiveRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/auth/$': {
-      id: '/api/auth/$'
-      path: '/api/auth/$'
-      fullPath: '/api/auth/$'
-      preLoaderRoute: typeof ApiAuthSplatRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -140,7 +107,6 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   WallboardLiveRoute: WallboardLiveRoute,
   WallboardTrendsRoute: WallboardTrendsRoute,
-  ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

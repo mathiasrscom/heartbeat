@@ -1,13 +1,17 @@
 import { eq } from "drizzle-orm"
 import { createServerFn } from "@tanstack/react-start"
+import { getDefaultIntercomAppUrl, normalizeIntercomAppUrl } from "@/lib/intercom-links"
+import { extractIntercomCx } from "@/lib/intercom-cx"
 import {
   buildLiveWallboardData,
   buildTrendsWallboardData,
   classifyActionableState,
   isCaseBreached,
   isCaseDueSoon,
-  resolveResponseTargetMinutes,
 } from "./logic"
+import { normalizeSupportProductFilterInput, type SupportProductFilterInput } from "./filter"
+import { normalizeSupportPeriodInput, resolveSupportPeriod, type SupportPeriodInput } from "./period"
+import { classifySupportCase, getKnownSupportProducts } from "./policy"
 import type {
   LiveWallboardData,
   SupportCasePriority,
@@ -15,6 +19,8 @@ import type {
   SupportTier,
   TrendsWallboardData,
 } from "./types"
+
+export interface SupportViewInput extends SupportPeriodInput, SupportProductFilterInput {}
 
 type JsonRecord = Record<string, unknown>
 
@@ -59,6 +65,18 @@ function getFirstNumber(raw: unknown, paths: string[][]) {
     if (typeof value === "number" && Number.isFinite(value)) return value
   }
   return 0
+}
+
+function getFirstTimestamp(raw: unknown, paths: string[][]) {
+  for (const path of paths) {
+    const value = getNestedValue(raw, path)
+    if (typeof value === "number" && Number.isFinite(value)) return value
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return null
 }
 
 function getTier(value: unknown): SupportTier {
@@ -121,6 +139,24 @@ function getQueueName(raw: unknown, teamName: string | null) {
   return typeof candidate === "string" ? candidate : "General"
 }
 
+function getTeamAssignmentId(raw: unknown) {
+  const candidates = [
+    getNestedValue(raw, ["team_assignee_id"]),
+    getNestedValue(raw, ["team", "id"]),
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate
+    }
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return String(candidate)
+    }
+  }
+
+  return null
+}
+
 function getTags(raw: unknown, current: unknown) {
   if (Array.isArray(current) && current.every((item) => typeof item === "string")) {
     return current
@@ -153,25 +189,37 @@ function isAwaitingCustomer(raw: unknown) {
     return true
   }
 
+  const lastAdminReplyAt = getFirstTimestamp(raw, [
+    ["statistics", "last_admin_reply_at"],
+    ["last_admin_reply_at"],
+  ])
+  const lastContactReplyAt = getFirstTimestamp(raw, [
+    ["statistics", "last_contact_reply_at"],
+    ["last_contact_reply_at"],
+  ])
+
+  if (
+    lastAdminReplyAt !== null &&
+    lastContactReplyAt !== null &&
+    lastAdminReplyAt > lastContactReplyAt
+  ) {
+    return true
+  }
+
   const snoozedUntil = toDate(getNestedValue(raw, ["snoozed_until"]))
   return snoozedUntil !== null && snoozedUntil.getTime() > Date.now()
 }
 
-function getNextDueAt(raw: unknown, waitingSinceAt: Date | null, priority: SupportCasePriority, tier: SupportTier) {
-  const dueAt = getFirstDate(raw, [
+function getExplicitSlaDueAt(raw: unknown) {
+  return getFirstDate(raw, [
+    ["sla_applied", "first_response", "due_at"],
+    ["sla_applied", "next_response", "due_at"],
     ["sla_due_at"],
     ["sla", "due_at"],
     ["sla_applied", "next_event_at"],
     ["sla_applied", "due_at"],
     ["statistics", "next_reply_at"],
   ])
-
-  if (dueAt) return dueAt
-  if (!waitingSinceAt) return null
-
-  return new Date(
-    waitingSinceAt.getTime() + resolveResponseTargetMinutes(priority, tier) * 60_000
-  )
 }
 
 function normalizeSupportCase(input: {
@@ -208,11 +256,29 @@ function normalizeSupportCase(input: {
       ["last_contact_reply_at"],
     ]) ?? input.updatedAt
   const rawSlaStatus = getSlaStatus(input.rawData)
-  const nextDueAt = getNextDueAt(input.rawData, waitingSinceAt, priority, tier)
+  const nextDueAt = getExplicitSlaDueAt(input.rawData)
+  const hasSlaTracking = rawSlaStatus !== null || nextDueAt !== null
+  const tags = getTags(input.rawData, input.tags)
+  const queueName = getQueueName(input.rawData, input.teamName)
+  const teamAssignmentId = getTeamAssignmentId(input.rawData)
+  const hasAssignment = Boolean(input.assigneeName || teamAssignmentId)
+  const classification = classifySupportCase({
+    title: input.title,
+    description: input.description,
+    tags,
+    queueName,
+    rawData: input.rawData,
+  })
+  const cxFromRaw = extractIntercomCx(input.rawData)
+  const resolvedCxScore =
+    input.cxScore ?? (subtype === "conversation" ? cxFromRaw.score : null)
+  const resolvedCxComment =
+    input.cxComment ?? (subtype === "conversation" ? cxFromRaw.comment : null)
   const actionableState = classifyActionableState({
     status: input.status,
-    assigneeName: input.assigneeName,
+    hasAssignment,
     rawSlaStatus,
+    hasSlaTracking,
     nextDueAt,
     waitingSinceAt,
     priority,
@@ -223,8 +289,9 @@ function normalizeSupportCase(input: {
 
   const draft = {
     status: input.status,
-    assigneeName: input.assigneeName,
+    hasAssignment,
     rawSlaStatus,
+    hasSlaTracking,
     nextDueAt,
     waitingSinceAt,
     priority,
@@ -248,9 +315,13 @@ function normalizeSupportCase(input: {
     priority,
     title: input.title,
     description: input.description,
-    tags: getTags(input.rawData, input.tags),
-    teamName: getQueueName(input.rawData, input.teamName),
+    tags,
+    teamName: queueName,
+    productName: classification.productName,
+    serviceBucket: classification.serviceBucket,
+    servicePolicyName: classification.servicePolicyName,
     assigneeName: input.assigneeName,
+    hasAssignment,
     customerTier: tier,
     createdAt: input.createdAt,
     updatedAt: input.updatedAt,
@@ -258,8 +329,9 @@ function normalizeSupportCase(input: {
     waitingSinceAt,
     nextDueAt,
     rawSlaStatus,
-    cxScore: input.cxScore,
-    cxComment: input.cxComment,
+    hasSlaTracking,
+    cxScore: resolvedCxScore,
+    cxComment: resolvedCxComment,
     responseTimeMinutes: input.responseTimeMinutes,
     resolutionTimeHours: input.resolutionTimeHours,
     reopenCount: getFirstNumber(input.rawData, [
@@ -283,9 +355,9 @@ async function loadSupportCases() {
       import("@/db/schema"),
     ])
 
-    const { nodes, entities, teamMembers, syncState } = schema
+    const { adapterConfigs, nodes, entities, teamMembers, syncState } = schema
 
-    const [rows, syncRows] = await Promise.all([
+    const [rows, syncRows, configRows] = await Promise.all([
       db
         .select({
           id: nodes.id,
@@ -314,15 +386,21 @@ async function loadSupportCases() {
         .leftJoin(teamMembers, eq(nodes.assigneeId, teamMembers.id))
         .where(eq(nodes.source, "intercom")),
       db.select().from(syncState).where(eq(syncState.adapterId, "intercom")).limit(1),
+      db.select().from(adapterConfigs).where(eq(adapterConfigs.adapterId, "intercom")).limit(1),
     ])
 
     const cases = rows
       .map((row) => normalizeSupportCase(row))
       .filter((item): item is SupportCaseRecord => item !== null)
 
+    const configRow = configRows[0] ?? null
+    const settings = isRecord(configRow?.settings) ? configRow.settings : {}
+
     return {
       now,
       lastSyncAt: syncRows[0]?.lastSyncAt ?? null,
+      intercomAppUrl:
+        normalizeIntercomAppUrl(settings.appUrl) ?? getDefaultIntercomAppUrl(),
       cases,
     }
   } catch (error) {
@@ -330,21 +408,94 @@ async function loadSupportCases() {
     return {
       now,
       lastSyncAt: null,
+      intercomAppUrl: getDefaultIntercomAppUrl(),
       cases: [] as SupportCaseRecord[],
     }
   }
 }
 
-export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
-  async (): Promise<LiveWallboardData> => {
-    const { cases, lastSyncAt, now } = await loadSupportCases()
-    return buildLiveWallboardData(cases, lastSyncAt, now)
+function getAvailableProducts(cases: SupportCaseRecord[]) {
+  const seen = new Set<string>()
+  const products: string[] = []
+
+  for (const productName of getKnownSupportProducts()) {
+    if (!seen.has(productName)) {
+      seen.add(productName)
+      products.push(productName)
+    }
+  }
+
+  for (const item of cases) {
+    if (item.serviceBucket === "unknown") continue
+    if (seen.has(item.productName)) continue
+    seen.add(item.productName)
+    products.push(item.productName)
+  }
+
+  return products
+}
+
+function filterSupportCasesByProduct(
+  cases: SupportCaseRecord[],
+  selectedProducts: string[],
+  options?: {
+    includeUnknownWhenAll?: boolean
+  }
+) {
+  const includeUnknownWhenAll = options?.includeUnknownWhenAll ?? true
+  if (selectedProducts.length === 0) {
+    return includeUnknownWhenAll
+      ? cases
+      : cases.filter((item) => item.serviceBucket !== "unknown")
+  }
+
+  const selected = new Set(selectedProducts)
+  return cases.filter(
+    (item) => item.serviceBucket !== "unknown" && selected.has(item.productName)
+  )
+}
+
+export const getLiveWallboard = createServerFn({ method: "GET" })
+  .inputValidator((data: SupportProductFilterInput | undefined) =>
+    normalizeSupportProductFilterInput(data)
+  )
+  .handler(async ({ data }): Promise<LiveWallboardData> => {
+    const { cases, lastSyncAt, now, intercomAppUrl } = await loadSupportCases()
+    const availableProducts = getAvailableProducts(cases)
+    const selectedProducts = normalizeSupportProductFilterInput(data).products.filter((product) =>
+      availableProducts.includes(product)
+    )
+    const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
+      includeUnknownWhenAll: true,
+    })
+    return {
+      ...buildLiveWallboardData(filteredCases, lastSyncAt, now),
+      intercomAppUrl,
+      availableProducts,
+      selectedProducts,
+    }
   }
 )
 
-export const getTrendsWallboard = createServerFn({ method: "GET" }).handler(
-  async (): Promise<TrendsWallboardData> => {
-    const { cases, lastSyncAt, now } = await loadSupportCases()
-    return buildTrendsWallboardData(cases, lastSyncAt, now)
-  }
-)
+export const getTrendsWallboard = createServerFn({ method: "GET" })
+  .inputValidator((data: SupportViewInput | undefined) => ({
+    ...normalizeSupportPeriodInput(data),
+    ...normalizeSupportProductFilterInput(data),
+  }))
+  .handler(async ({ data }): Promise<TrendsWallboardData> => {
+    const { cases, lastSyncAt, now, intercomAppUrl } = await loadSupportCases()
+    const availableProducts = getAvailableProducts(cases)
+    const selectedProducts = normalizeSupportProductFilterInput(data).products.filter((product) =>
+      availableProducts.includes(product)
+    )
+    const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
+      includeUnknownWhenAll: false,
+    })
+    const period = resolveSupportPeriod(data, now)
+    return {
+      ...buildTrendsWallboardData(filteredCases, lastSyncAt, now, period),
+      intercomAppUrl,
+      availableProducts,
+      selectedProducts,
+    }
+  })
