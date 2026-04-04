@@ -117,6 +117,7 @@ export interface CaseLookupItem {
 export interface CxPeriodSummary {
   label: string
   score: number | null
+  satisfactionScorePercent: number | null
   responseRatePercent: number
   ratedCount: number
   eligibleCount: number
@@ -175,9 +176,13 @@ export interface ProductHealthRow {
   slaAdherencePercent: number | null
   slaMissedCount: number
   cxScore: number | null
+  satisfactionScorePercent: number | null
   responseRatePercent: number
   ratedCount: number
   eligibleCount: number
+  positiveCount: number
+  topPerformerName: string | null
+  topPerformerPositiveCount: number
 }
 
 export interface ProductHealthSummary {
@@ -188,6 +193,7 @@ export interface ProductHealthSummary {
   slaMissedCount: number
   slaAdherencePercent: number | null
   cxScore: number | null
+  satisfactionScorePercent: number | null
   responseRatePercent: number
   ratedCount: number
   eligibleCount: number

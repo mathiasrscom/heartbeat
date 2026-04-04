@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  buildCxSeries,
   buildLiveWallboardData,
   buildLookupCases,
   buildTrendsWallboardData,
@@ -239,10 +240,13 @@ describe("support health logic", () => {
     expect(trends.periods).toHaveLength(3)
     expect(trends.periods[0].label).toBe("Month")
     expect(trends.periods[0].score).toBe(8)
+    expect(trends.periods[0].satisfactionScorePercent).toBe(100)
     expect(trends.periods[1].label).toBe("Quarter")
     expect(trends.periods[1].score).toBe(8)
+    expect(trends.periods[1].satisfactionScorePercent).toBe(66.7)
     expect(trends.periods[2].label).toBe("Year")
     expect(trends.periods[2].score).toBe(8)
+    expect(trends.periods[2].satisfactionScorePercent).toBe(66.7)
   })
 
   it("keeps public wallboard output free of customer identifiers", () => {
@@ -407,6 +411,7 @@ describe("support health logic", () => {
       breachedNowCount: 1,
       slaAdherencePercent: 100,
       cxScore: 9,
+      satisfactionScorePercent: 100,
     })
   })
 
@@ -519,6 +524,7 @@ describe("support health logic", () => {
 
     expect(trends.productHealth).toHaveLength(1)
     expect(trends.periodSummary.cxScore).toBe(8)
+    expect(trends.periodSummary.satisfactionScorePercent).toBe(100)
     expect(trends.periodSummary.responseRatePercent).toBe(50)
     expect(trends.periodSummary.positiveCount).toBe(1)
     expect(trends.periodSummary.ratingMix[4]).toBe(1)
@@ -559,6 +565,50 @@ describe("support health logic", () => {
     expect(trends.periodSummary.ratedCount).toBe(1)
     expect(trends.periodSummary.responseRatePercent).toBe(100)
     expect(trends.periodSummary.cxScore).toBe(8)
+    expect(trends.periodSummary.satisfactionScorePercent).toBe(100)
+  })
+
+  it("builds daily CX series as satisfaction percent from rated resolved conversations", () => {
+    const series = buildCxSeries(
+      [
+        makeCase({
+          id: "day-1-positive",
+          subtype: "conversation",
+          status: "closed",
+          actionableState: "resolved",
+          resolvedAt: new Date("2026-03-30T09:00:00.000Z"),
+          updatedAt: new Date("2026-03-30T09:00:00.000Z"),
+          cxScore: 10,
+        }),
+        makeCase({
+          id: "day-1-negative",
+          subtype: "conversation",
+          status: "closed",
+          actionableState: "resolved",
+          resolvedAt: new Date("2026-03-30T10:00:00.000Z"),
+          updatedAt: new Date("2026-03-30T10:00:00.000Z"),
+          cxScore: 4,
+        }),
+        makeCase({
+          id: "day-2-positive",
+          subtype: "conversation",
+          status: "closed",
+          actionableState: "resolved",
+          resolvedAt: new Date("2026-03-31T09:00:00.000Z"),
+          updatedAt: new Date("2026-03-31T09:00:00.000Z"),
+          cxScore: 8,
+        }),
+      ],
+      new Date("2026-03-30T00:00:00.000Z"),
+      new Date("2026-03-31T23:59:59.000Z")
+    )
+
+    const values = series
+      .map((point) => point.value)
+      .filter((value): value is number => value !== null)
+
+    expect(values).toContain(50)
+    expect(values).toContain(100)
   })
 
   it("shows only five lookup IDs and ranks longest-overdue breaches first", () => {

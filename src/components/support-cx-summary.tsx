@@ -6,7 +6,7 @@ const ratingOrder: RatingKey[] = [5, 4, 3, 2, 1]
 
 export function SupportCxSummary({
   label,
-  score,
+  satisfactionScorePercent,
   ratedCount,
   positiveCount,
   responseRatePercent,
@@ -14,7 +14,7 @@ export function SupportCxSummary({
   variant = "dashboard",
 }: {
   label: string
-  score: number | null
+  satisfactionScorePercent: number | null
   ratedCount: number
   positiveCount: number
   responseRatePercent: number
@@ -42,7 +42,7 @@ export function SupportCxSummary({
               isWallboard ? "text-stone-50" : "text-foreground"
             )}
           >
-            {score === null ? "—" : score.toFixed(1)}
+            {satisfactionScorePercent === null ? "—" : `${satisfactionScorePercent.toFixed(1)}%`}
           </div>
         </div>
         <div

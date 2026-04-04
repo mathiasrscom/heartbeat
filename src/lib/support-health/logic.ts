@@ -487,6 +487,11 @@ function toFivePointRating(score: number): 1 | 2 | 3 | 4 | 5 {
   return normalized as 1 | 2 | 3 | 4 | 5
 }
 
+function toSatisfactionPercent(positiveCount: number, ratedCount: number) {
+  if (ratedCount === 0) return null
+  return round((positiveCount / ratedCount) * 100)
+}
+
 function buildCxAggregate(eligible: SupportCaseRecord[]) {
   const rated = eligible.filter((item) => item.cxScore !== null)
   const ratingMix: Record<1 | 2 | 3 | 4 | 5, number> = {
@@ -509,6 +514,7 @@ function buildCxAggregate(eligible: SupportCaseRecord[]) {
       rated.length === 0
         ? null
         : round(rated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) / rated.length, 2),
+    satisfactionScorePercent: toSatisfactionPercent(positiveCount, rated.length),
     responseRatePercent:
       eligible.length === 0 ? 0 : round((rated.length / eligible.length) * 100),
     ratedCount: rated.length,
@@ -649,6 +655,7 @@ export function buildCxPeriodSummary(
   return {
     label,
     score: current.score,
+    satisfactionScorePercent: current.satisfactionScorePercent,
     responseRatePercent: current.responseRatePercent,
     ratedCount: current.ratedCount,
     eligibleCount: current.eligibleCount,
@@ -725,6 +732,22 @@ export function buildProductHealthRows(
         isSlaMissedForPeriod(item, now)
       ).length
       const rated = group.periodResolvedItems.filter((item) => item.cxScore !== null)
+      const positiveCount = rated.filter(
+        (item) => toFivePointRating(item.cxScore ?? 0) >= 4
+      ).length
+      const positiveByAssignee = new Map<string, number>()
+      for (const item of rated) {
+        if (toFivePointRating(item.cxScore ?? 0) < 4) continue
+        if (!item.assigneeName || item.assigneeName.trim().length === 0) continue
+        positiveByAssignee.set(
+          item.assigneeName,
+          (positiveByAssignee.get(item.assigneeName) ?? 0) + 1
+        )
+      }
+      const topPerformer = Array.from(positiveByAssignee.entries()).sort((left, right) => {
+        if (right[1] !== left[1]) return right[1] - left[1]
+        return left[0].localeCompare(right[0])
+      })[0]
 
       return {
         productName: group.productName,
@@ -743,12 +766,16 @@ export function buildProductHealthRows(
           rated.length === 0
             ? null
             : round(rated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) / rated.length, 2),
+        satisfactionScorePercent: toSatisfactionPercent(positiveCount, rated.length),
         responseRatePercent:
           group.periodResolvedItems.length === 0
             ? 0
             : round((rated.length / group.periodResolvedItems.length) * 100),
         ratedCount: rated.length,
         eligibleCount: group.periodResolvedItems.length,
+        positiveCount,
+        topPerformerName: topPerformer?.[0] ?? null,
+        topPerformerPositiveCount: topPerformer?.[1] ?? 0,
       }
     })
     .sort((left, right) => {
@@ -761,12 +788,16 @@ export function buildProductHealthRows(
         left.breachedNowCount * 100 +
         left.openNowCount * 10 +
         (left.slaAdherencePercent === null ? -1 : 100 - left.slaAdherencePercent) * 100 +
-        (left.cxScore === null ? 0 : Math.max(0, 10 - left.cxScore) * 10)
+        (left.satisfactionScorePercent === null
+          ? 0
+          : Math.max(0, 100 - left.satisfactionScorePercent))
       const rightScore =
         right.breachedNowCount * 100 +
         right.openNowCount * 10 +
         (right.slaAdherencePercent === null ? -1 : 100 - right.slaAdherencePercent) * 100 +
-        (right.cxScore === null ? 0 : Math.max(0, 10 - right.cxScore) * 10)
+        (right.satisfactionScorePercent === null
+          ? 0
+          : Math.max(0, 100 - right.satisfactionScorePercent))
       if (rightScore !== leftScore) return rightScore - leftScore
       return left.productName.localeCompare(right.productName)
     })
@@ -796,6 +827,7 @@ export function buildProductHealthSummary(
     slaTrackedCount,
     slaMissedCount,
     cxScore: cx.score,
+    satisfactionScorePercent: cx.satisfactionScorePercent,
     responseRatePercent: cx.responseRatePercent,
     ratedCount: cx.ratedCount,
     eligibleCount: cx.eligibleCount,
@@ -813,17 +845,19 @@ export function buildCxSeries(
   return days.map((day) => {
     const dayEnd = endOfDay(day)
     const rated = cases.filter((item) => {
+      if (item.subtype !== "conversation") return false
+      if (item.actionableState !== "resolved") return false
       if (item.cxScore === null) return false
       const resolvedAt = item.resolvedAt ?? item.updatedAt
       return isWithinInterval(resolvedAt, { start: day, end: dayEnd })
     })
+    const positiveCount = rated.filter(
+      (item) => toFivePointRating(item.cxScore ?? 0) >= 4
+    ).length
 
     return {
       label: format(day, "d"),
-      value:
-        rated.length === 0
-          ? null
-          : round(rated.reduce((sum, item) => sum + (item.cxScore ?? 0), 0) / rated.length, 2),
+      value: toSatisfactionPercent(positiveCount, rated.length),
     }
   })
 }

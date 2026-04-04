@@ -317,6 +317,9 @@ function SettingsPage() {
               <div className="mt-1 text-muted-foreground">
                 CX period metrics use resolved conversations only.
               </div>
+              <div className="mt-1 text-muted-foreground">
+                Satisfaction score = percent of rated conversations with a 4 or 5 rating.
+              </div>
             </div>
 
             {feedback ? (

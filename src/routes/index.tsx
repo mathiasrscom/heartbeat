@@ -44,7 +44,6 @@ function SupportDashboardPage() {
     to: search.to,
     products: search.products,
   }
-  const month = trends.periods[0]
   const selectedPeriodLabel = trends.period.label.toLowerCase()
 
   function handlePeriodChange(next: {
@@ -150,12 +149,16 @@ function SupportDashboardPage() {
               </div>
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 <MetricCard
-                  label={`CX in ${selectedPeriodLabel}`}
-                  tooltip={`Average CX score from rated conversations resolved in ${selectedPeriodLabel}.`}
-                  value={trends.periodSummary.cxScore?.toFixed(1) ?? "—"}
+                  label={`Satisfaction in ${selectedPeriodLabel}`}
+                  tooltip={`Percent of rated conversations in ${selectedPeriodLabel} with a 4 or 5 score.`}
+                  value={
+                    trends.periodSummary.satisfactionScorePercent === null
+                      ? "—"
+                      : `${trends.periodSummary.satisfactionScorePercent}%`
+                  }
                   warning={
-                    (trends.periodSummary.cxScore ?? 0) > 0 &&
-                    (trends.periodSummary.cxScore ?? 0) < 8
+                    trends.periodSummary.satisfactionScorePercent !== null &&
+                    trends.periodSummary.satisfactionScorePercent < 90
                   }
                 />
                 <MetricCard
@@ -282,9 +285,13 @@ function SupportDashboardPage() {
             <CardContent className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-5">
                 <CoverageBlock
-                  label="CX score"
-                  tooltip={`Average CX score from rated conversations resolved in ${trends.period.label.toLowerCase()}.`}
-                  value={trends.periodSummary.cxScore === null ? "—" : trends.periodSummary.cxScore.toFixed(1)}
+                  label="Satisfaction score"
+                  tooltip={`Percent of rated conversations in ${trends.period.label.toLowerCase()} with a 4 or 5 score.`}
+                  value={
+                    trends.periodSummary.satisfactionScorePercent === null
+                      ? "—"
+                      : `${trends.periodSummary.satisfactionScorePercent}%`
+                  }
                 />
                 <CoverageBlock
                   label="Rated"
@@ -341,8 +348,16 @@ function SupportDashboardPage() {
                         danger={row.slaAdherencePercent !== null && row.slaAdherencePercent < 90}
                       />
                       <QueueMetric
-                        label="CX"
-                        value={row.cxScore === null ? "—" : row.cxScore.toFixed(1)}
+                        label="Satisfaction"
+                        value={
+                          row.satisfactionScorePercent === null
+                            ? "—"
+                            : `${row.satisfactionScorePercent}%`
+                        }
+                        danger={
+                          row.satisfactionScorePercent !== null &&
+                          row.satisfactionScorePercent < 90
+                        }
                       />
                       <QueueMetric
                         label="Rated"
@@ -430,7 +445,7 @@ function SupportDashboardPage() {
               <div className="rounded-md border p-4">
                 <SupportCxSummary
                   label={trends.period.label}
-                  score={trends.periodSummary.cxScore}
+                  satisfactionScorePercent={trends.periodSummary.satisfactionScorePercent}
                   ratedCount={trends.periodSummary.ratedCount}
                   positiveCount={trends.periodSummary.positiveCount}
                   responseRatePercent={trends.periodSummary.responseRatePercent}
@@ -442,7 +457,9 @@ function SupportDashboardPage() {
                   <div key={period.label} className="rounded-md border p-4">
                     <div className="text-sm text-muted-foreground">{period.label}</div>
                     <div className="mt-1 text-3xl font-semibold tracking-tight">
-                      {period.score?.toFixed(1) ?? "—"}
+                      {period.satisfactionScorePercent === null
+                        ? "—"
+                        : `${period.satisfactionScorePercent}%`}
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
                       Rated {period.responseRatePercent}%

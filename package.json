@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite dev --port 3000\" \"tsx jobs/index.ts\"",
+    "dev": "concurrently \"vite dev --port 3010\" \"tsx jobs/index.ts\"",
     "dev:web": "vite dev --port 3000",
     "build": "vite build",
     "preview": "vite preview",
