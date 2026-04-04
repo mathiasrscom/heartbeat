@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { createFileRoute } from "@tanstack/react-router"
 import { useServerFn } from "@tanstack/react-start"
 import { Card, CardContent } from "@/components/ui/card"
@@ -16,8 +16,10 @@ import {
 } from "lucide-react"
 import {
   getIntercomConnectionState,
+  listIntercomTickerOllamaModels,
   removeIntercomConnection,
   saveIntercomConnection,
+  saveIntercomTickerLlmSettings,
   saveIntercomWorkspaceLink,
   triggerIntercomSync,
   type IntercomConnectionState,
@@ -34,12 +36,23 @@ function SettingsPage() {
   const refreshIntercomState = useServerFn(getIntercomConnectionState)
   const connectIntercom = useServerFn(saveIntercomConnection)
   const saveWorkspaceLink = useServerFn(saveIntercomWorkspaceLink)
+  const saveTickerLlmSettings = useServerFn(saveIntercomTickerLlmSettings)
+  const listTickerModels = useServerFn(listIntercomTickerOllamaModels)
   const removeIntercom = useServerFn(removeIntercomConnection)
   const syncIntercom = useServerFn(triggerIntercomSync)
 
   const [state, setState] = useState(initialState)
   const [accessToken, setAccessToken] = useState("")
   const [appUrl, setAppUrl] = useState(initialState.appUrl ?? "")
+  const [tickerLlmModel, setTickerLlmModel] = useState(initialState.tickerLlmModel ?? "")
+  const [tickerLlmBaseUrl, setTickerLlmBaseUrl] = useState(initialState.tickerLlmBaseUrl ?? "")
+  const [availableTickerModels, setAvailableTickerModels] = useState<string[]>([])
+  const [isCustomTickerModelMode, setIsCustomTickerModelMode] = useState(false)
+  const [isLoadingTickerModels, setIsLoadingTickerModels] = useState(false)
+  const [tickerModelsError, setTickerModelsError] = useState<string | null>(null)
+  const [resolvedTickerBaseUrl, setResolvedTickerBaseUrl] = useState<string | null>(
+    initialState.tickerLlmBaseUrl ?? null
+  )
   const [feedback, setFeedback] = useState<{ tone: "success" | "error"; text: string } | null>(
     null
   )
@@ -47,6 +60,10 @@ function SettingsPage() {
   const [isSavingAppUrl, setIsSavingAppUrl] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
   const [isStartingSync, setIsStartingSync] = useState(false)
+  const [isSavingTickerLlm, setIsSavingTickerLlm] = useState(false)
+  const tickerLookupRequestRef = useRef(0)
+
+  const canSaveTickerLlm = tickerLlmBaseUrl.trim().length > 0 && tickerLlmModel.trim().length > 0
 
   useEffect(() => {
     if (!state.isSyncRunning) {
@@ -63,6 +80,59 @@ function SettingsPage() {
       window.clearInterval(intervalId)
     }
   }, [refreshIntercomState, state.isSyncRunning])
+
+  useEffect(() => {
+    const rawBaseUrl = tickerLlmBaseUrl.trim()
+
+    if (!rawBaseUrl) {
+      tickerLookupRequestRef.current += 1
+      setIsLoadingTickerModels(false)
+      setTickerModelsError(null)
+      setAvailableTickerModels([])
+      setResolvedTickerBaseUrl(null)
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const requestId = ++tickerLookupRequestRef.current
+      setIsLoadingTickerModels(true)
+      setTickerModelsError(null)
+
+      void listTickerModels({ data: { baseUrl: rawBaseUrl } })
+        .then((result) => {
+          if (tickerLookupRequestRef.current !== requestId) return
+
+          setResolvedTickerBaseUrl(result.baseUrl)
+          setAvailableTickerModels(result.models)
+          setTickerLlmModel((current) => {
+            const trimmed = current.trim()
+            if (isCustomTickerModelMode) return current
+            if (result.models.length === 0) return current
+            if (!trimmed || !result.models.includes(trimmed)) {
+              return result.models[0]
+            }
+            return current
+          })
+        })
+        .catch((error) => {
+          if (tickerLookupRequestRef.current !== requestId) return
+          const message =
+            error instanceof Error ? error.message : "Unable to read models from Ollama."
+          setAvailableTickerModels([])
+          setTickerModelsError(message)
+          setResolvedTickerBaseUrl(null)
+        })
+        .finally(() => {
+          if (tickerLookupRequestRef.current === requestId) {
+            setIsLoadingTickerModels(false)
+          }
+        })
+    }, 500)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [listTickerModels, tickerLlmBaseUrl])
 
   async function handleConnect(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -108,6 +178,61 @@ function SettingsPage() {
       setFeedback({ tone: "error", text: message })
     } finally {
       setIsSavingAppUrl(false)
+    }
+  }
+
+  async function handleSaveTickerLlm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setFeedback(null)
+    setIsSavingTickerLlm(true)
+
+    try {
+      const result = await saveTickerLlmSettings({
+        data: {
+          model: tickerLlmModel,
+          baseUrl: tickerLlmBaseUrl,
+        },
+      })
+
+      setState(result.state)
+      setTickerLlmModel(result.state.tickerLlmModel ?? "")
+      setTickerLlmBaseUrl(result.state.tickerLlmBaseUrl ?? "")
+      setResolvedTickerBaseUrl(result.state.tickerLlmBaseUrl ?? null)
+      setFeedback({ tone: "success", text: result.message })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to save ticker generation settings."
+      setFeedback({ tone: "error", text: message })
+    } finally {
+      setIsSavingTickerLlm(false)
+    }
+  }
+
+  async function handleClearTickerLlm() {
+    setFeedback(null)
+    setIsSavingTickerLlm(true)
+
+    try {
+      const result = await saveTickerLlmSettings({
+        data: {
+          model: "",
+          baseUrl: "",
+        },
+      })
+      setState(result.state)
+      setTickerLlmModel("")
+      setTickerLlmBaseUrl("")
+      setIsCustomTickerModelMode(false)
+      setAvailableTickerModels([])
+      setTickerModelsError(null)
+      setResolvedTickerBaseUrl(null)
+      setFeedback({ tone: "success", text: result.message })
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to clear ticker generation settings."
+      setFeedback({ tone: "error", text: message })
+    } finally {
+      setIsSavingTickerLlm(false)
     }
   }
 
@@ -306,6 +431,120 @@ function SettingsPage() {
             <p className="text-[10px] text-muted-foreground mt-1">
               Example: https://app.eu.intercom.com/a/inbox/zah460bv/inbox/conversation/215560824562362
             </p>
+
+            <form className="mt-3 rounded-lg border bg-muted/20 px-3 py-3" onSubmit={handleSaveTickerLlm}>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-medium text-foreground">Ollama settings</div>
+                  <div className="text-[10px] text-muted-foreground">
+                    Add a base URL and we auto-load local models. Saving enables generated wallboard messages.
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input
+                  type="url"
+                  placeholder="http://127.0.0.1:11434"
+                  className="h-7 text-xs"
+                  value={tickerLlmBaseUrl}
+                  onChange={(event) => setTickerLlmBaseUrl(event.target.value)}
+                />
+                {availableTickerModels.length > 0 && !isCustomTickerModelMode ? (
+                  <select
+                    className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
+                    value={tickerLlmModel}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      if (value === "__custom__") {
+                        setIsCustomTickerModelMode(true)
+                        setTickerLlmModel("")
+                        return
+                      }
+                      setTickerLlmModel(value)
+                    }}
+                  >
+                    {availableTickerModels.map((model) => (
+                      <option key={model} value={model}>
+                        {model}
+                      </option>
+                    ))}
+                    <option value="__custom__">Custom model…</option>
+                  </select>
+                ) : (
+                  <Input
+                    type="text"
+                    placeholder="llama3.1:8b"
+                    className="h-7 text-xs"
+                    value={tickerLlmModel}
+                    onChange={(event) => setTickerLlmModel(event.target.value)}
+                  />
+                )}
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                <div>
+                  {isLoadingTickerModels
+                    ? "Querying Ollama models..."
+                    : tickerModelsError
+                      ? tickerModelsError
+                        : availableTickerModels.length > 0
+                          ? `${availableTickerModels.length} model${availableTickerModels.length === 1 ? "" : "s"} found at ${
+                              resolvedTickerBaseUrl ?? tickerLlmBaseUrl
+                            }`
+                        : tickerLlmBaseUrl.trim()
+                          ? "No models found at this URL yet."
+                          : "Fallback mode: deterministic ticker messages"}
+                </div>
+                {availableTickerModels.length > 0 ? (
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                    className="h-6 px-2 text-[10px]"
+                    onClick={() => {
+                      if (isCustomTickerModelMode) {
+                        setIsCustomTickerModelMode(false)
+                        if (availableTickerModels.length > 0) {
+                          setTickerLlmModel(availableTickerModels[0])
+                        }
+                      } else {
+                        setIsCustomTickerModelMode(true)
+                      }
+                    }}
+                  >
+                    {isCustomTickerModelMode ? "Use discovered models" : "Use custom model"}
+                  </Button>
+                ) : null}
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <div className="text-[10px] text-muted-foreground">
+                  {state.tickerLlmEnabled && state.tickerLlmModel
+                    ? `Active: ${state.tickerLlmProvider ?? "ollama"} • ${state.tickerLlmModel}`
+                    : "Ollama disabled until both URL and model are saved"}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                    className="h-7 text-xs px-3"
+                    disabled={isSavingTickerLlm || (!state.tickerLlmEnabled && !tickerLlmBaseUrl && !tickerLlmModel)}
+                    onClick={handleClearTickerLlm}
+                  >
+                    Clear settings
+                  </Button>
+                <Button
+                  size="sm"
+                  className="h-7 text-xs px-3"
+                  type="submit"
+                  disabled={isSavingTickerLlm || !canSaveTickerLlm}
+                >
+                  {isSavingTickerLlm ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Save Ollama settings
+                </Button>
+                </div>
+              </div>
+            </form>
 
             <div className="mt-3 rounded-lg border bg-muted/20 px-3 py-2 text-xs">
               <div className="font-medium text-foreground">CX source</div>

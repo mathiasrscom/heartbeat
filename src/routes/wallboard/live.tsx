@@ -1,65 +1,38 @@
 import { startTransition, useMemo } from "react"
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { TriangleAlert } from "lucide-react"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { InfoTooltip } from "@/components/info-tooltip"
-import { SatisfactionTrendChart } from "@/components/satisfaction-trend-chart"
-import { SupportCxSummary } from "@/components/support-cx-summary"
 import { SupportProductFilter } from "@/components/support-product-filter"
-import {
-  ProductAutoplayStrip,
-  useProductAutoplay,
-} from "@/components/wallboard/product-autoplay-strip"
+import { useProductAutoplay } from "@/components/wallboard/product-autoplay-strip"
 import { RotatingPanels } from "@/components/wallboard/rotating-panels"
 import { WallboardSection, WallboardShell } from "@/components/wallboard/wallboard-shell"
 import { buildIntercomCaseUrl } from "@/lib/intercom-links"
 import { normalizeSupportProductFilterInput } from "@/lib/support-health/filter"
-import { getLiveWallboard, getTrendsWallboard } from "@/lib/support-health/server"
+import { getLiveWallboard } from "@/lib/support-health/server"
 import type {
   CaseLookupItem,
+  LiveFocusLane,
   LiveWallboardData,
   SupportHealthSnapshot,
-  TrendsWallboardData,
 } from "@/lib/support-health/types"
 import { cn } from "@/lib/utils"
+
+const TOP_LOOKUP_LIMIT = 4
 
 export const Route = createFileRoute("/wallboard/live")({
   ssr: false,
   validateSearch: (search: Record<string, unknown>) =>
     normalizeSupportProductFilterInput(search),
   loaderDeps: ({ search }) => normalizeSupportProductFilterInput(search),
-  loader: async ({ deps }) => {
-    const [live, trends] = await Promise.all([
-      getLiveWallboard({ data: deps }),
-      getTrendsWallboard({
-        data: {
-          ...deps,
-          period: "current-week",
-        },
-      }),
-    ])
-
-    return { live, trends }
-  },
+  loader: async ({ deps }) => getLiveWallboard({ data: deps }),
   component: LiveWallboardPage,
 })
 
 function LiveWallboardPage() {
-  const routeData = Route.useLoaderData() as
-    | { live: LiveWallboardData; trends?: TrendsWallboardData }
-    | (LiveWallboardData & { trends?: TrendsWallboardData })
-  const live = hasWrappedLiveData(routeData) ? routeData.live : routeData
-  const trends = hasWrappedLiveData(routeData)
-    ? routeData.trends
-    : routeData.trends
+  const live = Route.useLoaderData() as LiveWallboardData
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
-  const periodLabel = trends?.period.label ?? "Current week"
-  const periodSummary = trends?.periodSummary
-  const periodContext = trends?.periods ?? []
-  const cxSeries = trends?.cxSeries ?? []
-  const productHealthByName = new Map(
-    (trends?.productHealth ?? []).map((row) => [row.productName, row])
-  )
   const autoplayProducts = useMemo(
     () =>
       resolveAutoplayProducts(
@@ -70,30 +43,35 @@ function LiveWallboardPage() {
     [live.availableProducts, live.mappedQueues, live.selectedProducts]
   )
   const autoplay = useProductAutoplay(autoplayProducts, { intervalMs: 12_000 })
-  const focusedProductName = autoplay.activeProduct
+  const focusedProductName = resolveFocusedProductName({
+    aiFocusProductName: live.focusPlan?.focusProductName ?? null,
+    selectedProducts: search.products ?? [],
+    autoplayProductName: autoplay.activeProduct,
+    availableProducts: live.availableProducts,
+  })
   const focusedQueue =
     focusedProductName === null
       ? null
       : live.mappedQueues.find((queue) => queue.teamName === focusedProductName) ?? null
-  const focusedHealth =
-    focusedProductName === null ? null : productHealthByName.get(focusedProductName) ?? null
-  const focusedLookupCases =
+  const prioritizedLookupPool =
     focusedProductName === null
       ? live.lookupCases
-      : live.lookupCases
-          .filter((item) => item.productName === focusedProductName)
-          .slice(0, 5)
-  const focusStatus = resolveFocusStatus(focusedQueue, focusedHealth?.satisfactionScorePercent ?? null)
+      : live.lookupCases.filter((item) => item.productName === focusedProductName)
+  const prioritizedLookupCases = prioritizeLookupCases(
+    prioritizedLookupPool.length > 0 ? prioritizedLookupPool : live.lookupCases,
+    live.focusPlan?.topCaseExternalIds ?? []
+  )
+  const focusedLookupCases =
+    prioritizedLookupCases.slice(0, TOP_LOOKUP_LIMIT)
+  const focusStatus = resolveFocusStatus(focusedQueue)
   const focusStatusLabel = buildStatusLabel(focusStatus)
   const focusPrimaryAction = buildFocusPrimaryAction(focusedQueue)
-  const focusSecondaryAction = buildFocusSecondaryAction(focusedQueue, focusedHealth?.slaAdherencePercent ?? null)
-  const quickWinText = buildQuickWinText(
-    focusedHealth?.topPerformerName ?? null,
-    focusedHealth?.topPerformerPositiveCount ?? 0,
-    periodLabel
-  )
-  const focusSatisfaction =
-    focusedHealth?.satisfactionScorePercent ?? periodSummary?.satisfactionScorePercent ?? null
+  const focusSecondaryAction = buildFocusSecondaryAction(focusedQueue)
+  const aiHeadline = live.focusPlan?.headline?.trim() || null
+  const aiSupportingText = live.focusPlan?.supportingText?.trim() || null
+  const laneRows = buildLaneRows(live.snapshot)
+  const orderedLaneRows = resolveLaneOrder(live.focusPlan?.laneOrder).map((lane) => laneRows[lane])
+  const liveTickerItems = buildLiveTickerItems(live, focusedProductName, focusedQueue)
 
   function handleProductChange(products: string[]) {
     startTransition(() => {
@@ -106,74 +84,42 @@ function LiveWallboardPage() {
     })
   }
 
-  const customerHappinessPanel = (
-    <WallboardSection title="Customer happiness">
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-        <div className="space-y-4">
-          <div className="rounded-md border border-white/10 bg-black/10 px-4 py-4">
-            <div className="text-sm text-stone-400">
-              {focusedProductName ? `${focusedProductName} satisfaction target: 90%` : "Satisfaction target: 90%"}
-            </div>
-            <div
-              className={cn(
-                "mt-2 text-5xl font-semibold tracking-tight",
-                getSatisfactionToneClass(focusSatisfaction)
-              )}
-            >
-              {focusSatisfaction === null ? "—" : `${focusSatisfaction}%`}
-            </div>
-            <div className="mt-2 text-base text-stone-300">
-              {buildSatisfactionHeadline(focusSatisfaction)}
-            </div>
-          </div>
+  const immediateQueuePanel = (
+    <WallboardSection title="Immediate queue state">
+      <div className="grid gap-4 xl:grid-cols-3">
+        <QueueInlineMetric label="Open now" value={live.snapshot.currentActiveCaseCount} />
+        <QueueInlineMetric label="Waiting on us" value={live.snapshot.currentAwaitingTeamCount} />
+        <QueueInlineMetric
+          label="Over SLA"
+          value={live.snapshot.currentBreachedCount}
+          danger={live.snapshot.currentBreachedCount > 0}
+        />
+        <QueueInlineMetric
+          label="Due in 60m"
+          value={live.snapshot.currentDueSoonCount}
+          warning={live.snapshot.currentDueSoonCount > 0}
+        />
+        <QueueInlineMetric
+          label="Unassigned"
+          value={live.snapshot.currentUnassignedCount}
+          warning={live.snapshot.currentUnassignedCount > 0}
+        />
+        <QueueInlineMetric
+          label="Waiting on customer"
+          value={live.snapshot.currentAwaitingCustomerCount}
+        />
+      </div>
 
-          <div className="rounded-md border border-white/10 bg-black/10 px-4 py-4">
-            <SupportCxSummary
-              label={periodLabel}
-              satisfactionScorePercent={periodSummary?.satisfactionScorePercent ?? null}
-              ratedCount={periodSummary?.ratedCount ?? 0}
-              positiveCount={periodSummary?.positiveCount ?? 0}
-              responseRatePercent={periodSummary?.responseRatePercent ?? 0}
-              ratingMix={periodSummary?.ratingMix ?? emptyRatingMix}
-              variant="wallboard"
-            />
-          </div>
-        </div>
-
-        <div className="space-y-3">
-          <SatisfactionTrendChart
-            points={cxSeries}
-            title={`Daily satisfaction • ${periodLabel}`}
+      <div className="mt-4 grid gap-2">
+        {orderedLaneRows.map((lane) => (
+          <LiveLaneRow
+            key={lane.id}
+            label={lane.label}
+            count={lane.count}
+            detail={lane.detail}
+            tone={lane.tone}
           />
-          <div className="grid gap-3">
-            {periodContext.map((period) => (
-              <div
-                key={period.label}
-                className="rounded-md border border-white/10 bg-black/10 px-4 py-4"
-              >
-                <div className="text-sm text-stone-400">{period.label}</div>
-                <div
-                  className={cn(
-                    "mt-1 text-3xl font-semibold tracking-tight",
-                    getSatisfactionToneClass(period.satisfactionScorePercent)
-                  )}
-                >
-                  {period.satisfactionScorePercent === null
-                    ? "—"
-                    : `${period.satisfactionScorePercent}%`}
-                </div>
-                <div className="mt-1 text-xs text-stone-400">
-                  Rated {period.responseRatePercent}%
-                </div>
-              </div>
-            ))}
-            {periodContext.length === 0 ? (
-              <div className="rounded-md border border-white/10 bg-black/10 px-4 py-4 text-sm text-stone-400">
-                CX context periods will appear after the next loader refresh.
-              </div>
-            ) : null}
-          </div>
-        </div>
+        ))}
       </div>
     </WallboardSection>
   )
@@ -188,17 +134,7 @@ function LiveWallboardPage() {
       title={focusedProductName ? `Product spotlight • ${focusedProductName}` : "By product right now"}
       className="min-h-0"
     >
-      <div className="grid grid-cols-[minmax(0,1.1fr)_120px_90px_80px_90px_95px_90px_95px] gap-x-4 border-b border-white/10 pb-3 text-sm text-stone-400">
-        <div>Product</div>
-        <div className="text-right">Satisfaction</div>
-        <div className="text-right">Rated</div>
-        <div className="text-right">Open</div>
-        <div className="text-right">Waiting</div>
-        <div className="text-right">Over SLA</div>
-        <div className="text-right">Due</div>
-        <div className="text-right">Unassigned</div>
-      </div>
-      <div className="divide-y divide-white/10">
+      <div className="space-y-3">
         {visibleQueues.length === 0 ? (
           live.snapshot.unknownCaseCount > 0 ? (
             <div className="py-10 text-lg text-stone-400">
@@ -209,49 +145,33 @@ function LiveWallboardPage() {
           )
         ) : (
           visibleQueues.map((queue) => {
-            const trendRow = productHealthByName.get(queue.teamName)
-            const satisfactionValue =
-              trendRow?.satisfactionScorePercent === null ||
-              trendRow?.satisfactionScorePercent === undefined
-                ? "—"
-                : `${trendRow.satisfactionScorePercent}%`
-            const ratedValue =
-              trendRow?.responseRatePercent === undefined
-                ? "—"
-                : `${trendRow.responseRatePercent}%`
+            const nextAction = buildQueueRowAction(queue)
 
             return (
               <div
                 key={queue.teamName}
-                className="grid grid-cols-[minmax(0,1.1fr)_120px_90px_80px_90px_95px_90px_95px] gap-x-4 py-4 text-lg"
+                className="rounded-md border border-white/10 bg-black/10 px-4 py-3"
               >
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-stone-100">{queue.teamName}</div>
-                  <div className="mt-1 text-sm text-stone-400">
-                    {formatQueueSources(queue.sourceQueues)}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-lg font-medium text-stone-100">{queue.teamName}</div>
+                    <div className="mt-1 text-xs text-stone-400">
+                      {formatQueueSources(queue.sourceQueues)}
+                    </div>
                   </div>
+                  <QueueActionValue
+                    text={nextAction.text}
+                    tone={nextAction.tone}
+                    className="max-w-[42ch] text-right"
+                  />
                 </div>
-                <QueueValue
-                  value={satisfactionValue}
-                  danger={
-                    trendRow?.satisfactionScorePercent !== null &&
-                    trendRow?.satisfactionScorePercent !== undefined &&
-                    trendRow.satisfactionScorePercent < 90
-                  }
-                />
-                <QueueValue
-                  value={ratedValue}
-                  warning={
-                    trendRow?.responseRatePercent !== undefined &&
-                    trendRow.responseRatePercent > 0 &&
-                    trendRow.responseRatePercent < 20
-                  }
-                />
-                <QueueValue value={queue.activeCaseCount} />
-                <QueueValue value={queue.awaitingTeamCount} />
-                <QueueValue value={queue.breachedCount} danger />
-                <QueueValue value={queue.dueSoonCount} warning />
-                <QueueValue value={queue.unassignedCount} />
+                <div className="mt-3 grid grid-cols-5 gap-2">
+                  <QueueInlineMetric label="Open" value={queue.activeCaseCount} />
+                  <QueueInlineMetric label="Waiting" value={queue.awaitingTeamCount} />
+                  <QueueInlineMetric label="Over SLA" value={queue.breachedCount} danger />
+                  <QueueInlineMetric label="Due" value={queue.dueSoonCount} warning />
+                  <QueueInlineMetric label="Unassigned" value={queue.unassignedCount} />
+                </div>
               </div>
             )
           })
@@ -272,43 +192,25 @@ function LiveWallboardPage() {
           {focusStatusLabel}
         </div>
         <p className="text-base leading-7 text-stone-300">
-          {focusedProductName ? `${focusedProductName}: ${focusPrimaryAction}` : buildQueueHeadline(live.snapshot)}
+          {aiHeadline ??
+            (focusedProductName
+              ? `${focusedProductName}: ${focusPrimaryAction}`
+              : buildQueueHeadline(live.snapshot))}
         </p>
         <p className="text-sm leading-6 text-stone-400">
-          {focusedProductName
-            ? focusSecondaryAction
-            : buildQueueSupportingText(live.snapshot)}
+          {aiSupportingText ??
+            (focusedProductName ? focusSecondaryAction : buildQueueSupportingText(live.snapshot))}
         </p>
-        {quickWinText ? (
-          <div className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
-            {quickWinText}
-          </div>
-        ) : null}
 
         <div className="grid grid-cols-2 gap-4">
           <StateBlock
-            label={focusedProductName ? "SLA in period" : "SLA now"}
-            tooltip={
-              focusedProductName
-                ? "SLA adherence for this product in the selected period."
-                : "Current open-case SLA adherence in selected products."
-            }
-            value={
-              focusedProductName
-                ? focusedHealth?.slaAdherencePercent === null ||
-                  focusedHealth?.slaAdherencePercent === undefined
-                  ? "—"
-                  : `${focusedHealth.slaAdherencePercent}%`
-                : `${live.snapshot.slaAdherencePercent}%`
-            }
+            label="SLA now"
+            tooltip="Current open-case SLA adherence in selected products."
+            value={`${live.snapshot.slaAdherencePercent}%`}
             tone={
-              (focusedProductName
-                ? focusedHealth?.slaAdherencePercent ?? null
-                : live.snapshot.slaAdherencePercent) >= 90
+              live.snapshot.slaAdherencePercent >= 90
                 ? "text-emerald-300"
-                : (focusedProductName
-                      ? focusedHealth?.slaAdherencePercent ?? null
-                      : live.snapshot.slaAdherencePercent) >= 75
+                : live.snapshot.slaAdherencePercent >= 75
                   ? "text-amber-300"
                   : "text-red-300"
             }
@@ -345,7 +247,11 @@ function LiveWallboardPage() {
 
   const topIdsPanel = (
     <WallboardSection
-      title={focusedProductName ? `Top 5 IDs • ${focusedProductName}` : "Top 5 IDs to check"}
+      title={
+        focusedProductName
+          ? `Top ${TOP_LOOKUP_LIMIT} IDs • ${focusedProductName}`
+          : `Top ${TOP_LOOKUP_LIMIT} IDs to check`
+      }
       className="min-h-0"
     >
       <div className="space-y-2">
@@ -355,17 +261,20 @@ function LiveWallboardPage() {
           focusedLookupCases.map((item) => (
             <div
               key={item.id}
-              className="grid grid-cols-[220px_minmax(0,1fr)_160px] items-center gap-4 rounded-md border border-white/10 bg-black/10 px-4 py-3"
+              className="grid grid-cols-[minmax(0,1fr)_130px] items-center gap-3 rounded-md border border-white/10 bg-black/10 px-3 py-2.5"
             >
               <div className="min-w-0">
                 <CaseLink item={item} appUrl={live.intercomAppUrl} />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-base font-medium text-stone-100">
-                  {formatProductName(item.productName)}
-                </div>
-                <div className="truncate text-xs text-stone-400">
-                  {item.queueName} • {formatLookupSubtype(item.subtype)}
+                <div className="mt-1 text-xs text-stone-300">
+                  <div className="font-medium text-stone-100">
+                    {formatProductName(item.productName)}
+                  </div>
+                  <div className="text-stone-400">
+                    {item.queueName} • {formatLookupSubtype(item.subtype)}
+                  </div>
+                  <div className="mt-2">
+                    <LookupAssignee item={item} />
+                  </div>
                 </div>
               </div>
               <div className="text-right">
@@ -379,7 +288,7 @@ function LiveWallboardPage() {
                 >
                   {item.stateLabel}
                 </div>
-                <div className="mt-1 text-sm text-stone-400">{item.ageLabel}</div>
+                <div className="mt-1 text-sm text-stone-300">{item.ageLabel}</div>
               </div>
             </div>
           ))
@@ -393,57 +302,59 @@ function LiveWallboardPage() {
       title="Support Health"
       refreshedAt={live.snapshot.freshnessTimestamp ?? live.refreshedAt}
       stale={live.snapshot.stale}
+      tickerItems={liveTickerItems}
       toolbar={
-        <SupportProductFilter
-          availableProducts={live.availableProducts}
-          selectedProducts={search.products ?? []}
-          onChange={handleProductChange}
-          mode="wallboard"
-        />
+        <div className="flex flex-wrap items-center gap-3">
+          <SupportProductFilter
+            availableProducts={live.availableProducts}
+            selectedProducts={search.products ?? []}
+            onChange={handleProductChange}
+            mode="wallboard"
+          />
+          <div className="rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-stone-400">
+            Focus:{" "}
+            <span className="font-medium text-stone-200">
+              {focusedProductName ?? "All products"}
+            </span>{" "}
+            <span className="text-stone-500">• 12s</span>
+          </div>
+        </div>
       }
     >
-      <div className="space-y-3">
-        <ProductAutoplayStrip
-          title="Product focus"
-          subtitle="This lane rotates through selected products and keeps action priority clear."
-          state={autoplay}
-          mode="compact"
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)] gap-6">
+        <RotatingPanels
+          panels={[
+            {
+              id: "live-immediate-queue",
+              label: "Immediate queue",
+              content: immediateQueuePanel,
+            },
+            {
+              id: "live-by-product",
+              label: "By product",
+              content: byProductPanel,
+            },
+          ]}
+          intervalMs={18_000}
+          className="min-h-0"
         />
-        <div className="grid h-full min-h-0 grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)] gap-6">
-          <RotatingPanels
-            panels={[
-              {
-                id: "live-customer-happiness",
-                label: "Customer happiness",
-                content: customerHappinessPanel,
-              },
-              {
-                id: "live-by-product",
-                label: "By product",
-                content: byProductPanel,
-              },
-            ]}
-            intervalMs={18_000}
-            className="min-h-0"
-          />
-          <RotatingPanels
-            panels={[
-              {
-                id: "live-operational-context",
-                label: "Operational context",
-                content: operationalContextPanel,
-              },
-              {
-                id: "live-top-ids",
-                label: "Top IDs",
-                content: topIdsPanel,
-              },
-            ]}
-            intervalMs={18_000}
-            initialIndex={1}
-            className="min-h-0"
-          />
-        </div>
+        <RotatingPanels
+          panels={[
+            {
+              id: "live-operational-context",
+              label: "Operational context",
+              content: operationalContextPanel,
+            },
+            {
+              id: "live-top-ids",
+              label: "Top IDs",
+              content: topIdsPanel,
+            },
+          ]}
+          intervalMs={18_000}
+          initialIndex={1}
+          className="min-h-0"
+        />
       </div>
     </WallboardShell>
   )
@@ -471,17 +382,94 @@ function resolveAutoplayProducts(
   return availableProducts
 }
 
+function resolveFocusedProductName(input: {
+  aiFocusProductName: string | null
+  selectedProducts: string[]
+  autoplayProductName: string | null
+  availableProducts: string[]
+}) {
+  const { aiFocusProductName, selectedProducts, autoplayProductName, availableProducts } = input
+  if (!aiFocusProductName) return autoplayProductName
+  if (!availableProducts.includes(aiFocusProductName)) return autoplayProductName
+  if (selectedProducts.length > 0 && !selectedProducts.includes(aiFocusProductName)) {
+    return autoplayProductName
+  }
+  return aiFocusProductName
+}
+
+function prioritizeLookupCases(
+  lookupCases: CaseLookupItem[],
+  prioritizedExternalIds: string[]
+) {
+  if (prioritizedExternalIds.length === 0) return lookupCases
+
+  const priority = new Map<string, number>()
+  prioritizedExternalIds.forEach((externalId, index) => {
+    priority.set(externalId, index)
+  })
+
+  return [...lookupCases].sort((left, right) => {
+    const leftPriority = priority.get(left.externalId)
+    const rightPriority = priority.get(right.externalId)
+    if (leftPriority !== undefined || rightPriority !== undefined) {
+      if (leftPriority === undefined) return 1
+      if (rightPriority === undefined) return -1
+      return leftPriority - rightPriority
+    }
+    return left.externalId.localeCompare(right.externalId)
+  })
+}
+
+function buildLaneRows(snapshot: SupportHealthSnapshot): Record<
+  LiveFocusLane,
+  {
+    id: LiveFocusLane
+    label: string
+    count: number
+    detail: string
+    tone: "neutral" | "warning" | "danger"
+  }
+> {
+  return {
+    "over-sla": {
+      id: "over-sla",
+      label: "Over SLA lane",
+      count: snapshot.currentBreachedCount,
+      detail: "Reply first to cases already past SLA.",
+      tone: snapshot.currentBreachedCount > 0 ? "danger" : "neutral",
+    },
+    "due-soon": {
+      id: "due-soon",
+      label: "Due soon lane",
+      count: snapshot.currentDueSoonCount,
+      detail: "Prevent new breaches in the next 60 minutes.",
+      tone: snapshot.currentDueSoonCount > 0 ? "warning" : "neutral",
+    },
+    unassigned: {
+      id: "unassigned",
+      label: "Unassigned lane",
+      count: snapshot.currentUnassignedCount,
+      detail: "Assign owners so no case is waiting without responsibility.",
+      tone: snapshot.currentUnassignedCount > 0 ? "warning" : "neutral",
+    },
+  }
+}
+
+function resolveLaneOrder(laneOrder?: LiveFocusLane[] | null) {
+  const defaultOrder: LiveFocusLane[] = ["over-sla", "due-soon", "unassigned"]
+  if (!laneOrder || laneOrder.length !== defaultOrder.length) return defaultOrder
+  const unique = new Set(laneOrder)
+  if (unique.size !== defaultOrder.length) return defaultOrder
+  if (defaultOrder.some((lane) => !unique.has(lane))) return defaultOrder
+  return laneOrder
+}
+
 function resolveFocusStatus(
-  queue: LiveWallboardData["mappedQueues"][number] | null,
-  satisfactionScorePercent: number | null
+  queue: LiveWallboardData["mappedQueues"][number] | null
 ): SupportHealthSnapshot["status"] {
   if (!queue) return "yellow"
   if (queue.breachedCount > 0 || queue.urgentCount > 0) return "red"
-  if (
-    queue.dueSoonCount > 0 ||
-    queue.unassignedCount > 0 ||
-    (satisfactionScorePercent !== null && satisfactionScorePercent < 90)
-  ) {
+  if (queue.dueSoonCount > 0 || queue.unassignedCount > 0) {
     return "yellow"
   }
   return "green"
@@ -505,8 +493,7 @@ function buildFocusPrimaryAction(queue: LiveWallboardData["mappedQueues"][number
 }
 
 function buildFocusSecondaryAction(
-  queue: LiveWallboardData["mappedQueues"][number] | null,
-  periodSla: number | null
+  queue: LiveWallboardData["mappedQueues"][number] | null
 ) {
   if (!queue) return "Select or map a product to start focused playback."
   const parts = [
@@ -514,58 +501,32 @@ function buildFocusSecondaryAction(
     `${queue.awaitingTeamCount} waiting on support`,
     `${queue.breachedCount} over SLA`,
   ]
-  if (periodSla !== null) {
-    parts.push(`period SLA ${periodSla}%`)
-  }
   return parts.join(" • ")
 }
 
-function buildQuickWinText(
-  topPerformerName: string | null,
-  positiveCount: number,
-  periodLabel: string
+function buildLiveTickerItems(
+  live: LiveWallboardData,
+  focusedProductName: string | null,
+  focusedQueue: LiveWallboardData["mappedQueues"][number] | null
 ) {
-  if (!topPerformerName || positiveCount <= 0) return null
-  return `Quick win: ${topPerformerName} delivered ${positiveCount} positive CX rating${
-    positiveCount === 1 ? "" : "s"
-  } in ${periodLabel.toLowerCase()}.`
-}
-
-const emptyRatingMix: Record<1 | 2 | 3 | 4 | 5, number> = {
-  1: 0,
-  2: 0,
-  3: 0,
-  4: 0,
-  5: 0,
-}
-
-function hasWrappedLiveData(
-  value: unknown
-): value is { live: LiveWallboardData; trends?: TrendsWallboardData } {
-  return typeof value === "object" && value !== null && "live" in value
-}
-
-function getSatisfactionToneClass(satisfaction: number | null) {
-  if (satisfaction === null) return "text-stone-100"
-  if (satisfaction >= 90) return "text-emerald-300"
-  if (satisfaction >= 75) return "text-amber-300"
-  return "text-red-300"
-}
-
-function buildSatisfactionHeadline(satisfaction: number | null) {
-  if (satisfaction === null) {
-    return "No rated conversations yet in the selected period."
+  if (live.peopleMoments.length > 0) {
+    return live.peopleMoments
   }
 
-  if (satisfaction >= 90) {
-    return "Customer happiness is on target."
+  const queueLabel = focusedProductName ?? "All products"
+  const items: string[] = [
+    `${queueLabel}: ${live.snapshot.currentBreachedCount} over SLA now`,
+    `${queueLabel}: ${live.snapshot.currentUnassignedCount} unassigned`,
+    `${queueLabel}: ${live.snapshot.currentDueSoonCount} due in 60m`,
+  ]
+
+  if (focusedQueue && focusedQueue.activeCaseCount > 0) {
+    items.push(
+      `${focusedQueue.teamName}: ${focusedQueue.activeCaseCount} open in active queue`
+    )
   }
 
-  if (satisfaction >= 75) {
-    return "Customer happiness is below target and needs monitoring."
-  }
-
-  return "Customer happiness is off target and needs action."
+  return items
 }
 
 function buildQueueHeadline(snapshot: SupportHealthSnapshot) {
@@ -622,31 +583,90 @@ function CaseLink({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="block truncate font-mono text-[1.05rem] font-semibold tabular-nums text-stone-50 underline decoration-white/30 underline-offset-4 transition hover:text-sky-300"
+      title={`#${formatLookupId(item)}`}
+      className="block truncate whitespace-nowrap font-mono text-lg font-semibold tabular-nums text-stone-50 underline decoration-white/30 underline-offset-4 transition hover:text-sky-300"
     >
       #{formatLookupId(item)}
     </a>
   )
 }
 
-function QueueValue({
-  value,
-  danger,
-  warning,
+function QueueActionValue({
+  text,
+  tone,
+  className,
 }: {
-  value: string | number
-  danger?: boolean
-  warning?: boolean
+  text: string
+  tone: "red" | "amber" | "stone" | "emerald"
+  className?: string
 }) {
   return (
     <div
       className={cn(
-        "text-right font-medium text-stone-100",
-        danger && "text-red-300",
-        warning && "text-amber-300"
+        "text-sm leading-6",
+        tone === "red" && "text-red-200",
+        tone === "amber" && "text-amber-200",
+        tone === "emerald" && "text-emerald-200",
+        tone === "stone" && "text-stone-300",
+        className
       )}
     >
-      {value}
+      {text}
+    </div>
+  )
+}
+
+function QueueInlineMetric({
+  label,
+  value,
+  warning,
+  danger,
+}: {
+  label: string
+  value: number
+  warning?: boolean
+  danger?: boolean
+}) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-stone-400">{label}</div>
+      <div
+        className={cn(
+          "mt-1 text-2xl font-semibold tabular-nums text-stone-100",
+          warning && "text-amber-300",
+          danger && "text-red-300"
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function LiveLaneRow({
+  label,
+  count,
+  detail,
+  tone,
+}: {
+  label: string
+  count: number
+  detail: string
+  tone: "neutral" | "warning" | "danger"
+}) {
+  return (
+    <div className="grid grid-cols-[180px_80px_minmax(0,1fr)] items-center gap-3 rounded-md border border-white/10 bg-black/15 px-3 py-2">
+      <div className="text-sm text-stone-300">{label}</div>
+      <div
+        className={cn(
+          "text-2xl font-semibold tabular-nums text-stone-100",
+          tone === "warning" && "text-amber-300",
+          tone === "danger" && "text-red-300"
+        )}
+      >
+        {count}
+      </div>
+      <div className="text-sm text-stone-400">{detail}</div>
     </div>
   )
 }
@@ -688,4 +708,80 @@ function formatLookupSubtype(subtype: CaseLookupItem["subtype"]) {
 
 function formatProductName(productName: string) {
   return productName === "Unmapped" ? "Needs mapping" : productName
+}
+
+function LookupAssignee({ item }: { item: CaseLookupItem }) {
+  const assignedName = item.assigneeName?.trim() || null
+  const label = assignedName ?? "Unassigned"
+
+  return (
+    <div className="flex items-center gap-2">
+      <Avatar className="h-6 w-6 border border-white/15">
+        {assignedName && item.assigneeAvatarUrl ? (
+          <AvatarImage src={item.assigneeAvatarUrl} alt={assignedName} />
+        ) : null}
+        <AvatarFallback className="bg-white/10 text-[10px] text-stone-200">
+          {assignedName ? toInitials(assignedName) : "UN"}
+        </AvatarFallback>
+      </Avatar>
+      <span className={cn("text-xs", assignedName ? "text-stone-300" : "text-amber-200")}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function toInitials(name: string) {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (parts.length === 0) return "?"
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase()
+}
+
+function buildQueueRowAction(
+  queue: LiveWallboardData["mappedQueues"][number]
+): { text: string; tone: "red" | "amber" | "stone" | "emerald" } {
+  if (queue.breachedCount > 0) {
+    return {
+      text: `Reply to ${queue.breachedCount} over-SLA case${
+        queue.breachedCount === 1 ? "" : "s"
+      } first.`,
+      tone: "red",
+    }
+  }
+
+  if (queue.dueSoonCount > 0) {
+    return {
+      text: `Handle ${queue.dueSoonCount} case${queue.dueSoonCount === 1 ? "" : "s"} due in 60m.`,
+      tone: "amber",
+    }
+  }
+
+  if (queue.unassignedCount > 0) {
+    return {
+      text: `Assign owner to ${queue.unassignedCount} unassigned case${
+        queue.unassignedCount === 1 ? "" : "s"
+      }.`,
+      tone: "amber",
+    }
+  }
+
+  if (queue.awaitingTeamCount > 0) {
+    return {
+      text: `Work through ${queue.awaitingTeamCount} case${
+        queue.awaitingTeamCount === 1 ? "" : "s"
+      } waiting on support.`,
+      tone: "stone",
+    }
+  }
+
+  return {
+    text: "Healthy right now. Keep normal response pace.",
+    tone: "emerald",
+  }
 }

@@ -5,7 +5,7 @@
  * into the local database for wallboard reporting.
  */
 
-import { eq } from "drizzle-orm"
+import { and, eq, inArray, isNull, notLike, or } from "drizzle-orm"
 import { db } from "@/db"
 import { adapterConfigs, entities, nodes, syncState, teamMembers } from "@/db/schema"
 import {
@@ -71,9 +71,22 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 
     try {
       await updateIntercomSyncRuntime("teams", "Syncing teams")
-      const teamsResponse = await client.listTeams()
-      for (const team of teamsResponse.data || []) {
-        teamNamesById.set(team.id, team.name)
+      let hasMoreTeams = true
+      let teamCursor: string | undefined
+
+      while (hasMoreTeams) {
+        const teamsResponse = await client.listTeams({
+          per_page: 50,
+          starting_after: teamCursor,
+        })
+        const teams = teamsResponse.teams || teamsResponse.data || []
+
+        for (const team of teams) {
+          teamNamesById.set(team.id, team.name)
+        }
+
+        teamCursor = getNextCursor(teamsResponse.pages?.next)
+        hasMoreTeams = Boolean(teamCursor)
       }
     } catch (error) {
       errors.push(`Teams sync failed: ${error}`)
@@ -81,13 +94,40 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 
     try {
       await updateIntercomSyncRuntime("team-members", "Syncing team members")
-      const adminsResponse = await client.listAdmins()
-      for (const admin of adminsResponse.data || []) {
-        await upsertTeamMember(admin, teamNamesById)
-        teamMembersSynced++
+      let hasMoreAdmins = true
+      let adminCursor: string | undefined
+
+      while (hasMoreAdmins) {
+        const adminsResponse = await client.listAdmins({
+          per_page: 50,
+          starting_after: adminCursor,
+        })
+        const admins = adminsResponse.admins || adminsResponse.data || []
+
+        for (const admin of admins) {
+          await upsertTeamMember(admin, teamNamesById)
+          teamMembersSynced++
+        }
+
+        adminCursor = getNextCursor(adminsResponse.pages?.next)
+        hasMoreAdmins = Boolean(adminCursor)
       }
     } catch (error) {
       errors.push(`Team members sync failed: ${error}`)
+    }
+
+    try {
+      await updateIntercomSyncRuntime("team-member-avatars", "Syncing teammate avatars")
+      await hydrateIntercomTeamMemberAvatars(client)
+    } catch (error) {
+      errors.push(`Team member avatar sync failed: ${error}`)
+    }
+
+    try {
+      await updateIntercomSyncRuntime("assignees", "Backfilling assignee links")
+      await backfillIntercomAssigneeLinks()
+    } catch (error) {
+      errors.push(`Assignee backfill failed: ${error}`)
     }
 
     if (!previousSync) {
@@ -359,7 +399,9 @@ async function upsertTeamMember(
   const existing = await db
     .select()
     .from(teamMembers)
-    .where(eq(teamMembers.externalId, admin.id))
+    .where(
+      and(eq(teamMembers.externalId, admin.id), eq(teamMembers.source, "intercom"))
+    )
     .limit(1)
 
   const teamName =
@@ -374,6 +416,7 @@ async function upsertTeamMember(
     name: admin.name,
     email: admin.email,
     teamName,
+    avatarUrl: getAdminAvatarUrl(admin),
     updatedAt: new Date(),
   }
 
@@ -381,7 +424,9 @@ async function upsertTeamMember(
     await db
       .update(teamMembers)
       .set(data)
-      .where(eq(teamMembers.externalId, admin.id))
+      .where(
+        and(eq(teamMembers.externalId, admin.id), eq(teamMembers.source, "intercom"))
+      )
   } else {
     await db.insert(teamMembers).values({
       ...data,
@@ -394,7 +439,7 @@ async function upsertEntity(contact: IntercomContact) {
   const existing = await db
     .select()
     .from(entities)
-    .where(eq(entities.externalId, contact.id))
+    .where(and(eq(entities.externalId, contact.id), eq(entities.source, "intercom")))
     .limit(1)
 
   const plan = contact.custom_attributes?.plan as string | undefined
@@ -420,7 +465,7 @@ async function upsertEntity(contact: IntercomContact) {
     await db
       .update(entities)
       .set(data)
-      .where(eq(entities.externalId, contact.id))
+      .where(and(eq(entities.externalId, contact.id), eq(entities.source, "intercom")))
   } else {
     await db.insert(entities).values({
       ...data,
@@ -443,25 +488,63 @@ function normalizeTier(plan?: string | null) {
   return "unknown"
 }
 
+function getAdminAvatarUrl(admin: IntercomAdmin) {
+  const candidateValues = [
+    admin.avatar?.image_url,
+    admin.avatar_url,
+    admin.profile_image_url,
+  ]
+
+  for (const value of candidateValues) {
+    if (typeof value !== "string") continue
+    const trimmed = value.trim()
+    if (trimmed.length > 0) return trimmed
+  }
+
+  return null
+}
+
+function toExternalId(value: unknown) {
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value)
+  }
+
+  return null
+}
+
 async function resolveEntityId(contactId?: string) {
-  if (!contactId) return null
+  const normalizedContactId = toExternalId(contactId)
+  if (!normalizedContactId) return null
 
   const entity = await db
     .select()
     .from(entities)
-    .where(eq(entities.externalId, contactId))
+    .where(
+      and(
+        eq(entities.externalId, normalizedContactId),
+        eq(entities.source, "intercom")
+      )
+    )
     .limit(1)
 
   return entity[0]?.id ?? null
 }
 
-async function resolveAssigneeId(adminId?: string | null) {
-  if (!adminId) return null
+async function resolveAssigneeId(adminId?: string | number | null) {
+  const normalizedAdminId = toExternalId(adminId)
+  if (!normalizedAdminId) return null
 
   const assignee = await db
     .select()
     .from(teamMembers)
-    .where(eq(teamMembers.externalId, adminId))
+    .where(
+      and(eq(teamMembers.externalId, normalizedAdminId), eq(teamMembers.source, "intercom"))
+    )
     .limit(1)
 
   return assignee[0]?.id ?? null
@@ -492,11 +575,13 @@ async function upsertConversationNode(conversation: IntercomConversation) {
   const existing = await db
     .select()
     .from(nodes)
-    .where(eq(nodes.externalId, conversation.id))
+    .where(and(eq(nodes.externalId, conversation.id), eq(nodes.source, "intercom")))
     .limit(1)
 
   const entityId = await resolveEntityId(conversation.contacts?.contacts?.[0]?.id)
-  const assigneeId = await resolveAssigneeId(conversation.assignee?.id)
+  const assigneeId = await resolveAssigneeId(
+    conversation.assignee?.id ?? conversation.admin_assignee_id
+  )
   const responseTimeSeconds =
     conversation.statistics?.time_to_admin_reply ??
     conversation.statistics?.time_to_first_reply
@@ -541,7 +626,10 @@ async function upsertConversationNode(conversation: IntercomConversation) {
   }
 
   if (existing.length > 0) {
-    await db.update(nodes).set(data).where(eq(nodes.externalId, conversation.id))
+    await db
+      .update(nodes)
+      .set(data)
+      .where(and(eq(nodes.externalId, conversation.id), eq(nodes.source, "intercom")))
   } else {
     await db.insert(nodes).values({
       ...data,
@@ -554,7 +642,7 @@ async function upsertTicketNode(ticket: IntercomTicket) {
   const existing = await db
     .select()
     .from(nodes)
-    .where(eq(nodes.externalId, ticket.id))
+    .where(and(eq(nodes.externalId, ticket.id), eq(nodes.source, "intercom")))
     .limit(1)
 
   const entityId = await resolveEntityId(ticket.contacts?.contacts?.[0]?.id)
@@ -598,7 +686,10 @@ async function upsertTicketNode(ticket: IntercomTicket) {
   }
 
   if (existing.length > 0) {
-    await db.update(nodes).set(data).where(eq(nodes.externalId, ticket.id))
+    await db
+      .update(nodes)
+      .set(data)
+      .where(and(eq(nodes.externalId, ticket.id), eq(nodes.source, "intercom")))
   } else {
     await db.insert(nodes).values({
       ...data,
@@ -641,6 +732,131 @@ async function updateSyncState(
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function getAssigneeExternalIdFromRawData(rawData: unknown) {
+  if (!isRecord(rawData)) return null
+
+  const assignee = rawData.assignee
+  if (isRecord(assignee)) {
+    const assigneeId = toExternalId(assignee.id)
+    if (assigneeId) return assigneeId
+  }
+
+  const adminAssigneeId = toExternalId(rawData.admin_assignee_id)
+  if (adminAssigneeId) return adminAssigneeId
+
+  return null
+}
+
+async function backfillIntercomAssigneeLinks() {
+  const candidates = await db
+    .select({
+      id: nodes.id,
+      rawData: nodes.rawData,
+    })
+    .from(nodes)
+    .where(and(eq(nodes.source, "intercom"), isNull(nodes.assigneeId)))
+
+  if (candidates.length === 0) return 0
+
+  const assigneeExternalIds = Array.from(
+    new Set(
+      candidates
+        .map((item) => getAssigneeExternalIdFromRawData(item.rawData))
+        .filter((value): value is string => Boolean(value))
+    )
+  )
+
+  if (assigneeExternalIds.length === 0) return 0
+
+  const assignees = await db
+    .select({
+      id: teamMembers.id,
+      externalId: teamMembers.externalId,
+    })
+    .from(teamMembers)
+    .where(
+      and(
+        eq(teamMembers.source, "intercom"),
+        inArray(teamMembers.externalId, assigneeExternalIds)
+      )
+    )
+
+  const assigneeIdByExternalId = new Map(assignees.map((item) => [item.externalId, item.id]))
+  let updatedCount = 0
+
+  for (const candidate of candidates) {
+    const externalId = getAssigneeExternalIdFromRawData(candidate.rawData)
+    if (!externalId) continue
+
+    const assigneeId = assigneeIdByExternalId.get(externalId)
+    if (!assigneeId) continue
+
+    await db
+      .update(nodes)
+      .set({ assigneeId, updatedAt: new Date() })
+      .where(eq(nodes.id, candidate.id))
+    updatedCount++
+  }
+
+  return updatedCount
+}
+
+async function hydrateIntercomTeamMemberAvatars(
+  client: ReturnType<typeof createIntercomClient>
+) {
+  const membersMissingAvatar = await db
+    .select({
+      id: teamMembers.id,
+      externalId: teamMembers.externalId,
+      avatarUrl: teamMembers.avatarUrl,
+    })
+    .from(teamMembers)
+    .where(
+      and(
+        eq(teamMembers.source, "intercom"),
+        or(isNull(teamMembers.avatarUrl), notLike(teamMembers.avatarUrl, "data:%"))
+      )
+    )
+    .limit(100)
+
+  for (const member of membersMissingAvatar) {
+    try {
+      const admin = await client.getAdmin(member.externalId)
+      const avatarUrl = getAdminAvatarUrl(admin)
+      if (!avatarUrl) continue
+
+      const displayAvatarUrl = await fetchAvatarDataUrl(avatarUrl).catch(() => null)
+      const nextAvatarUrl = displayAvatarUrl ?? avatarUrl
+      if (nextAvatarUrl === member.avatarUrl) continue
+
+      await db
+        .update(teamMembers)
+        .set({ avatarUrl: nextAvatarUrl, updatedAt: new Date() })
+        .where(eq(teamMembers.id, member.id))
+    } catch {
+      // Ignore missing or inaccessible admins. Avatar fallback still renders initials.
+    }
+  }
+}
+
+async function fetchAvatarDataUrl(avatarUrl: string) {
+  const response = await fetch(avatarUrl, {
+    headers: {
+      Accept: "image/*",
+    },
+  })
+
+  if (!response.ok) return null
+
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
+  if (!contentType.startsWith("image/")) return null
+
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (bytes.length === 0) return null
+
+  return `data:${contentType};base64,${bytes.toString("base64")}`
 }
 
 export async function getSyncStatus() {

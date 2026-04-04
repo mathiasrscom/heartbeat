@@ -118,6 +118,7 @@ export interface IntercomConversation {
     id: string
     name?: string
   }
+  admin_assignee_id?: string | null
   team_assignee_id?: string
   tags: {
     tags: Array<{
@@ -217,6 +218,11 @@ export interface IntercomAdmin {
   name: string
   email: string
   team_ids?: string[]
+  avatar?: {
+    image_url?: string | null
+  } | null
+  avatar_url?: string | null
+  profile_image_url?: string | null
 }
 
 export interface IntercomTeam {
@@ -226,10 +232,12 @@ export interface IntercomTeam {
 }
 
 export interface IntercomListResponse<T> {
-  type: "list" | "conversation.list"
+  type: "list" | "conversation.list" | "admin.list" | "team.list"
   data?: T[]
   conversations?: T[]
   tickets?: T[]
+  admins?: T[]
+  teams?: T[]
   pages?: {
     next?:
       | string
@@ -396,12 +404,32 @@ export function createIntercomClient(config: IntercomConfig) {
     },
 
     // List admins (team members)
-    async listAdmins(): Promise<IntercomListResponse<IntercomAdmin>> {
-      return request("/admins")
+    async listAdmins(params?: {
+      per_page?: number
+      starting_after?: string
+    }): Promise<IntercomListResponse<IntercomAdmin>> {
+      const searchParams = new URLSearchParams()
+      if (params?.per_page) searchParams.set("per_page", String(params.per_page))
+      if (params?.starting_after) searchParams.set("starting_after", params.starting_after)
+
+      const query = searchParams.toString()
+      return request(`/admins${query ? `?${query}` : ""}`)
     },
 
-    async listTeams(): Promise<IntercomListResponse<IntercomTeam>> {
-      return request("/teams")
+    async getAdmin(id: string): Promise<IntercomAdmin> {
+      return request(`/admins/${id}`)
+    },
+
+    async listTeams(params?: {
+      per_page?: number
+      starting_after?: string
+    }): Promise<IntercomListResponse<IntercomTeam>> {
+      const searchParams = new URLSearchParams()
+      if (params?.per_page) searchParams.set("per_page", String(params.per_page))
+      if (params?.starting_after) searchParams.set("starting_after", params.starting_after)
+
+      const query = searchParams.toString()
+      return request(`/teams${query ? `?${query}` : ""}`)
     },
 
     // Get current admin (for testing auth)

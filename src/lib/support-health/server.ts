@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm"
 import { createServerFn } from "@tanstack/react-start"
 import { getDefaultIntercomAppUrl, normalizeIntercomAppUrl } from "@/lib/intercom-links"
 import { extractIntercomCx } from "@/lib/intercom-cx"
+import { readLiveWallboardFocusPlan } from "@/lib/wallboard-focus-plan"
+import { readWallboardTickerMessages } from "@/lib/wallboard-ticker-messages"
 import {
   buildLiveWallboardData,
   buildTrendsWallboardData,
@@ -237,6 +239,7 @@ function normalizeSupportCase(input: {
   resolvedAt: Date | null
   rawData: unknown
   assigneeName: string | null
+  assigneeAvatarUrl: string | null
   teamName: string | null
   entityValue: unknown
   cxScore: number | null
@@ -321,6 +324,7 @@ function normalizeSupportCase(input: {
     serviceBucket: classification.serviceBucket,
     servicePolicyName: classification.servicePolicyName,
     assigneeName: input.assigneeName,
+    assigneeAvatarUrl: input.assigneeAvatarUrl,
     hasAssignment,
     customerTier: tier,
     createdAt: input.createdAt,
@@ -346,7 +350,7 @@ function normalizeSupportCase(input: {
   }
 }
 
-async function loadSupportCases() {
+export async function loadSupportCases() {
   const now = new Date()
 
   try {
@@ -378,6 +382,7 @@ async function loadSupportCases() {
           responseTimeMinutes: nodes.responseTimeMinutes,
           resolutionTimeHours: nodes.resolutionTimeHours,
           assigneeName: teamMembers.name,
+          assigneeAvatarUrl: teamMembers.avatarUrl,
           teamName: teamMembers.teamName,
           entityValue: entities.value,
         })
@@ -460,7 +465,8 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
     normalizeSupportProductFilterInput(data)
   )
   .handler(async ({ data }): Promise<LiveWallboardData> => {
-    const { cases, lastSyncAt, now, intercomAppUrl } = await loadSupportCases()
+    const [{ cases, lastSyncAt, now, intercomAppUrl }, storedPeopleMoments] =
+      await Promise.all([loadSupportCases(), readWallboardTickerMessages()])
     const availableProducts = getAvailableProducts(cases)
     const selectedProducts = normalizeSupportProductFilterInput(data).products.filter((product) =>
       availableProducts.includes(product)
@@ -468,8 +474,17 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
     const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
       includeUnknownWhenAll: true,
     })
+    const payload = buildLiveWallboardData(filteredCases, lastSyncAt, now)
+    const focusPlan = await readLiveWallboardFocusPlan({
+      availableProducts,
+      lookupCases: payload.lookupCases,
+    })
+
     return {
-      ...buildLiveWallboardData(filteredCases, lastSyncAt, now),
+      ...payload,
+      focusPlan,
+      peopleMoments:
+        storedPeopleMoments.length > 0 ? storedPeopleMoments : payload.peopleMoments,
       intercomAppUrl,
       availableProducts,
       selectedProducts,
@@ -483,7 +498,8 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
     ...normalizeSupportProductFilterInput(data),
   }))
   .handler(async ({ data }): Promise<TrendsWallboardData> => {
-    const { cases, lastSyncAt, now, intercomAppUrl } = await loadSupportCases()
+    const [{ cases, lastSyncAt, now, intercomAppUrl }, storedPeopleMoments] =
+      await Promise.all([loadSupportCases(), readWallboardTickerMessages()])
     const availableProducts = getAvailableProducts(cases)
     const selectedProducts = normalizeSupportProductFilterInput(data).products.filter((product) =>
       availableProducts.includes(product)
@@ -492,8 +508,12 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
       includeUnknownWhenAll: false,
     })
     const period = resolveSupportPeriod(data, now)
+    const payload = buildTrendsWallboardData(filteredCases, lastSyncAt, now, period)
+
     return {
-      ...buildTrendsWallboardData(filteredCases, lastSyncAt, now, period),
+      ...payload,
+      peopleMoments:
+        storedPeopleMoments.length > 0 ? storedPeopleMoments : payload.peopleMoments,
       intercomAppUrl,
       availableProducts,
       selectedProducts,

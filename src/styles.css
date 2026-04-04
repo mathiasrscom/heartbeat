@@ -136,3 +136,30 @@ code {
     @apply bg-background text-foreground;
   }
 }
+
+.wallboard-ticker-mask {
+  overflow: hidden;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.wallboard-ticker-track {
+  display: inline-flex;
+  align-items: center;
+  min-width: max-content;
+  animation: wallboard-ticker 42s linear infinite;
+  will-change: transform;
+}
+
+.wallboard-ticker-mask:hover .wallboard-ticker-track {
+  animation-play-state: paused;
+}
+
+@keyframes wallboard-ticker {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}

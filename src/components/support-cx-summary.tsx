@@ -12,6 +12,7 @@ export function SupportCxSummary({
   responseRatePercent,
   ratingMix,
   variant = "dashboard",
+  showScore = true,
 }: {
   label: string
   satisfactionScorePercent: number | null
@@ -20,6 +21,7 @@ export function SupportCxSummary({
   responseRatePercent: number
   ratingMix: Record<RatingKey, number>
   variant?: "dashboard" | "wallboard"
+  showScore?: boolean
 }) {
   const isWallboard = variant === "wallboard"
   const hasRatings = ratedCount > 0
@@ -36,14 +38,27 @@ export function SupportCxSummary({
           >
             {label}
           </div>
-          <div
-            className={cn(
-              "mt-2 text-5xl font-semibold tracking-tight",
-              isWallboard ? "text-stone-50" : "text-foreground"
-            )}
-          >
-            {satisfactionScorePercent === null ? "—" : `${satisfactionScorePercent.toFixed(1)}%`}
-          </div>
+          {showScore ? (
+            <div
+              className={cn(
+                "mt-2 text-5xl font-semibold tracking-tight",
+                isWallboard ? "text-stone-50" : "text-foreground"
+              )}
+            >
+              {satisfactionScorePercent === null
+                ? "—"
+                : `${satisfactionScorePercent.toFixed(1)}%`}
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "mt-2 text-sm",
+                isWallboard ? "text-stone-300" : "text-muted-foreground"
+              )}
+            >
+              Rated coverage and rating distribution
+            </div>
+          )}
         </div>
         <div
           className={cn(

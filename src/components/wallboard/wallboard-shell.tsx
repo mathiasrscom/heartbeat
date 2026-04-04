@@ -6,6 +6,7 @@ interface WallboardShellProps {
   refreshedAt: string | null
   stale: boolean
   toolbar?: React.ReactNode
+  tickerItems?: string[]
   children: React.ReactNode
 }
 
@@ -14,13 +15,14 @@ export function WallboardShell({
   refreshedAt,
   stale,
   toolbar,
+  tickerItems,
   children,
 }: WallboardShellProps) {
   const refreshedDate = refreshedAt ? new Date(refreshedAt) : null
 
   return (
-    <div className="min-h-screen bg-[#111315] text-stone-100">
-      <div className="mx-auto flex min-h-screen max-w-[1880px] flex-col px-8 py-6">
+    <div className="h-[100dvh] overflow-hidden bg-[#111315] text-stone-100">
+      <div className="flex h-full w-full flex-col px-6 py-5 xl:px-8">
         <header className="flex items-end justify-between border-b border-white/10 pb-4">
           <div>
             <h1 className="text-[2rem] font-semibold tracking-tight text-stone-50">
@@ -50,7 +52,8 @@ export function WallboardShell({
             </div>
           </div>
         </header>
-        <main className="flex-1 pt-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-hidden pt-5">{children}</main>
+        <TickerTape items={tickerItems ?? []} />
       </div>
     </div>
   )
@@ -74,5 +77,38 @@ export function WallboardSection({
       </div>
       <div className="p-5">{children}</div>
     </section>
+  )
+}
+
+function TickerTape({ items }: { items: string[] }) {
+  const normalized = items
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+
+  if (normalized.length === 0) return null
+
+  const repeated = [...normalized, ...normalized]
+
+  return (
+    <footer className="mt-4 border border-white/10 bg-white/[0.02]">
+      <div className="flex items-center gap-3 px-3 py-2">
+        <div className="shrink-0 rounded-sm border border-sky-300/40 bg-sky-300/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-sky-200">
+          Ticker
+        </div>
+        <div className="wallboard-ticker-mask">
+          <div className="wallboard-ticker-track">
+            {repeated.map((item, index) => (
+              <span
+                key={`${index}-${item}`}
+                className="inline-flex items-center gap-3 pr-8 text-sm text-stone-200"
+              >
+                <span className="text-sky-300">•</span>
+                {item}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </footer>
   )
 }

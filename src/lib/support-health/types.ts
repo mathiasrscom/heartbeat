@@ -29,6 +29,7 @@ export interface SupportCaseRecord {
   serviceBucket: SupportServiceBucket
   servicePolicyName: string
   assigneeName: string | null
+  assigneeAvatarUrl: string | null
   hasAssignment: boolean
   customerTier: SupportTier
   createdAt: Date
@@ -106,6 +107,8 @@ export interface CaseLookupItem {
   externalId: string
   productName: string
   queueName: string
+  assigneeName: string | null
+  assigneeAvatarUrl: string | null
   subtype: SupportCaseSubtype
   stateLabel: string
   ageLabel: string
@@ -201,11 +204,26 @@ export interface ProductHealthSummary {
   ratingMix: Record<1 | 2 | 3 | 4 | 5, number>
 }
 
+export type LiveFocusLane = "over-sla" | "due-soon" | "unassigned"
+
+export interface LiveWallboardFocusPlan {
+  generatedAt: string
+  source: "deterministic" | "ollama"
+  model: string | null
+  focusProductName: string | null
+  headline: string
+  supportingText: string
+  topCaseExternalIds: string[]
+  laneOrder: LiveFocusLane[]
+}
+
 export interface LiveWallboardData {
   snapshot: SupportHealthSnapshot
   intercomAppUrl: string | null
   availableProducts: string[]
   selectedProducts: string[]
+  focusPlan?: LiveWallboardFocusPlan | null
+  peopleMoments: string[]
   statusBreakdown: CaseStatusBreakdown
   mappedQueues: QueueHealth[]
   queues: QueueHealth[]
@@ -222,6 +240,7 @@ export interface TrendsWallboardData {
   intercomAppUrl: string | null
   availableProducts: string[]
   selectedProducts: string[]
+  peopleMoments: string[]
   period: SupportPeriodRange
   periodSummary: ProductHealthSummary
   productHealth: ProductHealthRow[]

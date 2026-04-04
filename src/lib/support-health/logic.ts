@@ -603,16 +603,192 @@ function toCaseStateLabel(item: SupportCaseRecord) {
 
 function toCaseTimingLabel(item: SupportCaseRecord, now: Date) {
   if (item.isBreached) {
-    return `${formatAgeLabel(getOverdueMinutes(item, now))} overdue`
+    const overdueMinutes = getOverdueMinutes(item, now)
+    if (overdueMinutes <= 0) return "Due now"
+    return `${formatAgeLabel(overdueMinutes)} overdue`
   }
 
   if (item.isDueSoon && item.nextDueAt) {
-    return `Due in ${formatAgeLabel(getMinutesUntilDue(item, now))}`
+    const minutesUntilDue = getMinutesUntilDue(item, now)
+    if (minutesUntilDue <= 0) return "Due now"
+    return `Due in ${formatAgeLabel(minutesUntilDue)}`
   }
 
   return `Waiting ${formatAgeLabel(
     differenceInMinutes(now, item.waitingSinceAt ?? item.createdAt)
   )}`
+}
+
+function isWithinOptionalPeriod(
+  value: Date,
+  periodStart?: Date,
+  periodEnd?: Date
+) {
+  if (!periodStart || !periodEnd) return true
+  return isWithinInterval(value, { start: periodStart, end: periodEnd })
+}
+
+function formatMomentProductName(productName: string) {
+  return productName === "Unmapped" ? "the support queue" : productName
+}
+
+function hashSeed(value: string) {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
+}
+
+function pickBySeed<T>(seed: string, values: T[]) {
+  if (values.length === 0) {
+    throw new Error("pickBySeed requires at least one option")
+  }
+  return values[hashSeed(seed) % values.length] as T
+}
+
+function inferCaseTopic(item: SupportCaseRecord) {
+  const source = `${item.title ?? ""} ${item.tags.join(" ")} ${item.teamName} ${item.productName}`.toLowerCase()
+
+  if (/(integrat|api|webhook|sdk|oauth|sso)/.test(source)) return "integrations"
+  if (/(bill|invoice|payment|refund|subscription|pricing)/.test(source)) return "billing"
+  if (/(login|password|access|permission|invite|account)/.test(source)) return "account access"
+  if (/(setup|config|configuration|onboard|install)/.test(source)) return "setup"
+  if (/(bug|error|incident|outage|failure|crash)/.test(source)) return "issue recovery"
+  if (/(sign|signature|nemid|mitid|certificate)/.test(source)) return "signing"
+  return null
+}
+
+function buildPeopleMoments(
+  cases: SupportCaseRecord[],
+  now: Date,
+  options?: {
+    periodStart?: Date
+    periodEnd?: Date
+  }
+) {
+  const messages: string[] = []
+  const seen = new Set<string>()
+  const periodStart = options?.periodStart
+  const periodEnd = options?.periodEnd
+  const asCount = (value: number, noun: string) => `${value} ${noun}${value === 1 ? "" : "s"}`
+
+  const push = (value: string) => {
+    const normalized = value.trim()
+    if (!normalized) return
+    const key = normalized.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    messages.push(normalized)
+  }
+
+  const recentRated = [...cases]
+    .filter((item) => {
+      if (item.subtype !== "conversation") return false
+      if (item.actionableState !== "resolved") return false
+      if (item.cxScore === null) return false
+      if (!item.assigneeName || item.assigneeName.trim().length === 0) return false
+      const reference = item.resolvedAt ?? item.updatedAt
+      return isWithinOptionalPeriod(reference, periodStart, periodEnd)
+    })
+    .sort((left, right) => {
+      const leftReference = left.resolvedAt ?? left.updatedAt
+      const rightReference = right.resolvedAt ?? right.updatedAt
+      return rightReference.getTime() - leftReference.getTime()
+    })
+
+  for (const item of recentRated.slice(0, 4)) {
+    const assignee = item.assigneeName?.trim()
+    if (!assignee) continue
+    const rating = toFivePointRating(item.cxScore ?? 0)
+    const productLabel = formatMomentProductName(item.productName)
+    const positiveTemplate = pickBySeed(`${item.externalId}:cx-positive`, [
+      `${assignee} turned another ${productLabel} conversation into a ${rating}/5 CX win.`,
+      `Spotlight on ${assignee}: ${rating}/5 CX delivered in ${productLabel}.`,
+      `Customer love in ${productLabel}: ${assignee} landed a ${rating}/5 CX result.`,
+    ])
+    const mixedTemplate = pickBySeed(`${item.externalId}:cx-mixed`, [
+      `${assignee} received ${rating}/5 CX in ${productLabel}. Keep the feedback loop moving.`,
+      `${assignee} got a ${rating}/5 CX signal in ${productLabel}. Worth a quick review.`,
+    ])
+    const lowTemplate = pickBySeed(`${item.externalId}:cx-low`, [
+      `${assignee} received ${rating}/5 CX in ${productLabel}. Follow-up is recommended.`,
+      `Recovery signal for ${assignee}: ${rating}/5 CX in ${productLabel}.`,
+    ])
+
+    if (rating >= 4) {
+      push(positiveTemplate)
+      const topic = inferCaseTopic(item)
+      if (topic) {
+        const topicTemplate = pickBySeed(`${item.externalId}:${topic}:topic`, [
+          `${assignee} just helped a customer with ${topic} in ${productLabel}.`,
+          `${assignee} moved a ${topic} case forward in ${productLabel}.`,
+          `${assignee} supported a customer on ${topic} in ${productLabel}.`,
+        ])
+        push(topicTemplate)
+      }
+      continue
+    }
+
+    if (rating <= 2) {
+      push(lowTemplate)
+      continue
+    }
+
+    push(mixedTemplate)
+  }
+
+  const urgentAssigned = [...cases]
+    .filter(
+      (item) =>
+        isActionableCase(item) &&
+        item.hasAssignment &&
+        !!item.assigneeName &&
+        (item.isBreached || item.isDueSoon)
+    )
+    .sort((left, right) => compareLookupCases(left, right, now))
+
+  for (const item of urgentAssigned.slice(0, 3)) {
+    const assignee = item.assigneeName?.trim()
+    if (!assignee) continue
+    const productLabel = formatMomentProductName(item.productName)
+    if (item.isBreached) {
+      const urgentTemplate = pickBySeed(`${item.externalId}:urgent`, [
+        `Action now: ${assignee} owns an over-SLA case in ${productLabel}.`,
+        `Priority lane: ${assignee} has an over-SLA reply pending in ${productLabel}.`,
+        `Escalation focus: ${assignee} should pick up an over-SLA case in ${productLabel}.`,
+      ])
+      push(urgentTemplate)
+      continue
+    }
+    const dueSoonTemplate = pickBySeed(`${item.externalId}:due-soon`, [
+      `Heads-up for ${assignee}: one case is due within 60 minutes in ${productLabel}.`,
+      `${assignee} has a near-deadline case in ${productLabel} due inside the hour.`,
+      `${productLabel}: ${assignee} owns a case approaching SLA in the next 60 minutes.`,
+    ])
+    push(dueSoonTemplate)
+  }
+
+  const unassignedByProduct = new Map<string, number>()
+  for (const item of cases) {
+    if (!isActionableCase(item) || item.hasAssignment) continue
+    const key = formatMomentProductName(item.productName)
+    unassignedByProduct.set(key, (unassignedByProduct.get(key) ?? 0) + 1)
+  }
+
+  for (const [productLabel, count] of [...unassignedByProduct.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3)) {
+    const unassignedTemplate = pickBySeed(`${productLabel}:${count}:unassigned`, [
+      `Team assist needed: ${productLabel} has ${asCount(count, "unassigned case")} waiting for an owner.`,
+      `${productLabel} needs assignment help: ${asCount(count, "case")} are unassigned.`,
+      `Ownership gap in ${productLabel}: ${asCount(count, "case")} still unassigned.`,
+    ])
+    push(unassignedTemplate)
+  }
+
+  return messages.slice(0, 10)
 }
 
 export function buildLookupCases(
@@ -630,6 +806,8 @@ export function buildLookupCases(
         externalId: item.externalId,
         productName: item.productName || "Unmapped",
         queueName: item.teamName,
+        assigneeName: item.assigneeName,
+        assigneeAvatarUrl: item.assigneeAvatarUrl,
         subtype: item.subtype,
         stateLabel: toCaseStateLabel(item),
         ageLabel: toCaseTimingLabel(item, now),
@@ -990,6 +1168,7 @@ export function buildLiveWallboardData(
   }
   return {
     snapshot,
+    peopleMoments: buildPeopleMoments(cases, now),
     statusBreakdown,
     mappedQueues,
     queues,
@@ -1013,6 +1192,10 @@ export function buildTrendsWallboardData(
   const productHealth = buildProductHealthRows(cases, period, now)
   return {
     snapshot,
+    peopleMoments: buildPeopleMoments(cases, now, {
+      periodStart: period.from,
+      periodEnd: period.to,
+    }),
     period: period.range,
     periodSummary: buildProductHealthSummary(productHealth, cases, period),
     productHealth,

@@ -23,6 +23,7 @@ const AvatarImage = React.forwardRef<
   <img
     ref={ref}
     className={cn("aspect-square h-full w-full", className)}
+    referrerPolicy="no-referrer"
     {...props}
   />
 ))

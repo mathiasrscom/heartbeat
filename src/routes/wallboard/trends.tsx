@@ -1,22 +1,22 @@
 import { startTransition, useMemo } from "react"
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { InfoTooltip } from "@/components/info-tooltip"
 import { SatisfactionTrendChart } from "@/components/satisfaction-trend-chart"
 import { SupportCxSummary } from "@/components/support-cx-summary"
 import { SupportPeriodFilter } from "@/components/support-period-filter"
 import { SupportProductFilter } from "@/components/support-product-filter"
-import {
-  ProductAutoplayStrip,
-  useProductAutoplay,
-} from "@/components/wallboard/product-autoplay-strip"
+import { useProductAutoplay } from "@/components/wallboard/product-autoplay-strip"
 import { RotatingPanels } from "@/components/wallboard/rotating-panels"
 import { WallboardSection, WallboardShell } from "@/components/wallboard/wallboard-shell"
 import { buildIntercomCaseUrl } from "@/lib/intercom-links"
 import { normalizeSupportProductFilterInput } from "@/lib/support-health/filter"
 import { normalizeSupportPeriodInput, type SupportPeriodInput } from "@/lib/support-health/period"
 import { getTrendsWallboard } from "@/lib/support-health/server"
-import type { CaseLookupItem, ProductHealthRow } from "@/lib/support-health/types"
+import type { CaseLookupItem, ProductHealthRow, TrendsWallboardData } from "@/lib/support-health/types"
 import { cn } from "@/lib/utils"
+
+const TOP_LOOKUP_LIMIT = 4
 
 export const Route = createFileRoute("/wallboard/trends")({
   ssr: false,
@@ -87,22 +87,24 @@ function TrendsWallboardPage() {
   const focusedSummary = useMemo(() => aggregateProductRows(focusedRows), [focusedRows])
   const focusedLookupCases =
     focusedProductName === null
-      ? data.lookupCases
-      : data.lookupCases.filter((item) => item.productName === focusedProductName).slice(0, 5)
-  const focusPrimaryAction = buildTrendsFocusPrimaryAction(focusedSummary)
-  const focusSecondaryAction = buildTrendsFocusSecondaryAction(
-    focusedSummary,
-    data.period.label
-  )
+      ? data.lookupCases.slice(0, TOP_LOOKUP_LIMIT)
+      : data.lookupCases
+          .filter((item) => item.productName === focusedProductName)
+          .slice(0, TOP_LOOKUP_LIMIT)
   const quickWinText = buildQuickWinText(
     focusedSummary.topPerformerName,
     focusedSummary.topPerformerPositiveCount,
     data.period.label
   )
+  const trendTickerItems = buildTrendsTickerItems(data, focusedProductName, focusedSummary)
   const focusSatisfaction =
     focusedProductName === null
       ? data.periodSummary.satisfactionScorePercent
       : focusedSummary.satisfactionScorePercent
+  const isSingleProductSpotlight =
+    focusedProductName !== null && focusedRows.length === 1
+  const spotlightRow = isSingleProductSpotlight ? focusedRows[0] : null
+  const spotlightAction = spotlightRow ? buildProductRowAction(spotlightRow) : null
 
   const customerHappinessPanel = (
     <WallboardSection title="Customer happiness">
@@ -136,6 +138,7 @@ function TrendsWallboardPage() {
               responseRatePercent={data.periodSummary.responseRatePercent}
               ratingMix={data.periodSummary.ratingMix}
               variant="wallboard"
+              showScore={false}
             />
           </div>
         </div>
@@ -145,16 +148,16 @@ function TrendsWallboardPage() {
             points={data.cxSeries}
             title={`Daily satisfaction • ${data.period.label}`}
           />
-          <div className="grid gap-3">
-            {data.periods.map((period) => (
+          <div className="grid grid-cols-3 gap-2">
+            {data.periods.slice(0, 3).map((period) => (
               <div
                 key={period.label}
-                className="rounded-md border border-white/10 bg-black/10 px-4 py-4"
+                className="rounded-md border border-white/10 bg-black/10 px-3 py-2"
               >
-                <div className="text-sm text-stone-400">{period.label}</div>
+                <div className="text-xs text-stone-400">{period.label}</div>
                 <div
                   className={cn(
-                    "mt-1 text-3xl font-semibold tracking-tight",
+                    "mt-1 text-2xl font-semibold tracking-tight",
                     getSatisfactionToneClass(period.satisfactionScorePercent)
                   )}
                 >
@@ -162,11 +165,16 @@ function TrendsWallboardPage() {
                     ? "—"
                     : `${period.satisfactionScorePercent}%`}
                 </div>
-                <div className="mt-1 text-xs text-stone-400">
+                <div className="mt-0.5 text-[11px] text-stone-400">
                   Rated {period.responseRatePercent}%
                 </div>
               </div>
             ))}
+            {data.periods.length === 0 ? (
+              <div className="col-span-3 rounded-md border border-white/10 bg-black/10 px-4 py-3 text-sm text-stone-400">
+                CX context periods will appear after the next loader refresh.
+              </div>
+            ) : null}
           </div>
         </div>
       </div>
@@ -215,56 +223,76 @@ function TrendsWallboardPage() {
           />
         </div>
 
-        <div className="grid grid-cols-[minmax(0,1.3fr)_120px_90px_80px_90px_100px_110px] gap-x-4 border-b border-white/10 pb-3 text-sm text-stone-400">
-          <div>Product</div>
-          <div className="text-right">Satisfaction</div>
-          <div className="text-right">Rated</div>
-          <div className="text-right">Open</div>
-          <div className="text-right">Waiting</div>
-          <div className="text-right">Over SLA</div>
-          <div className="text-right">SLA period</div>
-        </div>
+        {focusedRows.length === 0 ? (
+          <div className="py-10 text-lg text-stone-400">No product activity in this view.</div>
+        ) : isSingleProductSpotlight && spotlightRow ? (
+          <div className="rounded-md border border-white/10 bg-black/10 px-4 py-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-xl font-medium text-stone-100">{spotlightRow.productName}</div>
+                <div className="mt-1 text-xs text-stone-400">{spotlightRow.servicePolicyName}</div>
+              </div>
+              <ActionCell
+                text={spotlightAction?.text ?? "No immediate action."}
+                tone={spotlightAction?.tone ?? "stone"}
+                className="max-w-[46ch] text-right"
+              />
+            </div>
+            <div className="mt-3 text-sm text-stone-400">
+              Open Top IDs to see the exact conversations to handle first.
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {focusedRows.map((row) => {
+              const nextAction = buildProductRowAction(row)
 
-        <div className="divide-y divide-white/10">
-          {focusedRows.length === 0 ? (
-            <div className="py-10 text-lg text-stone-400">No product activity in this view.</div>
-          ) : (
-            focusedRows.map((row) => (
-              <div
-                key={`${row.serviceBucket}-${row.productName}`}
-                className="grid grid-cols-[minmax(0,1.3fr)_120px_90px_80px_90px_100px_110px] gap-x-4 py-4"
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-xl font-medium text-stone-100">
-                    {row.productName}
+              return (
+                <div
+                  key={`${row.serviceBucket}-${row.productName}`}
+                  className="rounded-md border border-white/10 bg-black/10 px-4 py-3"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-xl font-medium text-stone-100">{row.productName}</div>
+                      <div className="mt-1 text-xs text-stone-400">{row.servicePolicyName}</div>
+                    </div>
+                    <ActionCell
+                      text={nextAction.text}
+                      tone={nextAction.tone}
+                      className="max-w-[42ch] text-right"
+                    />
+                  </div>
+                  <div className="mt-3 grid grid-cols-4 gap-2">
+                    <RowMetric
+                      label="Satisfaction"
+                      value={
+                        row.satisfactionScorePercent === null
+                          ? "—"
+                          : `${row.satisfactionScorePercent}%`
+                      }
+                      danger={
+                        row.satisfactionScorePercent !== null &&
+                        row.satisfactionScorePercent < 90
+                      }
+                    />
+                    <RowMetric
+                      label="SLA period"
+                      value={row.slaAdherencePercent === null ? "—" : `${row.slaAdherencePercent}%`}
+                      danger={row.slaAdherencePercent !== null && row.slaAdherencePercent < 90}
+                    />
+                    <RowMetric label="Open" value={row.openNowCount} />
+                    <RowMetric
+                      label="Over SLA"
+                      value={row.breachedNowCount}
+                      danger={row.breachedNowCount > 0}
+                    />
                   </div>
                 </div>
-                <Cell
-                  value={
-                    row.satisfactionScorePercent === null
-                      ? "—"
-                      : `${row.satisfactionScorePercent}%`
-                  }
-                  danger={
-                    row.satisfactionScorePercent !== null &&
-                    row.satisfactionScorePercent < 90
-                  }
-                />
-                <Cell
-                  value={`${row.responseRatePercent}%`}
-                  warning={row.responseRatePercent > 0 && row.responseRatePercent < 20}
-                />
-                <Cell value={row.openNowCount} />
-                <Cell value={row.awaitingTeamCount} warning={row.awaitingTeamCount > 0} />
-                <Cell value={row.breachedNowCount} danger={row.breachedNowCount > 0} />
-                <Cell
-                  value={row.slaAdherencePercent === null ? "—" : `${row.slaAdherencePercent}%`}
-                  danger={row.slaAdherencePercent !== null && row.slaAdherencePercent < 90}
-                />
-              </div>
-            ))
-          )}
-        </div>
+              )
+            })}
+          </div>
+        )}
         <div className="rounded-md border border-white/10 bg-black/10 px-4 py-3 text-sm text-stone-300">
           SLA score for selected period:{" "}
           {focusedSummary.slaAdherencePercent === null
@@ -278,7 +306,11 @@ function TrendsWallboardPage() {
 
   const topIdsPanel = (
     <WallboardSection
-      title={focusedProductName ? `Top 5 IDs • ${focusedProductName}` : "Top 5 IDs to inspect"}
+      title={
+        focusedProductName
+          ? `Top ${TOP_LOOKUP_LIMIT} IDs • ${focusedProductName}`
+          : `Top ${TOP_LOOKUP_LIMIT} IDs to inspect`
+      }
       className="min-h-0"
     >
       <div className="space-y-2">
@@ -290,17 +322,20 @@ function TrendsWallboardPage() {
           focusedLookupCases.map((item) => (
             <div
               key={item.id}
-              className="grid grid-cols-[220px_minmax(0,1fr)_160px] items-center gap-4 rounded-md border border-white/10 bg-black/10 px-4 py-3"
+              className="grid grid-cols-[minmax(0,1fr)_130px] items-center gap-3 rounded-md border border-white/10 bg-black/10 px-3 py-2.5"
             >
               <div className="min-w-0">
                 <CaseLink item={item} appUrl={data.intercomAppUrl} />
-              </div>
-              <div className="min-w-0">
-                <div className="truncate text-base font-medium text-stone-100">
-                  {formatProductName(item.productName)}
-                </div>
-                <div className="truncate text-xs text-stone-400">
-                  {item.queueName} • {formatLookupSubtype(item.subtype)}
+                <div className="mt-1 text-xs text-stone-300">
+                  <div className="font-medium text-stone-100">
+                    {formatProductName(item.productName)}
+                  </div>
+                  <div className="text-stone-400">
+                    {item.queueName} • {formatLookupSubtype(item.subtype)}
+                  </div>
+                  <div className="mt-2">
+                    <LookupAssignee item={item} />
+                  </div>
                 </div>
               </div>
               <div className="text-right">
@@ -314,7 +349,7 @@ function TrendsWallboardPage() {
                 >
                   {item.stateLabel}
                 </div>
-                <div className="mt-1 text-sm text-stone-400">{item.ageLabel}</div>
+                <div className="mt-1 text-sm text-stone-300">{item.ageLabel}</div>
               </div>
             </div>
           ))
@@ -323,13 +358,18 @@ function TrendsWallboardPage() {
     </WallboardSection>
   )
 
-  const operationalSnapshotPanel = (
-    <WallboardSection title="What to work on now">
+  const topThemeTrends = data.themeTrends.slice(0, 3)
+  const pressureQueue = [...data.queuePressure].sort((a, b) => b.delta - a.delta)[0] ?? null
+
+  const periodHighlightsPanel = (
+    <WallboardSection title="Period highlights">
       <div className="space-y-4">
         <p className="text-base leading-7 text-stone-300">
-          {focusedProductName ? `${focusedProductName}: ${focusPrimaryAction}` : focusPrimaryAction}
+          {buildTrendHealthHeadline(focusedSummary, data.period.label, focusedProductName)}
         </p>
-        <p className="text-sm leading-6 text-stone-400">{focusSecondaryAction}</p>
+        <p className="text-sm leading-6 text-stone-400">
+          {buildTrendSupportingText(focusedSummary, data.period.label)}
+        </p>
         {quickWinText ? (
           <div className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
             {quickWinText}
@@ -338,13 +378,20 @@ function TrendsWallboardPage() {
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3">
         <SnapshotValue
-          label="Waiting on us"
-          value={String(focusedSummary.awaitingTeamNowCount)}
+          label={`Satisfaction (${data.period.label.toLowerCase()})`}
+          value={
+            focusedSummary.satisfactionScorePercent === null
+              ? "—"
+              : `${focusedSummary.satisfactionScorePercent}%`
+          }
+          danger={
+            focusedSummary.satisfactionScorePercent !== null &&
+            focusedSummary.satisfactionScorePercent < 90
+          }
         />
         <SnapshotValue
-          label="Over SLA now"
-          value={String(focusedSummary.breachedNowCount)}
-          danger
+          label="Rated coverage"
+          value={`${focusedSummary.responseRatePercent}%`}
         />
         <SnapshotValue
           label="SLA period"
@@ -363,6 +410,38 @@ function TrendsWallboardPage() {
           value={String(focusedSummary.openNowCount)}
         />
       </div>
+      {topThemeTrends.length > 0 ? (
+        <div className="mt-4 rounded-md border border-white/10 bg-black/10 px-3 py-3">
+          <div className="text-xs uppercase tracking-[0.16em] text-stone-400">Recurring themes</div>
+          <div className="mt-2 space-y-1.5 text-sm">
+            {topThemeTrends.map((trend) => (
+              <div key={trend.label} className="flex items-center justify-between gap-2">
+                <span className="truncate text-stone-200">{trend.label}</span>
+                <span
+                  className={cn(
+                    "shrink-0 font-medium",
+                    trend.delta > 0 && "text-red-300",
+                    trend.delta < 0 && "text-emerald-300",
+                    trend.delta === 0 && "text-stone-300"
+                  )}
+                >
+                  {trend.delta > 0 ? "+" : ""}
+                  {trend.delta}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {pressureQueue ? (
+        <div className="mt-3 text-sm text-stone-400">
+          Queue pressure:{" "}
+          <span className="text-stone-200">{pressureQueue.teamName}</span>{" "}
+          {pressureQueue.delta > 0 ? "increased" : pressureQueue.delta < 0 ? "decreased" : "is flat"} by{" "}
+          <span className="font-medium text-stone-200">{Math.abs(pressureQueue.delta)}</span> open
+          cases versus prior period.
+        </div>
+      ) : null}
     </WallboardSection>
   )
 
@@ -371,6 +450,7 @@ function TrendsWallboardPage() {
       title="Product Health"
       refreshedAt={data.snapshot.freshnessTimestamp ?? data.refreshedAt}
       stale={data.snapshot.stale}
+      tickerItems={trendTickerItems}
       toolbar={
         <div className="flex flex-wrap items-center gap-4">
           <div className="text-sm text-stone-400">{data.period.label}</div>
@@ -387,51 +467,50 @@ function TrendsWallboardPage() {
             onChange={handleProductChange}
             mode="wallboard"
           />
+          <div className="rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-stone-400">
+            Focus:{" "}
+            <span className="font-medium text-stone-200">
+              {focusedProductName ?? "All products"}
+            </span>{" "}
+            <span className="text-stone-500">• 12s</span>
+          </div>
         </div>
       }
     >
-      <div className="space-y-3">
-        <ProductAutoplayStrip
-          title="Product focus"
-          subtitle={`Playback follows selected products in ${data.period.label.toLowerCase()}.`}
-          state={autoplay}
-          mode="compact"
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1.45fr)_420px] gap-6">
+        <RotatingPanels
+          panels={[
+            {
+              id: "trends-customer-happiness",
+              label: "Customer happiness",
+              content: customerHappinessPanel,
+            },
+            {
+              id: "trends-products",
+              label: "Products",
+              content: productsPanel,
+            },
+          ]}
+          intervalMs={18_000}
+          className="min-h-0"
         />
-        <div className="grid h-full min-h-0 grid-cols-[minmax(0,1.45fr)_420px] gap-6">
-          <RotatingPanels
-            panels={[
-              {
-                id: "trends-customer-happiness",
-                label: "Customer happiness",
-                content: customerHappinessPanel,
-              },
-              {
-                id: "trends-products",
-                label: "Products",
-                content: productsPanel,
-              },
-            ]}
-            intervalMs={18_000}
-            className="min-h-0"
-          />
-          <RotatingPanels
-            panels={[
-              {
-                id: "trends-top-ids",
-                label: "Top IDs",
-                content: topIdsPanel,
-              },
-              {
-                id: "trends-operational-snapshot",
-                label: "Operational snapshot",
-                content: operationalSnapshotPanel,
-              },
-            ]}
-            intervalMs={18_000}
-            initialIndex={1}
-            className="min-h-0"
-          />
-        </div>
+        <RotatingPanels
+          panels={[
+            {
+              id: "trends-top-ids",
+              label: "Top IDs",
+              content: topIdsPanel,
+            },
+            {
+              id: "trends-operational-snapshot",
+              label: "Period highlights",
+              content: periodHighlightsPanel,
+            },
+          ]}
+          intervalMs={18_000}
+          initialIndex={1}
+          className="min-h-0"
+        />
       </div>
     </WallboardShell>
   )
@@ -458,7 +537,8 @@ function CaseLink({
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="block truncate font-mono text-[1.05rem] font-semibold tabular-nums text-stone-50 underline decoration-white/30 underline-offset-4 transition hover:text-sky-300"
+      title={`#${formatLookupId(item)}`}
+      className="block truncate whitespace-nowrap font-mono text-lg font-semibold tabular-nums text-stone-50 underline decoration-white/30 underline-offset-4 transition hover:text-sky-300"
     >
       #{formatLookupId(item)}
     </a>
@@ -475,6 +555,39 @@ function formatLookupSubtype(subtype: CaseLookupItem["subtype"]) {
 
 function formatProductName(productName: string) {
   return productName === "Unmapped" ? "Needs mapping" : productName
+}
+
+function LookupAssignee({ item }: { item: CaseLookupItem }) {
+  const assignedName = item.assigneeName?.trim() || null
+  const label = assignedName ?? "Unassigned"
+
+  return (
+    <div className="flex items-center gap-2">
+      <Avatar className="h-6 w-6 border border-white/15">
+        {assignedName && item.assigneeAvatarUrl ? (
+          <AvatarImage src={item.assigneeAvatarUrl} alt={assignedName} />
+        ) : null}
+        <AvatarFallback className="bg-white/10 text-[10px] text-stone-200">
+          {assignedName ? toInitials(assignedName) : "UN"}
+        </AvatarFallback>
+      </Avatar>
+      <span className={cn("text-xs", assignedName ? "text-stone-300" : "text-amber-200")}>
+        {label}
+      </span>
+    </div>
+  )
+}
+
+function toInitials(name: string) {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (parts.length === 0) return "?"
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
+
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase()
 }
 
 function getSatisfactionToneClass(satisfaction: number | null) {
@@ -575,37 +688,79 @@ function aggregateProductRows(rows: ProductHealthRow[]): AggregatedProductSummar
   }
 }
 
-function buildTrendsFocusPrimaryAction(summary: AggregatedProductSummary) {
-  if (summary.breachedNowCount > 0) {
-    return `Clear ${summary.breachedNowCount} over-SLA case${summary.breachedNowCount === 1 ? "" : "s"} first.`
+function buildTrendHealthHeadline(
+  summary: AggregatedProductSummary,
+  periodLabel: string,
+  focusedProductName: string | null
+) {
+  const focusPrefix = focusedProductName ? `${focusedProductName}: ` : ""
+  if (summary.satisfactionScorePercent === null) {
+    return `${focusPrefix}No CX ratings in ${periodLabel.toLowerCase()} yet. Keep feedback collection active.`
   }
-  if (summary.awaitingTeamNowCount > 0) {
-    return `Work through ${summary.awaitingTeamNowCount} case${
-      summary.awaitingTeamNowCount === 1 ? "" : "s"
-    } waiting on support.`
+  if (summary.satisfactionScorePercent < 75) {
+    return `${focusPrefix}Customer happiness is ${summary.satisfactionScorePercent}% and needs immediate recovery.`
   }
-  if (summary.openNowCount > 0) {
-    return `${summary.openNowCount} open case${summary.openNowCount === 1 ? "" : "s"} are in a healthy state right now.`
+  if (summary.satisfactionScorePercent < 90) {
+    return `${focusPrefix}Customer happiness is ${summary.satisfactionScorePercent}% and below target.`
   }
-  return "No open queue pressure in this product right now."
+  return `${focusPrefix}Customer happiness is on target at ${summary.satisfactionScorePercent}%.`
 }
 
-function buildTrendsFocusSecondaryAction(
-  summary: AggregatedProductSummary,
-  periodLabel: string
-) {
+function buildTrendSupportingText(summary: AggregatedProductSummary, periodLabel: string) {
   const parts = [
-    `${summary.openNowCount} open`,
-    `${summary.awaitingTeamNowCount} waiting`,
+    `${summary.openNowCount} open now`,
     `${summary.breachedNowCount} over SLA now`,
+    summary.slaAdherencePercent === null
+      ? `No tracked SLA in ${periodLabel.toLowerCase()}`
+      : `SLA ${summary.slaAdherencePercent}% in ${periodLabel.toLowerCase()}`,
+    `Rated coverage ${summary.responseRatePercent}%`,
   ]
-  if (summary.slaAdherencePercent !== null) {
-    parts.push(`SLA ${summary.slaAdherencePercent}% in ${periodLabel.toLowerCase()}`)
-  }
-  if (summary.satisfactionScorePercent !== null) {
-    parts.push(`CX ${summary.satisfactionScorePercent}%`)
-  }
+
   return parts.join(" • ")
+}
+
+function buildTrendsTickerItems(
+  data: TrendsWallboardData,
+  focusedProductName: string | null,
+  summary: AggregatedProductSummary
+) {
+  if (data.peopleMoments.length > 0) {
+    return data.peopleMoments
+  }
+
+  const focusLabel = focusedProductName ?? "All products"
+  const items: string[] = [
+    `${focusLabel}: CX ${
+      summary.satisfactionScorePercent === null ? "—" : `${summary.satisfactionScorePercent}%`
+    } in ${data.period.label.toLowerCase()}`,
+    `${focusLabel}: SLA ${
+      summary.slaAdherencePercent === null ? "—" : `${summary.slaAdherencePercent}%`
+    } in ${data.period.label.toLowerCase()}`,
+    `${focusLabel}: rated coverage ${summary.responseRatePercent}%`,
+  ]
+
+  for (const trend of data.themeTrends.slice(0, 2)) {
+    items.push(
+      `${focusLabel}: theme ${trend.label} ${trend.delta > 0 ? "+" : ""}${trend.delta} vs prior`
+    )
+  }
+
+  const pressure = [...data.queuePressure].sort((a, b) => b.delta - a.delta)[0]
+  if (pressure) {
+    items.push(
+      `${focusLabel}: queue ${pressure.teamName} ${pressure.delta > 0 ? "+" : ""}${pressure.delta} open vs prior`
+    )
+  }
+
+  if (summary.topPerformerName && summary.topPerformerPositiveCount > 0) {
+    items.push(
+      `Quick win: ${summary.topPerformerName} delivered ${summary.topPerformerPositiveCount} positive rating${
+        summary.topPerformerPositiveCount === 1 ? "" : "s"
+      } in ${data.period.label.toLowerCase()}`
+    )
+  }
+
+  return items
 }
 
 function buildQuickWinText(
@@ -647,24 +802,51 @@ function SummaryTile({
   )
 }
 
-function Cell({
-  value,
-  warning,
-  danger,
+function ActionCell({
+  text,
+  tone,
+  className,
 }: {
-  value: string | number
-  warning?: boolean
-  danger?: boolean
+  text: string
+  tone: "red" | "amber" | "stone" | "emerald"
+  className?: string
 }) {
   return (
     <div
       className={cn(
-        "text-right text-2xl font-medium text-stone-100",
-        warning && "text-amber-300",
-        danger && "text-red-300"
+        "text-sm leading-6",
+        tone === "red" && "text-red-200",
+        tone === "amber" && "text-amber-200",
+        tone === "emerald" && "text-emerald-200",
+        tone === "stone" && "text-stone-300",
+        className
       )}
     >
-      {value}
+      {text}
+    </div>
+  )
+}
+
+function RowMetric({
+  label,
+  value,
+  danger,
+}: {
+  label: string
+  value: string | number
+  danger?: boolean
+}) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/20 px-3 py-2">
+      <div className="text-[11px] uppercase tracking-wide text-stone-400">{label}</div>
+      <div
+        className={cn(
+          "mt-1 text-2xl font-semibold tabular-nums text-stone-100",
+          danger && "text-red-300"
+        )}
+      >
+        {value}
+      </div>
     </div>
   )
 }
@@ -691,4 +873,52 @@ function SnapshotValue({
       </div>
     </div>
   )
+}
+
+function buildProductRowAction(
+  row: ProductHealthRow
+): { text: string; tone: "red" | "amber" | "stone" | "emerald" } {
+  if (row.breachedNowCount > 0) {
+    return {
+      text: `Reply on ${row.breachedNowCount} over-SLA case${
+        row.breachedNowCount === 1 ? "" : "s"
+      } first.`,
+      tone: "red",
+    }
+  }
+
+  if (row.awaitingTeamCount > 0) {
+    return {
+      text: `Work through ${row.awaitingTeamCount} case${
+        row.awaitingTeamCount === 1 ? "" : "s"
+      } waiting on support.`,
+      tone: "amber",
+    }
+  }
+
+  if (row.slaAdherencePercent !== null && row.slaAdherencePercent < 90) {
+    return {
+      text: `SLA is ${row.slaAdherencePercent}% in this period. Recover to 90% target.`,
+      tone: "amber",
+    }
+  }
+
+  if (row.satisfactionScorePercent !== null && row.satisfactionScorePercent < 90) {
+    return {
+      text: `CX is ${row.satisfactionScorePercent}%. Review negative feedback themes.`,
+      tone: "amber",
+    }
+  }
+
+  if (row.openNowCount === 0) {
+    return {
+      text: "No open queue pressure right now.",
+      tone: "stone",
+    }
+  }
+
+  return {
+    text: "Healthy queue. Keep normal response cadence.",
+    tone: "emerald",
+  }
 }

@@ -274,6 +274,44 @@ describe("support health logic", () => {
     expect(payload).not.toContain("john@acme.test")
   })
 
+  it("builds people-focused ticker moments from assignee CX and ownership signals", () => {
+    const cases = [
+      makeCase({
+        productName: "Addo Sign",
+        title: "Customer needs integration help",
+        tags: ["integration"],
+        status: "closed",
+        actionableState: "resolved",
+        assigneeName: "Jason",
+        cxScore: 8,
+        resolvedAt: new Date("2026-03-31T10:00:00.000Z"),
+        updatedAt: new Date("2026-03-31T10:00:00.000Z"),
+      }),
+      makeCase({
+        id: "unassigned-1",
+        productName: "twoday",
+        assigneeName: null,
+        hasAssignment: false,
+        actionableState: "unassigned",
+      }),
+      makeCase({
+        id: "unassigned-2",
+        productName: "twoday",
+        assigneeName: null,
+        hasAssignment: false,
+        actionableState: "unassigned",
+      }),
+    ]
+
+    const live = buildLiveWallboardData(cases, new Date("2026-03-31T11:57:00.000Z"), now)
+    const ticker = live.peopleMoments.join(" ")
+
+    expect(ticker).toContain("Jason")
+    expect(ticker).toContain("integrations")
+    expect(ticker).toContain("twoday")
+    expect(ticker).toContain("unassigned")
+  })
+
   it("keeps exception lanes out of headline SLA health", () => {
     const cases = [
       makeCase({
