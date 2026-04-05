@@ -2,6 +2,7 @@ import { startTransition, useMemo } from "react"
 import { createFileRoute, useNavigate } from "@tanstack/react-router"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { InfoTooltip } from "@/components/info-tooltip"
+import { ProductBrandLabel, ProductBrandLogo, formatProductLabel } from "@/components/product-brand"
 import { SatisfactionTrendChart } from "@/components/satisfaction-trend-chart"
 import { SupportCxSummary } from "@/components/support-cx-summary"
 import { SupportPeriodFilter } from "@/components/support-period-filter"
@@ -20,6 +21,13 @@ const TOP_LOOKUP_LIMIT = 4
 
 export const Route = createFileRoute("/wallboard/trends")({
   ssr: false,
+  head: () => ({
+    meta: [
+      {
+        title: "Heartbeat - Product Health",
+      },
+    ],
+  }),
   validateSearch: (search: Record<string, unknown>) =>
     ({
       ...normalizeSupportPeriodInput(search as SupportPeriodInput),
@@ -91,11 +99,6 @@ function TrendsWallboardPage() {
       : data.lookupCases
           .filter((item) => item.productName === focusedProductName)
           .slice(0, TOP_LOOKUP_LIMIT)
-  const quickWinText = buildQuickWinText(
-    focusedSummary.topPerformerName,
-    focusedSummary.topPerformerPositiveCount,
-    data.period.label
-  )
   const trendTickerItems = buildTrendsTickerItems(data, focusedProductName, focusedSummary)
   const focusSatisfaction =
     focusedProductName === null
@@ -229,7 +232,11 @@ function TrendsWallboardPage() {
           <div className="rounded-md border border-white/10 bg-black/10 px-4 py-3">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
-                <div className="text-xl font-medium text-stone-100">{spotlightRow.productName}</div>
+                <ProductBrandLabel
+                  productName={spotlightRow.productName}
+                  logoSize="md"
+                  className="text-xl font-medium text-stone-100"
+                />
                 <div className="mt-1 text-xs text-stone-400">{spotlightRow.servicePolicyName}</div>
               </div>
               <ActionCell
@@ -254,7 +261,11 @@ function TrendsWallboardPage() {
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <div className="text-xl font-medium text-stone-100">{row.productName}</div>
+                      <ProductBrandLabel
+                        productName={row.productName}
+                        logoSize="sm"
+                        className="text-xl font-medium text-stone-100"
+                      />
                       <div className="mt-1 text-xs text-stone-400">{row.servicePolicyName}</div>
                     </div>
                     <ActionCell
@@ -308,7 +319,7 @@ function TrendsWallboardPage() {
     <WallboardSection
       title={
         focusedProductName
-          ? `Top ${TOP_LOOKUP_LIMIT} IDs • ${focusedProductName}`
+          ? `Top ${TOP_LOOKUP_LIMIT} IDs • ${formatProductLabel(focusedProductName)}`
           : `Top ${TOP_LOOKUP_LIMIT} IDs to inspect`
       }
       className="min-h-0"
@@ -327,9 +338,11 @@ function TrendsWallboardPage() {
               <div className="min-w-0">
                 <CaseLink item={item} appUrl={data.intercomAppUrl} />
                 <div className="mt-1 text-xs text-stone-300">
-                  <div className="font-medium text-stone-100">
-                    {formatProductName(item.productName)}
-                  </div>
+                  <ProductBrandLabel
+                    productName={item.productName}
+                    logoSize="xs"
+                    className="font-medium text-stone-100"
+                  />
                   <div className="text-stone-400">
                     {item.queueName} • {formatLookupSubtype(item.subtype)}
                   </div>
@@ -370,11 +383,6 @@ function TrendsWallboardPage() {
         <p className="text-sm leading-6 text-stone-400">
           {buildTrendSupportingText(focusedSummary, data.period.label)}
         </p>
-        {quickWinText ? (
-          <div className="rounded-md border border-emerald-300/30 bg-emerald-300/10 px-4 py-3 text-sm text-emerald-100">
-            {quickWinText}
-          </div>
-        ) : null}
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3">
         <SnapshotValue
@@ -468,9 +476,12 @@ function TrendsWallboardPage() {
             mode="wallboard"
           />
           <div className="rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-1 text-xs text-stone-400">
-            Focus:{" "}
-            <span className="font-medium text-stone-200">
-              {focusedProductName ?? "All products"}
+            <span className="mr-2 uppercase tracking-[0.12em] text-stone-500">Showcase</span>
+            <span className="inline-flex items-center gap-1.5 font-medium text-stone-200">
+              {focusedProductName ? (
+                <ProductBrandLogo productName={focusedProductName} size="xs" />
+              ) : null}
+              {formatProductLabel(focusedProductName)}
             </span>{" "}
             <span className="text-stone-500">• 12s</span>
           </div>
@@ -551,10 +562,6 @@ function formatLookupId(item: CaseLookupItem) {
 
 function formatLookupSubtype(subtype: CaseLookupItem["subtype"]) {
   return subtype === "ticket" ? "Ticket" : "Conversation"
-}
-
-function formatProductName(productName: string) {
-  return productName === "Unmapped" ? "Needs mapping" : productName
 }
 
 function LookupAssignee({ item }: { item: CaseLookupItem }) {
@@ -761,17 +768,6 @@ function buildTrendsTickerItems(
   }
 
   return items
-}
-
-function buildQuickWinText(
-  topPerformerName: string | null,
-  positiveCount: number,
-  periodLabel: string
-) {
-  if (!topPerformerName || positiveCount <= 0) return null
-  return `Quick win: ${topPerformerName} delivered ${positiveCount} positive CX rating${
-    positiveCount === 1 ? "" : "s"
-  } in ${periodLabel.toLowerCase()}.`
 }
 
 function SummaryTile({

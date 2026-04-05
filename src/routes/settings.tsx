@@ -27,6 +27,13 @@ import {
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/settings")({
+  head: () => ({
+    meta: [
+      {
+        title: "Heartbeat - Settings",
+      },
+    ],
+  }),
   loader: async () => getIntercomConnectionState(),
   component: SettingsPage,
 })

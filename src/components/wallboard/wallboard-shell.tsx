@@ -30,18 +30,18 @@ export function WallboardShell({
             </h1>
             {toolbar ? <div className="mt-3">{toolbar}</div> : null}
           </div>
-          <div className="flex items-center gap-6 text-right">
+          <div className="flex items-center gap-5 text-right">
             <div>
-              <div className="text-sm text-stone-400">Now</div>
-              <div className="text-lg font-medium text-stone-100">
+              <div className="text-xs uppercase tracking-[0.12em] text-stone-500">Now</div>
+              <div className="whitespace-nowrap text-base font-medium text-stone-100">
                 {format(new Date(), "EEE d MMM • HH:mm")}
               </div>
             </div>
             <div>
-              <div className="text-sm text-stone-400">Data</div>
+              <div className="text-xs uppercase tracking-[0.12em] text-stone-500">Data</div>
               <div
                 className={cn(
-                  "text-lg font-medium",
+                  "whitespace-nowrap text-base font-medium",
                   stale ? "text-amber-300" : "text-stone-100"
                 )}
               >

@@ -15,6 +15,13 @@ import type { CaseLookupItem, SupportHealthSnapshot } from "@/lib/support-health
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      {
+        title: "Heartbeat - Dashboard",
+      },
+    ],
+  }),
   validateSearch: (search: Record<string, unknown>) =>
     ({
       ...normalizeSupportPeriodInput(search as SupportPeriodInput),

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
+import { ProductBrandLabel } from "@/components/product-brand"
 import { cn } from "@/lib/utils"
 
 interface SupportProductFilterProps {
@@ -83,7 +84,7 @@ export function SupportProductFilter({
             )}
             onClick={() => toggleProduct(productName)}
           >
-            {productName}
+            <ProductBrandLabel productName={productName} logoSize="xs" />
           </Button>
         )
       })}

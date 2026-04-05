@@ -47,8 +47,13 @@ export function AppSidebar() {
       {/* Header with logo */}
       <SidebarHeader>
         <Link to="/" className="flex items-center gap-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-            <span className="text-sm font-bold text-primary-foreground">H</span>
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-white">
+            <img
+              src="/product_support_logo.png"
+              alt="Product Support logo"
+              className="h-6 w-6 rounded-sm object-contain"
+              loading="lazy"
+            />
           </div>
           <SidebarMenuButtonText>
             <span className="text-lg font-semibold">Heartbeat</span>
