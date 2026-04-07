@@ -1,75 +1,123 @@
-import * as React from "react"
-import { cn } from "@/lib/utils"
+import type * as React from "react";
+import { cn } from "@/lib/utils";
 
-const Card = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      "rounded-lg border bg-card text-card-foreground shadow",
-      className
-    )}
-    {...props}
-  />
-))
-Card.displayName = "Card"
+const cardBaseClassName =
+	"rounded-xl border border-border/40 shadow-sm transition-colors";
 
-const CardHeader = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("flex flex-col space-y-1.5 p-6", className)}
-    {...props}
-  />
-))
-CardHeader.displayName = "CardHeader"
+const cardSurfaceClassName = cn(
+	cardBaseClassName,
+	"bg-card text-card-foreground",
+);
 
-const CardTitle = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("font-semibold leading-none tracking-tight", className)}
-    {...props}
-  />
-))
-CardTitle.displayName = "CardTitle"
+const panelSurfaceClassName = cn(
+	cardBaseClassName,
+	"bg-background text-card-foreground",
+);
 
-const CardDescription = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("text-sm text-muted-foreground", className)}
-    {...props}
-  />
-))
-CardDescription.displayName = "CardDescription"
+function Card({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card"
+			className={cn(
+				cardSurfaceClassName,
+				"flex flex-col gap-6 py-3",
+				className,
+			)}
+			{...props}
+		/>
+	);
+}
 
-const CardContent = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div ref={ref} className={cn("p-6 pt-0", className)} {...props} />
-))
-CardContent.displayName = "CardContent"
+function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card-header"
+			className={cn(
+				"@container/card-header grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 px-6 py-2 has-data-[slot=card-action]:grid-cols-[1fr_auto] [.border-b]:pb-3",
+				className,
+			)}
+			{...props}
+		/>
+	);
+}
 
-const CardFooter = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("flex items-center p-6 pt-0", className)}
-    {...props}
-  />
-))
-CardFooter.displayName = "CardFooter"
+function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card-title"
+			className={cn("font-semibold leading-none", className)}
+			{...props}
+		/>
+	);
+}
 
-export { Card, CardHeader, CardFooter, CardTitle, CardDescription, CardContent }
+function CardDescription({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card-description"
+			className={cn("text-sm text-muted-foreground", className)}
+			{...props}
+		/>
+	);
+}
+
+function CardAction({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card-action"
+			className={cn(
+				"col-start-2 row-span-2 row-start-1 self-start justify-self-end",
+				className,
+			)}
+			{...props}
+		/>
+	);
+}
+
+function CardContent({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card-content"
+			className={cn("px-6", className)}
+			{...props}
+		/>
+	);
+}
+
+function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
+	return (
+		<div
+			data-slot="card-footer"
+			className={cn("flex items-center px-6 [.border-t]:pt-6", className)}
+			{...props}
+		/>
+	);
+}
+
+function ActionCard({ className, ...props }: React.ComponentProps<"button">) {
+	return (
+		<button
+			type="button"
+			data-slot="action-card"
+			className={cn(
+				panelSurfaceClassName,
+				"cursor-pointer p-5 text-left hover:border-border",
+				className,
+			)}
+			{...props}
+		/>
+	);
+}
+
+export {
+	ActionCard,
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardFooter,
+	CardHeader,
+	CardTitle,
+	cardSurfaceClassName,
+	panelSurfaceClassName,
+};
