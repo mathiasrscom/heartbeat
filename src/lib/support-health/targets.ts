@@ -1,4 +1,4 @@
-import { getKnownSupportProducts } from "./policy";
+import { getKnownSupportProducts, normalizeSupportProductName } from "./policy";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -59,14 +59,7 @@ function normalizeTargets(
 }
 
 function canonicalizeProductName(value: string) {
-	const trimmed = value.trim();
-	if (!trimmed) return null;
-
-	const normalized = normalizeProductKey(trimmed);
-	const knownProduct = getKnownSupportProducts().find(
-		(productName) => normalizeProductKey(productName) === normalized,
-	);
-	return knownProduct ?? trimmed;
+	return normalizeSupportProductName(value);
 }
 
 export function normalizeSupportTargetsConfig(
@@ -124,10 +117,12 @@ export function resolveSupportTargets(
 ) {
 	if (!productName) return config.defaultTargets;
 
-	const direct = config.productTargets[productName];
+	const canonicalProductName =
+		normalizeSupportProductName(productName) ?? productName;
+	const direct = config.productTargets[canonicalProductName];
 	if (direct) return direct;
 
-	const normalized = normalizeProductKey(productName);
+	const normalized = normalizeProductKey(canonicalProductName);
 	const alias = Object.entries(config.productTargets).find(
 		([candidate]) => normalizeProductKey(candidate) === normalized,
 	);

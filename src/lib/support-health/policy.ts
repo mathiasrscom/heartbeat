@@ -10,12 +10,6 @@ interface ProductPolicyRule {
 	matchTerms: string[];
 }
 
-interface ProductViewRule {
-	excludedTicketTypes?: string[];
-	excludedTeams?: string[];
-	excludedAssignees?: string[];
-}
-
 interface ClassificationInput {
 	title: string | null;
 	description: string | null;
@@ -29,6 +23,10 @@ export interface SupportCaseClassification {
 	serviceBucket: SupportServiceBucket;
 	servicePolicyName: string;
 }
+
+const SUPPORT_PRODUCT_ALIASES: Record<string, string> = {
+	aftaleportalen: "CVR",
+};
 
 const PRODUCT_POLICY_RULES: ProductPolicyRule[] = [
 	{
@@ -57,23 +55,9 @@ const PRODUCT_POLICY_RULES: ProductPolicyRule[] = [
 		label: "CVR",
 		bucket: "exception",
 		policyName: "Separate workflow",
-		matchTerms: ["cvr"],
+		matchTerms: ["cvr", "aftaleportalen"],
 	},
 ];
-
-const PRODUCT_VIEW_RULES: Record<string, ProductViewRule> = {
-	"Addo Sign": {
-		excludedTicketTypes: [
-			"Developer",
-			"Feature Request",
-			"Internal Task",
-			"Issue Tracker",
-			"Knowledge",
-		],
-		excludedTeams: ["Developer"],
-		excludedAssignees: ["Fin"],
-	},
-};
 
 export function getKnownSupportProducts() {
 	return PRODUCT_POLICY_RULES.map((rule) => rule.label);
@@ -86,6 +70,10 @@ const GENERIC_QUEUE_NAMES = new Set([
 	"shared inbox",
 	"inbox",
 	"team inbox",
+	"ticket",
+	"tickets",
+	"conversation",
+	"conversations",
 ]);
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -136,6 +124,22 @@ function formatProductLabel(value: string) {
 		.join(" ");
 }
 
+export function normalizeSupportProductName(value: string | null | undefined) {
+	const trimmed = value?.trim();
+	if (!trimmed) return null;
+
+	const normalized = normalizeSearchValue(trimmed);
+	const alias = SUPPORT_PRODUCT_ALIASES[normalized];
+	if (alias) return alias;
+
+	const knownProduct = PRODUCT_POLICY_RULES.find(
+		(rule) => normalizeSearchValue(rule.label) === normalized,
+	)?.label;
+	if (knownProduct) return knownProduct;
+
+	return formatProductLabel(trimmed);
+}
+
 function isGenericQueueName(value: string) {
 	return GENERIC_QUEUE_NAMES.has(normalizeSearchValue(value));
 }
@@ -181,53 +185,6 @@ function getExplicitProduct(rawData: unknown) {
 	}
 
 	return null;
-}
-
-function getIntercomTicketType(rawData: unknown) {
-	const candidates = [
-		getNestedValue(rawData, ["ticket", "ticket_type"]),
-		getNestedValue(rawData, ["ticket", "ticket_type", "name"]),
-		getNestedValue(rawData, ["ticket_type"]),
-		getNestedValue(rawData, ["ticket_type", "name"]),
-		getNestedValue(rawData, ["ticket_attributes", "ticket_type"]),
-	];
-
-	for (const candidate of candidates) {
-		const resolved = getStringCandidate(candidate);
-		if (resolved) {
-			return resolved;
-		}
-	}
-
-	return null;
-}
-
-function getIntercomTeamAssignment(rawData: unknown) {
-	const candidates = [
-		getNestedValue(rawData, ["team_assigned"]),
-		getNestedValue(rawData, ["team_assigned", "name"]),
-		getNestedValue(rawData, ["team_assignee"]),
-		getNestedValue(rawData, ["team_assignee", "name"]),
-		getNestedValue(rawData, ["team"]),
-		getNestedValue(rawData, ["team", "name"]),
-	];
-
-	for (const candidate of candidates) {
-		const resolved = getStringCandidate(candidate);
-		if (resolved) {
-			return resolved;
-		}
-	}
-
-	return null;
-}
-
-function matchesNormalizedValue(value: string | null, candidates: string[]) {
-	if (!value) return false;
-	const normalizedValue = normalizeSearchValue(value);
-	return candidates.some(
-		(candidate) => normalizeSearchValue(candidate) === normalizedValue,
-	);
 }
 
 function matchesRule(
@@ -276,7 +233,7 @@ export function classifySupportCase(
 
 	if (explicitProduct) {
 		return {
-			productName: formatProductLabel(explicitProduct),
+			productName: normalizeSupportProductName(explicitProduct) ?? "Unmapped",
 			serviceBucket: "headline",
 			servicePolicyName: "Standard workflow",
 		};
@@ -284,7 +241,7 @@ export function classifySupportCase(
 
 	if (input.queueName && !isGenericQueueName(input.queueName)) {
 		return {
-			productName: formatProductLabel(input.queueName),
+			productName: normalizeSupportProductName(input.queueName) ?? "Unmapped",
 			serviceBucket: "headline",
 			servicePolicyName: "Standard workflow",
 		};
@@ -306,29 +263,5 @@ export function resolveSupportCaseProductViews(input: {
 		return [];
 	}
 
-	const rule = PRODUCT_VIEW_RULES[input.productName];
-	if (!rule) {
-		return [input.productName];
-	}
-
-	const ticketType = getIntercomTicketType(input.rawData);
-	if (matchesNormalizedValue(ticketType, rule.excludedTicketTypes ?? [])) {
-		return [];
-	}
-
-	const teamAssignment = getIntercomTeamAssignment(input.rawData);
-	if (matchesNormalizedValue(teamAssignment, rule.excludedTeams ?? [])) {
-		return [];
-	}
-
-	const assigneeName =
-		typeof input.assigneeName === "string" &&
-		input.assigneeName.trim().length > 0
-			? input.assigneeName
-			: null;
-	if (matchesNormalizedValue(assigneeName, rule.excludedAssignees ?? [])) {
-		return [];
-	}
-
-	return [input.productName];
+	return [normalizeSupportProductName(input.productName) ?? input.productName];
 }

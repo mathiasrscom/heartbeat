@@ -84,6 +84,10 @@ const GENERIC_QUEUE_NAMES = new Set([
 	"shared inbox",
 	"inbox",
 	"team inbox",
+	"ticket",
+	"tickets",
+	"conversation",
+	"conversations",
 ]);
 
 function round(value: number, digits = 1) {

@@ -50,6 +50,24 @@ describe("support policy classification", () => {
 		expect(classified.servicePolicyName).toBe("Separate workflow");
 	});
 
+	it("maps Aftaleportalen into the CVR exception lane", () => {
+		const classified = classifySupportCase({
+			title: "Customer needs help",
+			description: null,
+			tags: [],
+			queueName: "General",
+			rawData: {
+				custom_attributes: {
+					brand: "Aftaleportalen",
+				},
+			},
+		});
+
+		expect(classified.productName).toBe("CVR");
+		expect(classified.serviceBucket).toBe("exception");
+		expect(classified.servicePolicyName).toBe("Separate workflow");
+	});
+
 	it("treats capitalized Intercom Brand fields as explicit product metadata", () => {
 		const classified = classifySupportCase({
 			title: "Customer needs help",
@@ -88,7 +106,37 @@ describe("support policy classification", () => {
 		expect(classified.servicePolicyName).toBe("Standard workflow");
 	});
 
-	it("applies Addo Sign saved-view exclusions when a product filter is selected", () => {
+	it("does not treat Tickets or Conversations as product names", () => {
+		expect(
+			classifySupportCase({
+				title: null,
+				description: null,
+				tags: [],
+				queueName: "Tickets",
+				rawData: {},
+			}),
+		).toMatchObject({
+			productName: "Unmapped",
+			serviceBucket: "unknown",
+			servicePolicyName: "Unmapped",
+		});
+
+		expect(
+			classifySupportCase({
+				title: null,
+				description: null,
+				tags: [],
+				queueName: "Conversations",
+				rawData: {},
+			}),
+		).toMatchObject({
+			productName: "Unmapped",
+			serviceBucket: "unknown",
+			servicePolicyName: "Unmapped",
+		});
+	});
+
+	it("keeps filtered products visible for both tickets and conversations", () => {
 		expect(
 			resolveSupportCaseProductViews({
 				productName: "Addo Sign",
@@ -107,22 +155,20 @@ describe("support policy classification", () => {
 				assigneeName: "Fin",
 				rawData: {
 					ticket: {
-						ticket_type: "Tickets",
+						ticket_type: "Developer",
 					},
 				},
 			}),
-		).toEqual([]);
+		).toEqual(["Addo Sign"]);
 
 		expect(
 			resolveSupportCaseProductViews({
 				productName: "Addo Sign",
 				assigneeName: null,
 				rawData: {
-					ticket: {
-						ticket_type: "Developer",
-					},
+					conversation: {},
 				},
 			}),
-		).toEqual([]);
+		).toEqual(["Addo Sign"]);
 	});
 });
