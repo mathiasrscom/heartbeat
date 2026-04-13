@@ -7,6 +7,7 @@
 
 const DEFAULT_INTERCOM_API_BASE = "https://api.intercom.io"
 const INTERCOM_API_VERSION = "2.14"
+const INTERCOM_REQUEST_TIMEOUT_MS = 30_000
 
 interface IntercomConfig {
   accessToken: string
@@ -265,28 +266,43 @@ export function createIntercomClient(config: IntercomConfig) {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${apiBaseUrl}${endpoint}`
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), INTERCOM_REQUEST_TIMEOUT_MS)
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "Intercom-Version": apiVersion,
-        ...options.headers,
-      },
-    })
-
-    if (!response.ok) {
-      const error = await response.text()
-      throw new IntercomApiError({
-        status: response.status,
-        endpoint,
-        responseBody: error,
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "Intercom-Version": apiVersion,
+          ...options.headers,
+        },
       })
-    }
 
-    return response.json()
+      if (!response.ok) {
+        const error = await response.text()
+        throw new IntercomApiError({
+          status: response.status,
+          endpoint,
+          responseBody: error,
+        })
+      }
+
+      return response.json()
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `Intercom request timed out after ${INTERCOM_REQUEST_TIMEOUT_MS}ms: ${endpoint}`
+        )
+      }
+
+      throw error
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 
   return {

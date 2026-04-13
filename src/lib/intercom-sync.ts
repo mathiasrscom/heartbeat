@@ -340,9 +340,14 @@ async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
   let entitiesSynced = 0
   let hasMoreContacts = true
   let contactCursor: string | undefined
+  let page = 1
 
   while (hasMoreContacts) {
     try {
+      await updateIntercomSyncRuntime(
+        "contacts",
+        `Syncing contacts (page ${page}, ${entitiesSynced} synced)`
+      )
       const response = await client.listContacts({
         per_page: 50,
         starting_after: contactCursor,
@@ -356,6 +361,7 @@ async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
 
       contactCursor = getNextCursor(response.pages?.next)
       hasMoreContacts = Boolean(contactCursor)
+      page++
       await sleep(100)
     } catch (error) {
       throw new Error(`Contacts sync failed: ${error}`)

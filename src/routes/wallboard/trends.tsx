@@ -1,5 +1,5 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { startTransition, useMemo } from "react";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import { startTransition, useEffect, useMemo } from "react";
 import { InfoTooltip } from "@/components/info-tooltip";
 import {
 	formatProductLabel,
@@ -35,6 +35,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 const TOP_LOOKUP_LIMIT = 4;
+const WALLBOARD_REFRESH_INTERVAL_MS = 30_000;
 
 export const Route = createFileRoute("/wallboard/trends")({
 	ssr: false,
@@ -61,6 +62,17 @@ function TrendsWallboardPage() {
 	const data = Route.useLoaderData();
 	const search = Route.useSearch();
 	const navigate = useNavigate({ from: Route.fullPath });
+	const router = useRouter();
+
+	useEffect(() => {
+		const timer = window.setInterval(() => {
+			void router.invalidate();
+		}, WALLBOARD_REFRESH_INTERVAL_MS);
+
+		return () => {
+			window.clearInterval(timer);
+		};
+	}, [router]);
 
 	function handlePeriodChange(next: {
 		period: "current-week" | "previous-week" | "custom";

@@ -1,6 +1,6 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
-import { startTransition, useMemo } from "react";
+import { startTransition, useEffect, useMemo } from "react";
 import { InfoTooltip } from "@/components/info-tooltip";
 import {
 	formatProductLabel,
@@ -31,6 +31,7 @@ import type {
 import { cn } from "@/lib/utils";
 
 const TOP_LOOKUP_LIMIT = 4;
+const WALLBOARD_REFRESH_INTERVAL_MS = 30_000;
 
 export const Route = createFileRoute("/wallboard/live")({
 	ssr: false,
@@ -52,6 +53,7 @@ function LiveWallboardPage() {
 	const live = Route.useLoaderData() as LiveWallboardData;
 	const search = Route.useSearch();
 	const navigate = useNavigate({ from: Route.fullPath });
+	const router = useRouter();
 	const autoplayProducts = useMemo(
 		() =>
 			resolveAutoplayProducts(
@@ -110,6 +112,16 @@ function LiveWallboardPage() {
 		focusedProductName,
 		focusedQueue,
 	);
+
+	useEffect(() => {
+		const timer = window.setInterval(() => {
+			void router.invalidate();
+		}, WALLBOARD_REFRESH_INTERVAL_MS);
+
+		return () => {
+			window.clearInterval(timer);
+		};
+	}, [router]);
 
 	function handleProductChange(products: string[]) {
 		startTransition(() => {
