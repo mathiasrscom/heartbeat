@@ -1,6 +1,8 @@
 ## Heartbeat – Production stack for Raspberry Pi 5
 ## Usage:
 ##   docker compose -f docker-compose.production.yml up -d --build
+##   IMAGE_NAME=<dockerhub-user>/heartbeat IMAGE_TAG=pi docker compose -f docker-compose.production.yml pull
+##   IMAGE_NAME=<dockerhub-user>/heartbeat IMAGE_TAG=pi docker compose -f docker-compose.production.yml up -d
 ##
 ## Ollama runs natively on the host (not in Docker) for direct ARM64 access.
 ## Install: curl -fsSL https://ollama.com/install.sh | sh
@@ -51,6 +53,7 @@ services:
 
   # ── Heartbeat web server ──────────────────────────────────────────────
   web:
+    image: ${IMAGE_NAME:-heartbeat}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -62,9 +65,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_USER:-heartbeat}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-heartbeat}
       REDIS_URL: redis://redis:6379
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,6 +80,7 @@ services:
 
   # ── Background worker (Intercom sync + Ollama ticker rewrite) ────────
   worker:
+    image: ${IMAGE_NAME:-heartbeat}:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: Dockerfile
@@ -89,6 +93,8 @@ services:
       REDIS_URL: redis://redis:6379
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       INTERCOM_ACCESS_TOKEN: ${INTERCOM_ACCESS_TOKEN:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

@@ -69,6 +69,31 @@ To build this application for production:
 pnpm build
 ```
 
+### Raspberry Pi via Docker Desktop
+
+Build and push an ARM64 image from Docker Desktop or any machine with Buildx:
+
+```bash
+docker buildx build --platform linux/arm64 -t <dockerhub-user>/heartbeat:pi --push .
+```
+
+On the Raspberry Pi, set these in `.env`:
+
+```bash
+IMAGE_NAME=<dockerhub-user>/heartbeat
+IMAGE_TAG=pi
+POSTGRES_PASSWORD=change-me
+OLLAMA_BASE_URL=http://<pi-ip>:11434
+```
+
+Then start the production stack:
+
+```bash
+docker compose -f docker-compose.production.yml pull
+docker compose -f docker-compose.production.yml up -d
+docker compose -f docker-compose.production.yml exec web pnpm db:push
+```
+
 ## Testing
 
 This project uses [Vitest](https://vitest.dev/) for testing. You can run the tests with:
@@ -102,16 +127,6 @@ Add components using the latest version of [Shadcn](https://ui.shadcn.com/).
 pnpm dlx shadcn@latest add button
 ```
 
-
-## Setting up Better Auth
-
-1. Generate and set the `BETTER_AUTH_SECRET` environment variable in your `.env.local`:
-
-   ```bash
-   npx @better-auth/cli secret
-   ```
-
-2. Visit the [Better Auth documentation](https://www.better-auth.com) to unlock the full potential of authentication in your app.
 
 ### Adding a Database
 
