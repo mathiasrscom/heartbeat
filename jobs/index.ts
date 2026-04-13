@@ -70,12 +70,14 @@ async function refreshTickerMessages() {
       { buildLiveWallboardData },
       ticker,
       focusPlan,
+      insights,
       { readIntercomTickerLlmSettings },
     ] = await Promise.all([
       import("@/lib/support-health/server"),
       import("@/lib/support-health/logic"),
       import("@/lib/wallboard-ticker-messages"),
       import("@/lib/wallboard-focus-plan"),
+      import("@/lib/wallboard-insights"),
       import("@/lib/intercom-admin"),
     ])
 
@@ -100,6 +102,26 @@ async function refreshTickerMessages() {
     }
 
     await focusPlan.writeLiveWallboardFocusPlan(resolvedFocusPlan)
+
+    // Product insights (what went well / what to improve)
+    const productNames = live.mappedQueues.map((q) => q.teamName)
+    if (productNames.length > 0) {
+      const deterministicInsights = insights.buildDeterministicInsights(cases, productNames)
+      let resolvedInsights = deterministicInsights
+      try {
+        const rewritten = await insights.rewriteInsightsWithOllama(
+          deterministicInsights,
+          cases,
+          productNames,
+          llmSettings
+        )
+        if (rewritten) resolvedInsights = rewritten
+      } catch (error) {
+        console.error("[workers] Ollama insights rewrite failed. Using deterministic.", error)
+      }
+      await insights.writeWallboardInsights(resolvedInsights)
+      console.info(`[workers] Wallboard insights refreshed (${resolvedInsights.source}).`)
+    }
 
     if (deterministicItems.length === 0) {
       console.info("[workers] No people moments available for ticker refresh.")

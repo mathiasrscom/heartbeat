@@ -4,6 +4,7 @@ import {
 	CheckCircle2,
 	Clock3,
 	LoaderCircle,
+	Monitor,
 	Plug,
 	RefreshCcw,
 	ShieldAlert,
@@ -23,7 +24,9 @@ import {
 	saveIntercomSupportTargets,
 	saveIntercomTickerLlmSettings,
 	saveIntercomWorkspaceLink,
+	saveWallboardDisplaySettings,
 	triggerIntercomSync,
+	type WallboardTheme,
 } from "@/lib/intercom-admin";
 import type { SupportPerformanceTargets } from "@/lib/support-health/targets";
 import { cn } from "@/lib/utils";
@@ -84,6 +87,14 @@ function SettingsPage() {
 	const [isStartingSync, setIsStartingSync] = useState(false);
 	const [isSavingSupportTargets, setIsSavingSupportTargets] = useState(false);
 	const [isSavingTickerLlm, setIsSavingTickerLlm] = useState(false);
+	const saveWallboardDisplay = useServerFn(saveWallboardDisplaySettings);
+	const [wallboardTheme, setWallboardTheme] = useState<WallboardTheme>(
+		initialState.wallboardTheme,
+	);
+	const [wallboardProducts, setWallboardProducts] = useState<string[]>(
+		initialState.wallboardProducts,
+	);
+	const [isSavingWallboard, setIsSavingWallboard] = useState(false);
 	const tickerLookupRequestRef = useRef(0);
 	const supportTargetFieldId = useId();
 
@@ -410,6 +421,30 @@ function SettingsPage() {
 			setFeedback({ tone: "error", text: message });
 		} finally {
 			setIsSavingSupportTargets(false);
+		}
+	}
+
+	async function handleSaveWallboardDisplay() {
+		setFeedback(null);
+		setIsSavingWallboard(true);
+
+		try {
+			const result = await saveWallboardDisplay({
+				data: { theme: wallboardTheme, products: wallboardProducts },
+			});
+			setState(result.state);
+			setWallboardTheme(result.state.wallboardTheme);
+			setWallboardProducts(result.state.wallboardProducts);
+			setSupportTargets(result.state.supportTargets);
+			setFeedback({ tone: "success", text: result.message });
+		} catch (error) {
+			const message =
+				error instanceof Error
+					? error.message
+					: "Unable to save wallboard display settings.";
+			setFeedback({ tone: "error", text: message });
+		} finally {
+			setIsSavingWallboard(false);
 		}
 	}
 
@@ -896,6 +931,101 @@ function SettingsPage() {
 									After {state.staleAfterMinutes} minutes
 								</div>
 							</div>
+						</div>
+					</CardContent>
+				</Card>
+
+				<Card>
+					<CardContent className="p-4">
+						<div className="flex items-center gap-2 mb-3">
+							<div className="p-1.5 rounded-md bg-violet-500/10">
+								<Monitor className="h-3.5 w-3.5 text-violet-600" />
+							</div>
+							<div className="flex-1">
+								<span className="text-xs font-medium">Wallboard display</span>
+								<span className="text-[10px] text-muted-foreground ml-2">
+									Theme for TV monitors
+								</span>
+							</div>
+						</div>
+
+						<div className="rounded-lg border bg-muted/20 px-3 py-3">
+							<div className="text-xs font-medium text-foreground mb-1">
+								Theme
+							</div>
+							<div className="text-[10px] text-muted-foreground mb-2">
+								Choose light or dark mode for wallboard screens.
+							</div>
+							<div className="flex items-center gap-2">
+								<Button
+									size="sm"
+									type="button"
+									variant={wallboardTheme === "light" ? "default" : "outline"}
+									className="h-7 text-xs px-3"
+									onClick={() => setWallboardTheme("light")}
+								>
+									Light
+								</Button>
+								<Button
+									size="sm"
+									type="button"
+									variant={wallboardTheme === "dark" ? "default" : "outline"}
+									className="h-7 text-xs px-3"
+									onClick={() => setWallboardTheme("dark")}
+								>
+									Dark
+								</Button>
+							</div>
+						</div>
+
+						{state.supportTargetProducts.length > 0 ? (
+							<div className="rounded-lg border bg-muted/20 px-3 py-3">
+								<div className="text-xs font-medium text-foreground mb-1">
+									Focus products
+								</div>
+								<div className="text-[10px] text-muted-foreground mb-2">
+									Select which products to show on wallboards. Leave empty for
+									all products.
+								</div>
+								<div className="flex flex-wrap gap-2">
+									{state.supportTargetProducts.map((product) => {
+										const isSelected = wallboardProducts.includes(product);
+										return (
+											<Button
+												key={product}
+												size="sm"
+												type="button"
+												variant={isSelected ? "default" : "outline"}
+												className="h-7 text-xs px-3"
+												onClick={() => {
+													setWallboardProducts((current) =>
+														isSelected
+															? current.filter((p) => p !== product)
+															: [...current, product],
+													);
+												}}
+											>
+												{product}
+											</Button>
+										);
+									})}
+								</div>
+							</div>
+						) : null}
+
+						<div className="flex justify-end">
+							<Button
+								size="sm"
+								className="h-7 px-3 text-xs"
+								type="button"
+								disabled={isSavingWallboard}
+								onClick={handleSaveWallboardDisplay}
+							>
+								{isSavingWallboard ? (
+									<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+								) : null}
+								Save display settings
+							</Button>
 						</div>
 					</CardContent>
 				</Card>

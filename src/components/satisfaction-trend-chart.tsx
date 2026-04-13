@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { panelSurfaceClassName } from "@/components/ui/card";
+const wbCell = "rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 import {
 	type ChartConfig,
 	ChartContainer,
@@ -35,7 +35,7 @@ export function SatisfactionTrendChart({
 	const hasValues = chartData.some((point) => point.value !== null);
 
 	return (
-		<div className={cn(panelSurfaceClassName, "p-4")}>
+		<div className={cn(wbCell, "p-4")}>
 			<div className="mb-3 flex items-end justify-between gap-3">
 				<div className="text-sm text-muted-foreground">{title}</div>
 				<div className="text-sm text-muted-foreground">

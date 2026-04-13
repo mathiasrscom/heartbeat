@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
-import { startTransition, useEffect, useMemo } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import { InfoTooltip } from "@/components/info-tooltip";
 import {
 	formatProductLabel,
@@ -8,20 +8,13 @@ import {
 } from "@/components/product-brand";
 import { SatisfactionTrendChart } from "@/components/satisfaction-trend-chart";
 import { SupportCxSummary } from "@/components/support-cx-summary";
-import { SupportPeriodFilter } from "@/components/support-period-filter";
-import { SupportProductFilter } from "@/components/support-product-filter";
-import {
-	cardSurfaceClassName,
-	panelSurfaceClassName,
-} from "@/components/ui/card";
+const wbCell = "rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 import { CaseLookupCard } from "@/components/wallboard/case-lookup-card";
-import { useProductAutoplay } from "@/components/wallboard/product-autoplay-strip";
 import { RotatingPanels } from "@/components/wallboard/rotating-panels";
 import {
 	WallboardSection,
 	WallboardShell,
 } from "@/components/wallboard/wallboard-shell";
-import { normalizeSupportProductFilterInput } from "@/lib/support-health/filter";
 import {
 	normalizeSupportPeriodInput,
 	type SupportPeriodInput,
@@ -34,26 +27,30 @@ import type {
 } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
 
-const TOP_LOOKUP_LIMIT = 4;
+const TOP_LOOKUP_LIMIT = 20;
 const WALLBOARD_REFRESH_INTERVAL_MS = 30_000;
+
+const PERIOD_ROTATION_PRESETS = [
+	"current-week",
+	"previous-week",
+	"current-month",
+	"previous-month",
+] as const;
+
+const PERIOD_ROTATION_INTERVAL_MS = 30_000;
 
 export const Route = createFileRoute("/wallboard/trends")({
 	ssr: false,
 	head: () => ({
 		meta: [
 			{
-				title: "Heartbeat - Product Health",
+				title: "Heartbeat - Trends",
 			},
 		],
 	}),
-	validateSearch: (search: Record<string, unknown>) => ({
-		...normalizeSupportPeriodInput(search as SupportPeriodInput),
-		...normalizeSupportProductFilterInput(search),
-	}),
-	loaderDeps: ({ search }) => ({
-		...normalizeSupportPeriodInput(search),
-		...normalizeSupportProductFilterInput(search),
-	}),
+	validateSearch: (search: Record<string, unknown>) =>
+		normalizeSupportPeriodInput(search as SupportPeriodInput),
+	loaderDeps: ({ search }) => normalizeSupportPeriodInput(search),
 	loader: async ({ deps }) => getTrendsWallboard({ data: deps }),
 	component: TrendsWallboardPage,
 });
@@ -65,46 +62,12 @@ function TrendsWallboardPage() {
 	const router = useRouter();
 
 	useEffect(() => {
-		const timer = window.setInterval(() => {
+		const dataTimer = window.setInterval(() => {
 			void router.invalidate();
 		}, WALLBOARD_REFRESH_INTERVAL_MS);
 
-		return () => {
-			window.clearInterval(timer);
-		};
+		return () => window.clearInterval(dataTimer);
 	}, [router]);
-
-	function handlePeriodChange(next: {
-		period: "current-week" | "previous-week" | "custom";
-		from?: string;
-		to?: string;
-	}) {
-		startTransition(() => {
-			navigate({
-				search: {
-					period: next.period,
-					from: next.period === "custom" ? next.from : undefined,
-					to: next.period === "custom" ? next.to : undefined,
-					products: search.products ?? [],
-				},
-				replace: true,
-			});
-		});
-	}
-
-	function handleProductChange(products: string[]) {
-		startTransition(() => {
-			navigate({
-				search: {
-					period: search.period,
-					from: search.period === "custom" ? search.from : undefined,
-					to: search.period === "custom" ? search.to : undefined,
-					products,
-				},
-				replace: true,
-			});
-		});
-	}
 
 	const autoplayProducts = useMemo(
 		() =>
@@ -115,8 +78,46 @@ function TrendsWallboardPage() {
 			),
 		[data.availableProducts, data.productHealth, data.selectedProducts],
 	);
-	const autoplay = useProductAutoplay(autoplayProducts, { intervalMs: 12_000 });
-	const focusedProductName = autoplay.activeProduct;
+
+	// Combined rotation: cycle all periods per product, then advance product
+	// Total steps = products × periods. Each tick advances one step.
+	const totalSteps =
+		autoplayProducts.length * PERIOD_ROTATION_PRESETS.length || 1;
+	const [rotationStep, setRotationStep] = useState(0);
+
+	useEffect(() => {
+		if (totalSteps <= 1) return;
+
+		const timer = window.setInterval(() => {
+			setRotationStep((current) => {
+				const next = (current + 1) % totalSteps;
+				const nextPeriod =
+					PERIOD_ROTATION_PRESETS[next % PERIOD_ROTATION_PRESETS.length];
+				if (nextPeriod !== search.period) {
+					startTransition(() => {
+						navigate({
+							search: {
+								period: nextPeriod,
+								products: search.products ?? [],
+							},
+							replace: true,
+						});
+					});
+				}
+				return next;
+			});
+		}, PERIOD_ROTATION_INTERVAL_MS);
+
+		return () => window.clearInterval(timer);
+	}, [totalSteps, navigate, search.period, search.products]);
+
+	const productIndex =
+		autoplayProducts.length > 0
+			? Math.floor(rotationStep / PERIOD_ROTATION_PRESETS.length) %
+				autoplayProducts.length
+			: 0;
+	const focusedProductName =
+		autoplayProducts.length > 0 ? autoplayProducts[productIndex] : null;
 	const focusedRows = focusedProductName
 		? data.productHealth.filter((row) => row.productName === focusedProductName)
 		: data.productHealth;
@@ -135,6 +136,9 @@ function TrendsWallboardPage() {
 		focusedProductName,
 		focusedSummary,
 	);
+	const focusedInsight = focusedProductName
+		? data.insights.find((i) => i.productName === focusedProductName) ?? null
+		: null;
 	const focusSatisfaction =
 		focusedProductName === null
 			? data.periodSummary.satisfactionScorePercent
@@ -149,9 +153,9 @@ function TrendsWallboardPage() {
 
 	const customerHappinessPanel = (
 		<WallboardSection title="Customer happiness">
-			<div className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
+			<div className="grid gap-5 @3xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
 				<div className="space-y-4">
-					<div className={cn(cardSurfaceClassName, "px-4 py-4")}>
+					<div className={cn(wbCell, "px-4 py-4")}>
 						<div className="text-sm text-muted-foreground">
 							{focusedProductName
 								? `${focusedProductName} satisfaction target: ${focusedTargets.satisfactionTargetPercent}%`
@@ -176,7 +180,7 @@ function TrendsWallboardPage() {
 						</div>
 					</div>
 
-					<div className={cn(cardSurfaceClassName, "px-4 py-4")}>
+					<div className={cn(wbCell, "px-4 py-4")}>
 						<SupportCxSummary
 							label={data.period.label}
 							satisfactionScorePercent={
@@ -197,18 +201,18 @@ function TrendsWallboardPage() {
 						points={data.cxSeries}
 						title={`Daily satisfaction • ${data.period.label}`}
 					/>
-					<div className="grid grid-cols-3 gap-2">
+					<div className="grid grid-cols-1 @sm:grid-cols-2 @xl:grid-cols-3 gap-2">
 						{data.periods.slice(0, 3).map((period) => (
 							<div
 								key={period.label}
-								className={cn(cardSurfaceClassName, "rounded-lg px-3 py-2")}
+								className={cn(wbCell, "rounded-lg px-4 py-3")}
 							>
 								<div className="text-xs text-muted-foreground">
 									{period.label}
 								</div>
 								<div
 									className={cn(
-										"mt-1 text-2xl font-semibold tracking-tight",
+										"mt-1 text-3xl font-semibold tracking-tight",
 										getSatisfactionToneClass(
 											period.satisfactionScorePercent,
 											focusedTargets.satisfactionTargetPercent,
@@ -227,7 +231,7 @@ function TrendsWallboardPage() {
 						{data.periods.length === 0 ? (
 							<div
 								className={cn(
-									cardSurfaceClassName,
+									wbCell,
 									"col-span-3 px-4 py-3 text-sm text-muted-foreground",
 								)}
 							>
@@ -249,7 +253,7 @@ function TrendsWallboardPage() {
 			}
 		>
 			<div className="space-y-6">
-				<div className="grid gap-4 xl:grid-cols-5">
+				<div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3 @3xl:grid-cols-5">
 					<SummaryTile
 						label={`Satisfaction ${data.period.label.toLowerCase()}`}
 						tooltip={`Percent of rated conversations in ${data.period.label.toLowerCase()} with a 4 or 5 score.`}
@@ -292,7 +296,7 @@ function TrendsWallboardPage() {
 						No product activity in this view.
 					</div>
 				) : isSingleProductSpotlight && spotlightRow ? (
-					<div className={cn(cardSurfaceClassName, "px-4 py-3")}>
+					<div className="px-1 py-3">
 						<div className="flex items-start justify-between gap-4">
 							<div className="min-w-0">
 								<ProductBrandLabel
@@ -322,7 +326,7 @@ function TrendsWallboardPage() {
 							return (
 								<div
 									key={`${row.serviceBucket}-${row.productName}`}
-									className={cn(cardSurfaceClassName, "px-4 py-3")}
+									className="px-1 py-3"
 								>
 									<div className="flex items-start justify-between gap-4">
 										<div className="min-w-0">
@@ -341,7 +345,7 @@ function TrendsWallboardPage() {
 											className="max-w-[42ch] text-right"
 										/>
 									</div>
-									<div className="mt-3 grid grid-cols-4 gap-2">
+									<div className="mt-3 grid grid-cols-2 @lg:grid-cols-4 gap-2">
 										<RowMetric
 											label="Satisfaction"
 											value={
@@ -381,7 +385,7 @@ function TrendsWallboardPage() {
 				)}
 				<div
 					className={cn(
-						cardSurfaceClassName,
+						wbCell,
 						"px-4 py-3 text-sm text-foreground",
 					)}
 				>
@@ -393,6 +397,27 @@ function TrendsWallboardPage() {
 					{focusedSummary.slaTrackedCount} tracked). Target:{" "}
 					{focusedTargets.slaTargetPercent}%.
 				</div>
+
+				{focusedInsight ? (
+					<div className="mt-4 grid gap-3 @sm:grid-cols-2">
+						<div className={cn(wbCell, "px-4 py-4")}>
+							<div className="text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+								What went well
+							</div>
+							<p className="mt-2 text-sm leading-relaxed text-foreground">
+								{focusedInsight.wentWell}
+							</p>
+						</div>
+						<div className={cn(wbCell, "px-4 py-4")}>
+							<div className="text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+								To improve
+							</div>
+							<p className="mt-2 text-sm leading-relaxed text-foreground">
+								{focusedInsight.toImprove}
+							</p>
+						</div>
+					</div>
+				) : null}
 			</div>
 		</WallboardSection>
 	);
@@ -401,8 +426,8 @@ function TrendsWallboardPage() {
 		<WallboardSection
 			title={
 				focusedProductName
-					? `Top ${TOP_LOOKUP_LIMIT} IDs • ${formatProductLabel(focusedProductName)}`
-					: `Top ${TOP_LOOKUP_LIMIT} IDs to inspect`
+					? `Top IDs • ${formatProductLabel(focusedProductName)}`
+					: "Top IDs to inspect"
 			}
 			className="min-h-0"
 		>
@@ -443,7 +468,7 @@ function TrendsWallboardPage() {
 					{buildTrendSupportingText(focusedSummary, data.period.label)}
 				</p>
 			</div>
-			<div className="mt-4 grid grid-cols-2 gap-3 xl:grid-cols-3">
+			<div className="mt-4 grid grid-cols-1 @sm:grid-cols-2 @xl:grid-cols-3 gap-3">
 				<SnapshotValue
 					label={`Satisfaction (${data.period.label.toLowerCase()})`}
 					tooltip={`Percent of rated conversations in ${data.period.label.toLowerCase()} with a 4 or 5 score.`}
@@ -493,7 +518,7 @@ function TrendsWallboardPage() {
 				/>
 			</div>
 			{topThemeTrends.length > 0 ? (
-				<div className={cn(cardSurfaceClassName, "mt-4 px-3 py-3")}>
+				<div className={cn(wbCell, "mt-4 px-3 py-3")}>
 					<div className="text-xs uppercase tracking-[0.16em] text-muted-foreground">
 						Recurring themes
 					</div>
@@ -507,8 +532,8 @@ function TrendsWallboardPage() {
 								<span
 									className={cn(
 										"shrink-0 font-medium",
-										trend.delta > 0 && "text-red-300",
-										trend.delta < 0 && "text-emerald-300",
+										trend.delta > 0 && "text-red-600 dark:text-red-300",
+										trend.delta < 0 && "text-emerald-600 dark:text-emerald-300",
 										trend.delta === 0 && "text-muted-foreground",
 									)}
 								>
@@ -541,43 +566,23 @@ function TrendsWallboardPage() {
 
 	return (
 		<WallboardShell
-			title="Product Health"
+			title="Trends"
 			refreshedAt={data.snapshot.freshnessTimestamp ?? data.refreshedAt}
 			stale={data.snapshot.stale}
 			tickerItems={trendTickerItems}
-			toolbar={
-				<div className="flex flex-wrap items-center gap-4">
-					<SupportPeriodFilter
-						period={search.period}
-						from={data.period.from}
-						to={data.period.to}
-						onChange={handlePeriodChange}
-						mode="wallboard"
-					/>
-					<SupportProductFilter
-						availableProducts={data.availableProducts}
-						selectedProducts={data.selectedProducts}
-						onChange={handleProductChange}
-						mode="wallboard"
-					/>
-					<div
-						className={cn(
-							panelSurfaceClassName,
-							"rounded-lg px-3 py-1.5 text-xs text-muted-foreground",
-						)}
-					>
-						<span className="mr-2 uppercase tracking-[0.12em] text-muted-foreground">
-							Showcase
-						</span>
-						<span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-							{focusedProductName ? (
-								<ProductBrandLogo productName={focusedProductName} size="xs" />
-							) : null}
-							{formatProductLabel(focusedProductName)}
-						</span>{" "}
-						<span className="text-muted-foreground">• 12s</span>
-					</div>
-				</div>
+			theme={data.wallboardTheme}
+			showcase={
+				<>
+					<span className="inline-flex items-center gap-2 font-semibold text-[1.75rem] tracking-tight text-foreground">
+						{focusedProductName ? (
+							<ProductBrandLogo productName={focusedProductName} size="md" />
+						) : null}
+						{formatProductLabel(focusedProductName)}
+					</span>
+					<span className="text-sm font-medium text-muted-foreground">
+						{data.period.label}
+					</span>
+				</>
 			}
 		>
 			<div className="grid h-full min-h-0 grid-cols-[minmax(0,1.45fr)_420px] gap-6">
@@ -621,9 +626,9 @@ function TrendsWallboardPage() {
 
 function getSatisfactionToneClass(satisfaction: number | null, target: number) {
 	if (satisfaction === null) return "text-foreground";
-	if (satisfaction >= target) return "text-emerald-300";
-	if (satisfaction >= 75) return "text-amber-300";
-	return "text-red-300";
+	if (satisfaction >= target) return "text-emerald-600 dark:text-emerald-300";
+	if (satisfaction >= 75) return "text-amber-600 dark:text-amber-300";
+	return "text-red-600 dark:text-red-300";
 }
 
 function buildSatisfactionHeadline(
@@ -832,14 +837,14 @@ function SummaryTile({
 	danger?: boolean;
 }) {
 	return (
-		<div className={cn(cardSurfaceClassName, "px-4 py-4")}>
-			<div className="text-sm text-muted-foreground">
+		<div className={cn(wbCell, "flex flex-col px-4 py-4")}>
+			<div className="min-h-[2lh] text-sm text-muted-foreground">
 				<InfoTooltip label={label} tooltip={tooltip} />
 			</div>
 			<div
 				className={cn(
-					"mt-2 text-4xl font-semibold tracking-tight text-foreground",
-					danger && "text-red-300",
+					"mt-auto text-4xl font-semibold tracking-tight text-foreground",
+					danger && "text-red-600 dark:text-red-300",
 				)}
 			>
 				{value}
@@ -861,9 +866,9 @@ function ActionCell({
 		<div
 			className={cn(
 				"text-sm leading-6",
-				tone === "red" && "text-red-200",
-				tone === "amber" && "text-amber-200",
-				tone === "emerald" && "text-emerald-200",
+				tone === "red" && "text-red-700 dark:text-red-200",
+				tone === "amber" && "text-amber-700 dark:text-amber-200",
+				tone === "emerald" && "text-emerald-700 dark:text-emerald-200",
 				tone === "stone" && "text-muted-foreground",
 				className,
 			)}
@@ -883,14 +888,14 @@ function RowMetric({
 	danger?: boolean;
 }) {
 	return (
-		<div className={cn(cardSurfaceClassName, "rounded-lg px-3 py-2")}>
-			<div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+		<div className={cn(wbCell, "flex flex-col rounded-lg px-4 py-3")}>
+			<div className="min-h-[2lh] text-xs uppercase tracking-wide text-muted-foreground">
 				{label}
 			</div>
 			<div
 				className={cn(
-					"mt-1 text-2xl font-semibold tabular-nums text-foreground",
-					danger && "text-red-300",
+					"mt-auto text-3xl font-semibold tabular-nums text-foreground",
+					danger && "text-red-600 dark:text-red-300",
 				)}
 			>
 				{value}
@@ -911,14 +916,14 @@ function SnapshotValue({
 	danger?: boolean;
 }) {
 	return (
-		<div className={cn(cardSurfaceClassName, "rounded-lg px-3 py-3")}>
-			<div className="text-sm text-muted-foreground">
+		<div className={cn(wbCell, "flex flex-col rounded-lg px-4 py-4")}>
+			<div className="min-h-[2lh] text-sm text-muted-foreground">
 				<InfoTooltip label={label} tooltip={tooltip} />
 			</div>
 			<div
 				className={cn(
-					"mt-1 text-3xl font-semibold tracking-tight text-foreground",
-					danger && "text-red-300",
+					"mt-auto text-4xl font-semibold tracking-tight text-foreground",
+					danger && "text-red-600 dark:text-red-300",
 				)}
 			>
 				{value}

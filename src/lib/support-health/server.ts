@@ -6,11 +6,8 @@ import {
 	normalizeIntercomAppUrl,
 } from "@/lib/intercom-links";
 import { readLiveWallboardFocusPlan } from "@/lib/wallboard-focus-plan";
+import { buildDeterministicInsights, readWallboardInsights } from "@/lib/wallboard-insights";
 import { readWallboardTickerMessages } from "@/lib/wallboard-ticker-messages";
-import {
-	normalizeSupportProductFilterInput,
-	type SupportProductFilterInput,
-} from "./filter";
 import {
 	buildLiveWallboardData,
 	buildTrendsWallboardData,
@@ -42,9 +39,7 @@ import type {
 	TrendsWallboardData,
 } from "./types";
 
-export interface SupportViewInput
-	extends SupportPeriodInput,
-		SupportProductFilterInput {}
+export type SupportViewInput = SupportPeriodInput;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -566,6 +561,15 @@ export async function loadSupportCases() {
 			intercomAppUrl:
 				normalizeIntercomAppUrl(settings.appUrl) ?? getDefaultIntercomAppUrl(),
 			supportTargets,
+			wallboardTheme:
+				settings.wallboardTheme === "light"
+					? ("light" as const)
+					: ("dark" as const),
+			wallboardProducts: Array.isArray(settings.wallboardProducts)
+				? (settings.wallboardProducts as string[]).filter(
+						(v) => typeof v === "string" && v.trim().length > 0,
+					)
+				: [],
 			cases,
 		};
 	} catch (error) {
@@ -575,6 +579,8 @@ export async function loadSupportCases() {
 			lastSyncAt: null,
 			intercomAppUrl: getDefaultIntercomAppUrl(),
 			supportTargets: readSupportTargetsFromSettings(null),
+			wallboardTheme: "dark" as const,
+			wallboardProducts: [] as string[],
 			cases: [] as SupportCaseRecord[],
 		};
 	}
@@ -626,19 +632,21 @@ function filterSupportCasesByProduct(
 }
 
 export const getLiveWallboard = createServerFn({ method: "GET" })
-	.inputValidator((data: SupportProductFilterInput | undefined) =>
-		normalizeSupportProductFilterInput(data),
-	)
-	.handler(async ({ data }): Promise<LiveWallboardData> => {
+	.handler(async (): Promise<LiveWallboardData> => {
 		const [
-			{ cases, lastSyncAt, now, intercomAppUrl, supportTargets },
+			{ cases, lastSyncAt, now, intercomAppUrl, supportTargets, wallboardTheme, wallboardProducts },
 			storedPeopleMoments,
-		] = await Promise.all([loadSupportCases(), readWallboardTickerMessages()]);
+			storedInsights,
+		] = await Promise.all([
+			loadSupportCases(),
+			readWallboardTickerMessages(),
+			readWallboardInsights(),
+		]);
 		const workflowCounts = buildWorkflowCounts(cases);
 		const availableProducts = getAvailableProducts(cases);
-		const selectedProducts = normalizeSupportProductFilterInput(
-			data,
-		).products.filter((product) => availableProducts.includes(product));
+		const selectedProducts = wallboardProducts.filter((product) =>
+			availableProducts.includes(product),
+		);
 		const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
 			includeUnknownWhenAll: true,
 		});
@@ -665,24 +673,32 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
 			intercomAppUrl,
 			availableProducts,
 			selectedProducts,
+			wallboardTheme,
+			insights:
+				storedInsights?.products ??
+				buildDeterministicInsights(cases, availableProducts).products,
 		};
 	});
 
 export const getTrendsWallboard = createServerFn({ method: "GET" })
-	.inputValidator((data: SupportViewInput | undefined) => ({
-		...normalizeSupportPeriodInput(data),
-		...normalizeSupportProductFilterInput(data),
-	}))
+	.inputValidator((data: SupportViewInput | undefined) =>
+		normalizeSupportPeriodInput(data),
+	)
 	.handler(async ({ data }): Promise<TrendsWallboardData> => {
 		const [
-			{ cases, lastSyncAt, now, intercomAppUrl, supportTargets },
+			{ cases, lastSyncAt, now, intercomAppUrl, supportTargets, wallboardTheme, wallboardProducts },
 			storedPeopleMoments,
-		] = await Promise.all([loadSupportCases(), readWallboardTickerMessages()]);
+			storedInsights,
+		] = await Promise.all([
+			loadSupportCases(),
+			readWallboardTickerMessages(),
+			readWallboardInsights(),
+		]);
 		const workflowCounts = buildWorkflowCounts(cases);
 		const availableProducts = getAvailableProducts(cases);
-		const selectedProducts = normalizeSupportProductFilterInput(
-			data,
-		).products.filter((product) => availableProducts.includes(product));
+		const selectedProducts = wallboardProducts.filter((product) =>
+			availableProducts.includes(product),
+		);
 		const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
 			includeUnknownWhenAll: false,
 		});
@@ -711,5 +727,9 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			intercomAppUrl,
 			availableProducts,
 			selectedProducts,
+			wallboardTheme,
+			insights:
+				storedInsights?.products ??
+				buildDeterministicInsights(cases, availableProducts).products,
 		};
 	});

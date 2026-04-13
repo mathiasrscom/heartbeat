@@ -306,11 +306,87 @@ export async function startIntercomSyncInBackground(accessToken: string) {
     return false
   }
 
-  void runIntercomSync(accessToken).catch((error) => {
-    console.error("[intercom-sync] Background sync failed", error)
-  })
+  void runIntercomSync(accessToken)
+    .then(async (result) => {
+      if (!result.success) return
+      try {
+        await refreshWallboardContent()
+      } catch (error) {
+        console.error("[intercom-sync] Post-sync wallboard refresh failed", error)
+      }
+    })
+    .catch((error) => {
+      console.error("[intercom-sync] Background sync failed", error)
+    })
 
   return true
+}
+
+async function refreshWallboardContent() {
+  const [
+    { loadSupportCases },
+    { buildLiveWallboardData },
+    ticker,
+    focusPlan,
+    insights,
+    { readIntercomTickerLlmSettings },
+  ] = await Promise.all([
+    import("@/lib/support-health/server"),
+    import("@/lib/support-health/logic"),
+    import("@/lib/wallboard-ticker-messages"),
+    import("@/lib/wallboard-focus-plan"),
+    import("@/lib/wallboard-insights"),
+    import("@/lib/intercom-admin"),
+  ])
+
+  const { cases, lastSyncAt, now } = await loadSupportCases()
+  const live = buildLiveWallboardData(cases, lastSyncAt, now)
+  const llmSettings = await readIntercomTickerLlmSettings()
+
+  // Focus plan
+  const deterministicFocusPlan = focusPlan.buildDeterministicLiveFocusPlan(live)
+  let resolvedFocusPlan = deterministicFocusPlan
+  try {
+    const rewritten = await focusPlan.rewriteLiveFocusPlanWithOllama(deterministicFocusPlan, live, llmSettings)
+    if (rewritten?.plan) resolvedFocusPlan = rewritten.plan
+  } catch {
+    // deterministic fallback
+  }
+  await focusPlan.writeLiveWallboardFocusPlan(resolvedFocusPlan)
+
+  // Product insights
+  const productNames = live.mappedQueues.map((q) => q.teamName)
+  if (productNames.length > 0) {
+    const deterministicInsights = insights.buildDeterministicInsights(cases, productNames)
+    let resolvedInsights = deterministicInsights
+    try {
+      const rewritten = await insights.rewriteInsightsWithOllama(deterministicInsights, cases, productNames, llmSettings)
+      if (rewritten) resolvedInsights = rewritten
+    } catch {
+      // deterministic fallback
+    }
+    await insights.writeWallboardInsights(resolvedInsights)
+  }
+
+  // Ticker messages
+  if (live.peopleMoments.length > 0) {
+    let items = live.peopleMoments
+    let source: "deterministic" | "ollama" = "deterministic"
+    let model: string | null = null
+    try {
+      const rewritten = await ticker.rewriteTickerMessagesWithOllama(live.peopleMoments, llmSettings)
+      if (rewritten?.items.length) {
+        items = rewritten.items
+        source = "ollama"
+        model = rewritten.model
+      }
+    } catch {
+      // deterministic fallback
+    }
+    await ticker.writeWallboardTickerMessages({ items, source, model })
+  }
+
+  console.info("[intercom-sync] Post-sync wallboard content refreshed.")
 }
 
 function getNextCursor(

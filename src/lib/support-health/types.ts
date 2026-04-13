@@ -14,7 +14,7 @@ export type SupportCasePriority = "low" | "normal" | "high" | "urgent";
 export type SupportCaseSubtype = "conversation" | "ticket";
 export type SupportTier = "free" | "starter" | "pro" | "enterprise" | "unknown";
 export type SupportServiceBucket = "headline" | "exception" | "unknown";
-export type SupportPeriodPreset = "current-week" | "previous-week" | "custom";
+export type SupportPeriodPreset = "current-week" | "previous-week" | "current-month" | "previous-month" | "custom";
 
 export interface SupportCaseRecord {
 	id: string;
@@ -249,6 +249,8 @@ export interface LiveWallboardData {
 	actionItems: ActionItem[];
 	lookupCases: CaseLookupItem[];
 	refreshedAt: string;
+	wallboardTheme: "light" | "dark";
+	insights: import("@/lib/wallboard-insights").ProductInsight[];
 }
 
 export interface TrendsWallboardData {
@@ -273,4 +275,6 @@ export interface TrendsWallboardData {
 	unknownQueues: QueueHealth[];
 	lookupCases: CaseLookupItem[];
 	refreshedAt: string;
+	wallboardTheme: "light" | "dark";
+	insights: import("@/lib/wallboard-insights").ProductInsight[];
 }

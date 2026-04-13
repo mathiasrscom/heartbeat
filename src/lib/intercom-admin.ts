@@ -39,6 +39,13 @@ interface SaveIntercomSupportTargetsInput {
 	supportTargets: SupportTargetsConfig;
 }
 
+export type WallboardTheme = "light" | "dark";
+
+interface SaveWallboardDisplayInput {
+	theme: WallboardTheme;
+	products: string[];
+}
+
 interface ListIntercomTickerOllamaModelsInput {
 	baseUrl: string;
 }
@@ -82,6 +89,8 @@ export interface IntercomConnectionState {
 	tickerLlmBaseUrl: string | null;
 	supportTargets: SupportTargetsConfig;
 	supportTargetProducts: string[];
+	wallboardTheme: WallboardTheme;
+	wallboardProducts: string[];
 }
 
 interface IntercomMutationResult {
@@ -206,6 +215,8 @@ function emptyState(
 		supportTargets:
 			overrides.supportTargets ?? normalizeSupportTargetsConfig(null),
 		supportTargetProducts: overrides.supportTargetProducts ?? [],
+		wallboardTheme: overrides.wallboardTheme ?? "dark",
+		wallboardProducts: overrides.wallboardProducts ?? [],
 	};
 }
 
@@ -340,6 +351,8 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		tickerLlmBaseUrl,
 		supportTargets,
 		supportTargetProducts: listSupportTargetProducts(supportTargets),
+		wallboardTheme: normalizeWallboardTheme(settings.wallboardTheme),
+		wallboardProducts: normalizeWallboardProducts(settings.wallboardProducts),
 	});
 }
 
@@ -758,6 +771,64 @@ export const listIntercomTickerOllamaModels = createServerFn({ method: "POST" })
 		return {
 			baseUrl,
 			models: models.sort((a, b) => a.localeCompare(b)),
+		};
+	});
+
+function normalizeWallboardTheme(value: unknown): WallboardTheme {
+	return value === "light" ? "light" : "dark";
+}
+
+function normalizeWallboardProducts(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+		.map((item) => item.trim());
+}
+
+export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
+	.inputValidator((data: SaveWallboardDisplayInput) => data)
+	.handler(async ({ data }): Promise<IntercomMutationResult> => {
+		const theme = normalizeWallboardTheme(data.theme);
+		const products = normalizeWallboardProducts(data.products);
+
+		const { db, adapterConfigs, configRow } = await getIntercomRows();
+		const credentials = isRecord(configRow?.credentials)
+			? configRow.credentials
+			: {};
+		const existingSettings = isRecord(configRow?.settings)
+			? configRow.settings
+			: {};
+
+		const values = {
+			adapterId: "intercom",
+			name: "Intercom",
+			enabled:
+				configRow?.enabled ??
+				Boolean(normalizeToken(process.env.INTERCOM_ACCESS_TOKEN)),
+			credentials,
+			settings: {
+				...existingSettings,
+				wallboardTheme: theme,
+				wallboardProducts: products,
+			},
+			updatedAt: new Date(),
+		};
+
+		if (configRow) {
+			await db
+				.update(adapterConfigs)
+				.set(values)
+				.where(eq(adapterConfigs.adapterId, "intercom"));
+		} else {
+			await db.insert(adapterConfigs).values({
+				...values,
+				createdAt: new Date(),
+			});
+		}
+
+		return {
+			message: `Wallboard display updated: ${theme} theme, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}.`,
+			state: await readIntercomState(),
 		};
 	});
 

@@ -414,7 +414,7 @@ describe("support health logic", () => {
 			makeCase({
 				id: "exception-1",
 				teamName: "General",
-				productName: "CVR",
+				productName: "Pension Broker",
 				serviceBucket: "exception",
 				servicePolicyName: "Separate workflow",
 				actionableState: "breached",
@@ -444,7 +444,7 @@ describe("support health logic", () => {
 		expect(live.snapshot.exceptionBreachedCount).toBe(1);
 		expect(live.snapshot.unknownCaseCount).toBe(1);
 		expect(live.queues).toHaveLength(1);
-		expect(live.exceptionQueues[0]?.teamName).toBe("CVR");
+		expect(live.exceptionQueues[0]?.teamName).toBe("Pension Broker");
 		expect(live.mappedQueues).toHaveLength(2);
 		expect(live.actionItems[0]?.label).toContain("Reply to");
 	});

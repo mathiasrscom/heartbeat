@@ -1,11 +1,14 @@
 import {
   endOfDay,
+  endOfMonth,
   endOfWeek,
   format,
   isValid,
   parseISO,
   startOfDay,
+  startOfMonth,
   startOfWeek,
+  subMonths,
   subWeeks,
 } from "date-fns"
 import type { SupportPeriodPreset, SupportPeriodRange } from "./types"
@@ -33,9 +36,10 @@ function parseDate(value: string | undefined) {
 }
 
 export function normalizeSupportPeriodInput(input: SupportPeriodInput | undefined) {
+  const validPresets = ["previous-week", "current-month", "previous-month", "custom"] as const
   const preset =
-    input?.period === "previous-week" || input?.period === "custom"
-      ? input.period
+    validPresets.includes(input?.period as (typeof validPresets)[number])
+      ? (input!.period as SupportPeriodPreset)
       : "current-week"
 
   return {
@@ -61,6 +65,38 @@ export function resolveSupportPeriod(
       range: {
         preset: "previous-week",
         label: "Past week",
+        from: toDateInput(from),
+        to: toDateInput(to),
+      },
+      from,
+      to,
+    }
+  }
+
+  if (normalized.period === "current-month") {
+    const from = startOfMonth(now)
+
+    return {
+      range: {
+        preset: "current-month",
+        label: "Current month",
+        from: toDateInput(from),
+        to: toDateInput(now),
+      },
+      from,
+      to: now,
+    }
+  }
+
+  if (normalized.period === "previous-month") {
+    const previousMonth = subMonths(now, 1)
+    const from = startOfMonth(previousMonth)
+    const to = endOfMonth(previousMonth)
+
+    return {
+      range: {
+        preset: "previous-month",
+        label: "Past month",
         from: toDateInput(from),
         to: toDateInput(to),
       },

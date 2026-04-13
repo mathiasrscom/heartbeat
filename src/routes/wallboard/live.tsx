@@ -1,25 +1,21 @@
-import { createFileRoute, useNavigate, useRouter } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { TriangleAlert } from "lucide-react";
-import { startTransition, useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { InfoTooltip } from "@/components/info-tooltip";
 import {
 	formatProductLabel,
 	ProductBrandLabel,
 	ProductBrandLogo,
 } from "@/components/product-brand";
-import { SupportProductFilter } from "@/components/support-product-filter";
-import {
-	cardSurfaceClassName,
-	panelSurfaceClassName,
-} from "@/components/ui/card";
+const wbCell = "rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 import { CaseLookupCard } from "@/components/wallboard/case-lookup-card";
+import { PaginatedContent } from "@/components/wallboard/paginated-content";
 import { useProductAutoplay } from "@/components/wallboard/product-autoplay-strip";
 import { RotatingPanels } from "@/components/wallboard/rotating-panels";
 import {
 	WallboardSection,
 	WallboardShell,
 } from "@/components/wallboard/wallboard-shell";
-import { normalizeSupportProductFilterInput } from "@/lib/support-health/filter";
 import { getLiveWallboard } from "@/lib/support-health/server";
 import { resolveSupportTargets } from "@/lib/support-health/targets";
 import type {
@@ -30,7 +26,7 @@ import type {
 } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
 
-const TOP_LOOKUP_LIMIT = 4;
+const TOP_LOOKUP_LIMIT = 20;
 const WALLBOARD_REFRESH_INTERVAL_MS = 30_000;
 
 export const Route = createFileRoute("/wallboard/live")({
@@ -42,17 +38,12 @@ export const Route = createFileRoute("/wallboard/live")({
 			},
 		],
 	}),
-	validateSearch: (search: Record<string, unknown>) =>
-		normalizeSupportProductFilterInput(search),
-	loaderDeps: ({ search }) => normalizeSupportProductFilterInput(search),
-	loader: async ({ deps }) => getLiveWallboard({ data: deps }),
+	loader: async () => getLiveWallboard(),
 	component: LiveWallboardPage,
 });
 
 function LiveWallboardPage() {
 	const live = Route.useLoaderData() as LiveWallboardData;
-	const search = Route.useSearch();
-	const navigate = useNavigate({ from: Route.fullPath });
 	const router = useRouter();
 	const autoplayProducts = useMemo(
 		() =>
@@ -66,7 +57,7 @@ function LiveWallboardPage() {
 	const autoplay = useProductAutoplay(autoplayProducts, { intervalMs: 12_000 });
 	const focusedProductName = resolveFocusedProductName({
 		aiFocusProductName: live.focusPlan?.focusProductName ?? null,
-		selectedProducts: search.products ?? [],
+		selectedProducts: live.selectedProducts,
 		autoplayProductName: autoplay.activeProduct,
 		availableProducts: live.availableProducts,
 	});
@@ -101,8 +92,9 @@ function LiveWallboardPage() {
 	const focusStatusLabel = buildStatusLabel(focusStatus);
 	const focusPrimaryAction = buildFocusPrimaryAction(focusedQueue);
 	const focusSecondaryAction = buildFocusSecondaryAction(focusedQueue);
-	const aiHeadline = live.focusPlan?.headline?.trim() || null;
-	const aiSupportingText = live.focusPlan?.supportingText?.trim() || null;
+	const isOllamaPlan = live.focusPlan?.source === "ollama";
+	const aiHeadline = isOllamaPlan ? (live.focusPlan?.headline?.trim() || null) : null;
+	const aiSupportingText = isOllamaPlan ? (live.focusPlan?.supportingText?.trim() || null) : null;
 	const laneRows = buildLaneRows(live.snapshot);
 	const orderedLaneRows = resolveLaneOrder(live.focusPlan?.laneOrder).map(
 		(lane) => laneRows[lane],
@@ -112,6 +104,9 @@ function LiveWallboardPage() {
 		focusedProductName,
 		focusedQueue,
 	);
+	const focusedInsight = focusedProductName
+		? live.insights.find((i) => i.productName === focusedProductName) ?? null
+		: null;
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
@@ -123,76 +118,56 @@ function LiveWallboardPage() {
 		};
 	}, [router]);
 
-	function handleProductChange(products: string[]) {
-		startTransition(() => {
-			navigate({
-				search: {
-					products,
-				},
-				replace: true,
-			});
-		});
-	}
-
 	const immediateQueuePanel = (
-		<WallboardSection title="Immediate queue state">
-			<div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-				<QueueInlineMetric
-					label="Open now"
-					tooltip="Currently open support cases in the selected products."
-					value={live.snapshot.currentActiveCaseCount}
-				/>
-				<QueueInlineMetric
-					label="Waiting on us"
-					tooltip="Open cases where support owes the next reply."
-					value={live.snapshot.currentAwaitingTeamCount}
-				/>
-				<QueueInlineMetric
-					label="Over SLA"
-					tooltip="Open cases currently past SLA due time."
-					value={live.snapshot.currentBreachedCount}
-					danger={live.snapshot.currentBreachedCount > 0}
-				/>
-				<QueueInlineMetric
-					label="Due in 60m"
-					tooltip="Open SLA-tracked cases due within the next 60 minutes."
-					value={live.snapshot.currentDueSoonCount}
-					warning={live.snapshot.currentDueSoonCount > 0}
-				/>
-				<QueueInlineMetric
-					label="Unassigned"
-					tooltip="Open cases without an owner assigned."
-					value={live.snapshot.currentUnassignedCount}
-					warning={live.snapshot.currentUnassignedCount > 0}
-				/>
-				<QueueInlineMetric
-					label="Waiting on customer"
-					tooltip="Open cases paused while waiting on the customer or another external party."
-					value={live.snapshot.currentAwaitingCustomerCount}
-				/>
-				<QueueInlineMetric
-					label="Ticket review"
-					tooltip="Open developer tickets in Submitted or Waiting on support. This follows the global Intercom Ticket review view."
-					value={live.workflowCounts.ticketReviewCount}
-				/>
-				<QueueInlineMetric
-					label="Dev team assigned"
-					tooltip="Open developer tickets already assigned to the developer team. This is tracked globally, not by the selected product filter."
-					value={live.workflowCounts.developerTeamAssignedCount}
-				/>
-			</div>
-
-			<div className="mt-4 grid gap-2">
-				{orderedLaneRows.map((lane) => (
-					<LiveLaneRow
-						key={lane.id}
-						label={lane.label}
-						count={lane.count}
-						detail={lane.detail}
-						tone={lane.tone}
+		<WallboardSection title="Immediate queue state" className="h-full">
+			<PaginatedContent intervalMs={10_000}>
+				<div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3 @3xl:grid-cols-4 @5xl:grid-cols-5">
+					<QueueInlineMetric
+						label="Open now"
+						tooltip="Currently open support cases in the selected products."
+						value={live.snapshot.currentActiveCaseCount}
 					/>
-				))}
-			</div>
+					<QueueInlineMetric
+						label="Waiting on us"
+						tooltip="Open cases where support owes the next reply."
+						value={live.snapshot.currentAwaitingTeamCount}
+					/>
+					<QueueInlineMetric
+						label="Over SLA"
+						tooltip="Open cases currently past SLA due time."
+						value={live.snapshot.currentBreachedCount}
+						danger={live.snapshot.currentBreachedCount > 0}
+					/>
+					<QueueInlineMetric
+						label="Due in 60m"
+						tooltip="Open SLA-tracked cases due within the next 60 minutes."
+						value={live.snapshot.currentDueSoonCount}
+						warning={live.snapshot.currentDueSoonCount > 0}
+					/>
+					<QueueInlineMetric
+						label="Unassigned"
+						tooltip="Open cases without an owner assigned."
+						value={live.snapshot.currentUnassignedCount}
+						warning={live.snapshot.currentUnassignedCount > 0}
+					/>
+					<QueueInlineMetric
+						label="Waiting on customer"
+						tooltip="Open cases paused while waiting on the customer or another external party."
+						value={live.snapshot.currentAwaitingCustomerCount}
+					/>
+					<QueueInlineMetric
+						label="Ticket review"
+						tooltip="Open developer tickets in Submitted or Waiting on support. This follows the global Intercom Ticket review view."
+						value={live.workflowCounts.ticketReviewCount}
+					/>
+					<QueueInlineMetric
+						label="Dev team assigned"
+						tooltip="Open developer tickets already assigned to the developer team. This is tracked globally, not by the selected product filter."
+						value={live.workflowCounts.developerTeamAssignedCount}
+					/>
+				</div>
+
+			</PaginatedContent>
 		</WallboardSection>
 	);
 
@@ -210,10 +185,11 @@ function LiveWallboardPage() {
 					? `Product spotlight • ${formatProductLabel(focusedProductName)}`
 					: "By product right now"
 			}
-			className="min-h-0"
+			className="h-full"
 		>
-			<div className="space-y-3">
-				{visibleQueues.length === 0 ? (
+			<PaginatedContent intervalMs={12_000}>
+				<div className="space-y-3">
+					{visibleQueues.length === 0 ? (
 					live.snapshot.unknownCaseCount > 0 ? (
 						<div className="py-10 text-lg text-muted-foreground">
 							Product mapping is still incomplete, so this wallboard cannot show
@@ -227,30 +203,69 @@ function LiveWallboardPage() {
 				) : (
 					visibleQueues.map((queue) => {
 						const nextAction = buildQueueRowAction(queue);
+						const isSolo = visibleQueues.length === 1;
+
+						if (!isSolo) {
+							return (
+								<div
+									key={queue.teamName}
+									className={cn(
+										wbCell,
+										"flex items-center gap-4 rounded-lg px-4 py-2.5",
+									)}
+								>
+									<ProductBrandLogo
+										productName={queue.teamName}
+										size="sm"
+									/>
+									<div className="min-w-0 flex-1">
+										<div className="text-sm font-medium text-foreground">
+											{formatProductLabel(queue.teamName)}
+										</div>
+										<QueueActionValue
+											text={nextAction.text}
+											tone={nextAction.tone}
+											className="text-xs"
+										/>
+									</div>
+									<div className="flex shrink-0 gap-4 text-right text-sm tabular-nums">
+										<div>
+											<div className="text-muted-foreground text-[10px] uppercase">Open</div>
+											<div className="font-semibold">{queue.activeCaseCount}</div>
+										</div>
+										<div>
+											<div className="text-muted-foreground text-[10px] uppercase">Wait</div>
+											<div className="font-semibold">{queue.awaitingTeamCount}</div>
+										</div>
+										<div>
+											<div className="text-muted-foreground text-[10px] uppercase">SLA</div>
+											<div className={cn("font-semibold", queue.breachedCount > 0 && "text-red-600 dark:text-red-300")}>
+												{queue.breachedCount}
+											</div>
+										</div>
+										<div>
+											<div className="text-muted-foreground text-[10px] uppercase">Unasgn</div>
+											<div className={cn("font-semibold", queue.unassignedCount > 0 && "text-amber-600 dark:text-amber-300")}>
+												{queue.unassignedCount}
+											</div>
+										</div>
+									</div>
+								</div>
+							);
+						}
 
 						return (
 							<div
 								key={queue.teamName}
-								className={cn(cardSurfaceClassName, "px-4 py-3")}
+								className="px-1 py-3"
 							>
-								<div className="flex items-start justify-between gap-4">
-									<div className="min-w-0">
-										<ProductBrandLabel
-											productName={queue.teamName}
-											logoSize="sm"
-											className="text-lg font-medium text-foreground"
-										/>
-										<div className="mt-1 text-xs text-muted-foreground">
-											{formatQueueSources(queue.sourceQueues)}
-										</div>
-									</div>
+								<div className="mb-1 text-sm text-muted-foreground">
 									<QueueActionValue
 										text={nextAction.text}
 										tone={nextAction.tone}
-										className="max-w-[42ch] text-right"
 									/>
 								</div>
-								<div className="mt-3 grid grid-cols-5 gap-2">
+								<div className="mt-3 grid grid-cols-2 @sm:grid-cols-3 @xl:grid-cols-5 gap-2">
 									<QueueInlineMetric
 										label="Open"
 										value={queue.activeCaseCount}
@@ -278,12 +293,52 @@ function LiveWallboardPage() {
 						);
 					})
 				)}
-			</div>
+
+				{focusedInsight ? (
+					<div className="mt-4 grid gap-3 @sm:grid-cols-2">
+						<div
+							className={cn(
+								wbCell,
+								"border-l-2 border-l-emerald-500 px-4 py-4 dark:border-l-emerald-400",
+							)}
+						>
+							<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+								<span className="text-sm normal-case">&#10003;</span>
+								What went well
+							</div>
+							<p className="mt-2 text-sm leading-relaxed text-foreground">
+								{focusedInsight.wentWell}
+							</p>
+						</div>
+						<div
+							className={cn(
+								wbCell,
+								"border-l-2 border-l-amber-500 px-4 py-4 dark:border-l-amber-400",
+							)}
+						>
+							<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+								<span className="text-sm normal-case">&#9672;</span>
+								To improve
+							</div>
+							<p className="mt-2 text-sm leading-relaxed text-foreground">
+								{focusedInsight.toImprove}
+							</p>
+						</div>
+					</div>
+				) : null}
+				</div>
+			</PaginatedContent>
 		</WallboardSection>
 	);
 
 	const operationalContextPanel = (
-		<WallboardSection title="Operational context">
+		<WallboardSection
+			title={
+				focusedProductName
+					? `Context \u00b7 ${formatProductLabel(focusedProductName)}`
+					: "Operational context"
+			}
+		>
 			<div className="space-y-4">
 				<div
 					className={cn(
@@ -293,18 +348,18 @@ function LiveWallboardPage() {
 				>
 					{focusStatusLabel}
 				</div>
-				<p className="text-base leading-7 text-foreground">
-					{aiHeadline ??
-						(focusedProductName
-							? `${focusedProductName}: ${focusPrimaryAction}`
-							: buildQueueHeadline(live.snapshot))}
-				</p>
-				<p className="text-sm leading-6 text-muted-foreground">
-					{aiSupportingText ??
-						(focusedProductName
-							? focusSecondaryAction
-							: buildQueueSupportingText(live.snapshot))}
-				</p>
+				{aiHeadline ? (
+					<>
+						<p className="text-base leading-7 text-foreground">
+							{aiHeadline}
+						</p>
+						{aiSupportingText ? (
+							<p className="text-sm leading-6 text-muted-foreground">
+								{aiSupportingText}
+							</p>
+						) : null}
+					</>
+				) : null}
 
 				<div className="grid grid-cols-2 gap-4">
 					<StateBlock
@@ -314,10 +369,10 @@ function LiveWallboardPage() {
 						tone={
 							live.snapshot.slaAdherencePercent >=
 							focusedTargets.slaTargetPercent
-								? "text-emerald-300"
+								? "text-emerald-600 dark:text-emerald-300"
 								: live.snapshot.slaAdherencePercent >= 75
-									? "text-amber-300"
-									: "text-red-300"
+									? "text-amber-600 dark:text-amber-300"
+									: "text-red-600 dark:text-red-300"
 						}
 					/>
 					<StateBlock
@@ -326,29 +381,12 @@ function LiveWallboardPage() {
 						value={
 							focusedQueue?.breachedCount ?? live.snapshot.currentBreachedCount
 						}
-						tone="text-red-300"
-					/>
-					<StateBlock
-						label="Due in 60m"
-						tooltip="Open SLA-tracked cases due in the next hour."
-						value={
-							focusedQueue?.dueSoonCount ?? live.snapshot.currentDueSoonCount
-						}
-						tone="text-amber-300"
-					/>
-					<StateBlock
-						label="Unassigned"
-						tooltip="Open cases without an owner."
-						value={
-							focusedQueue?.unassignedCount ??
-							live.snapshot.currentUnassignedCount
-						}
-						tone="text-foreground"
+						tone="text-red-600 dark:text-red-300"
 					/>
 				</div>
 
 				{live.snapshot.stale ? (
-					<div className="flex items-center gap-2 text-sm text-amber-200">
+					<div className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-200">
 						<TriangleAlert className="h-4 w-4" />
 						Sync is older than 10 minutes. Treat these numbers as stale.
 					</div>
@@ -361,8 +399,8 @@ function LiveWallboardPage() {
 		<WallboardSection
 			title={
 				focusedProductName
-					? `Top ${TOP_LOOKUP_LIMIT} IDs • ${formatProductLabel(focusedProductName)}`
-					: `Top ${TOP_LOOKUP_LIMIT} IDs to check`
+					? `Top IDs • ${formatProductLabel(focusedProductName)}`
+					: "Top IDs to check"
 			}
 			className="min-h-0"
 		>
@@ -386,36 +424,18 @@ function LiveWallboardPage() {
 
 	return (
 		<WallboardShell
-			title="Support Health"
+			title="Live"
 			refreshedAt={live.snapshot.freshnessTimestamp ?? live.refreshedAt}
 			stale={live.snapshot.stale}
 			tickerItems={liveTickerItems}
-			toolbar={
-				<div className="flex flex-wrap items-center gap-3">
-					<SupportProductFilter
-						availableProducts={live.availableProducts}
-						selectedProducts={search.products ?? []}
-						onChange={handleProductChange}
-						mode="wallboard"
-					/>
-					<div
-						className={cn(
-							panelSurfaceClassName,
-							"rounded-lg px-3 py-1.5 text-xs text-muted-foreground",
-						)}
-					>
-						<span className="mr-2 uppercase tracking-[0.12em] text-muted-foreground">
-							Showcase
-						</span>
-						<span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-							{focusedProductName ? (
-								<ProductBrandLogo productName={focusedProductName} size="xs" />
-							) : null}
-							{formatProductLabel(focusedProductName)}
-						</span>{" "}
-						<span className="text-muted-foreground">• 12s</span>
-					</div>
-				</div>
+			theme={live.wallboardTheme}
+			showcase={
+				<span className="inline-flex items-center gap-2 font-semibold text-[1.75rem] tracking-tight text-foreground">
+					{focusedProductName ? (
+						<ProductBrandLogo productName={focusedProductName} size="md" />
+					) : null}
+					{formatProductLabel(focusedProductName)}
+				</span>
 			}
 		>
 			<div className="grid h-full min-h-0 grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)] gap-6">
@@ -458,9 +478,9 @@ function LiveWallboardPage() {
 }
 
 function getStatusTextClass(status: SupportHealthSnapshot["status"]) {
-	if (status === "green") return "text-emerald-300";
-	if (status === "yellow") return "text-amber-300";
-	return "text-red-300";
+	if (status === "green") return "text-emerald-600 dark:text-emerald-300";
+	if (status === "yellow") return "text-amber-600 dark:text-amber-300";
+	return "text-red-600 dark:text-red-300";
 }
 
 function buildStatusLabel(status: SupportHealthSnapshot["status"]) {
@@ -469,14 +489,22 @@ function buildStatusLabel(status: SupportHealthSnapshot["status"]) {
 	return "Off track";
 }
 
+const ALL_PRODUCTS_SENTINEL = "__all__";
+
 function resolveAutoplayProducts(
 	selectedProducts: string[],
 	mappedQueueProducts: string[],
 	availableProducts: string[],
 ) {
-	if (selectedProducts.length > 0) return selectedProducts;
-	if (mappedQueueProducts.length > 0) return mappedQueueProducts;
-	return availableProducts;
+	const products =
+		selectedProducts.length > 0
+			? selectedProducts
+			: mappedQueueProducts.length > 0
+				? Array.from(new Set(mappedQueueProducts))
+				: availableProducts;
+	return products.length > 1
+		? [ALL_PRODUCTS_SENTINEL, ...products]
+		: products;
 }
 
 function resolveFocusedProductName(input: {
@@ -491,14 +519,21 @@ function resolveFocusedProductName(input: {
 		autoplayProductName,
 		availableProducts,
 	} = input;
-	if (!aiFocusProductName) return autoplayProductName;
-	if (!availableProducts.includes(aiFocusProductName))
-		return autoplayProductName;
+
+	// The sentinel means "all products" → null
+	if (autoplayProductName === ALL_PRODUCTS_SENTINEL) return null;
+
+	// If autoplay is cycling, let it drive the focused product.
+	if (autoplayProductName) return autoplayProductName;
+
+	// Fallback to AI focus when autoplay hasn't started yet
+	if (!aiFocusProductName) return null;
+	if (!availableProducts.includes(aiFocusProductName)) return null;
 	if (
 		selectedProducts.length > 0 &&
 		!selectedProducts.includes(aiFocusProductName)
 	) {
-		return autoplayProductName;
+		return null;
 	}
 	return aiFocusProductName;
 }
@@ -684,9 +719,9 @@ function QueueActionValue({
 		<div
 			className={cn(
 				"text-sm leading-6",
-				tone === "red" && "text-red-200",
-				tone === "amber" && "text-amber-200",
-				tone === "emerald" && "text-emerald-200",
+				tone === "red" && "text-red-700 dark:text-red-200",
+				tone === "amber" && "text-amber-700 dark:text-amber-200",
+				tone === "emerald" && "text-emerald-700 dark:text-emerald-200",
 				tone === "stone" && "text-muted-foreground",
 				className,
 			)}
@@ -710,15 +745,15 @@ function QueueInlineMetric({
 	danger?: boolean;
 }) {
 	return (
-		<div className={cn(cardSurfaceClassName, "rounded-lg px-3 py-2")}>
-			<div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+		<div className={cn(wbCell, "flex flex-col rounded-lg px-4 py-3")}>
+			<div className="min-h-[2lh] text-xs uppercase tracking-wide text-muted-foreground">
 				<InfoTooltip label={label} tooltip={tooltip} />
 			</div>
 			<div
 				className={cn(
-					"mt-1 text-2xl font-semibold tabular-nums text-foreground",
-					warning && "text-amber-300",
-					danger && "text-red-300",
+					"mt-auto text-4xl font-semibold tabular-nums text-foreground",
+					warning && "text-amber-600 dark:text-amber-300",
+					danger && "text-red-600 dark:text-red-300",
 				)}
 			>
 				{value}
@@ -741,16 +776,16 @@ function LiveLaneRow({
 	return (
 		<div
 			className={cn(
-				cardSurfaceClassName,
-				"grid grid-cols-[180px_80px_minmax(0,1fr)] items-center gap-3 rounded-lg px-3 py-2",
+				wbCell,
+				"grid grid-cols-[200px_100px_minmax(0,1fr)] items-center gap-4 rounded-lg px-4 py-3",
 			)}
 		>
-			<div className="text-sm text-foreground">{label}</div>
+			<div className="text-base text-foreground">{label}</div>
 			<div
 				className={cn(
-					"text-2xl font-semibold tabular-nums text-foreground",
-					tone === "warning" && "text-amber-300",
-					tone === "danger" && "text-red-300",
+					"text-3xl font-semibold tabular-nums text-foreground",
+					tone === "warning" && "text-amber-600 dark:text-amber-300",
+					tone === "danger" && "text-red-600 dark:text-red-300",
 				)}
 			>
 				{count}
@@ -772,7 +807,7 @@ function StateBlock({
 	tone: string;
 }) {
 	return (
-		<div className={cn(cardSurfaceClassName, "px-4 py-4")}>
+		<div className={cn(wbCell, "px-4 py-4")}>
 			<div className="text-sm text-muted-foreground">
 				<InfoTooltip label={label} tooltip={tooltip} />
 			</div>

@@ -22,13 +22,13 @@ describe("support product filter", () => {
 		});
 	});
 
-	it("treats Aftaleportalen and CVR as the same product", () => {
+	it("treats Aftaleportalen and CVR as Pension Broker", () => {
 		expect(
 			normalizeSupportProductFilterInput({
 				products: ["Aftaleportalen", "CVR", "aftaleportalen"],
 			}),
 		).toEqual({
-			products: ["CVR"],
+			products: ["Pension Broker"],
 		});
 	});
 });

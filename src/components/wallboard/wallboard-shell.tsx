@@ -7,7 +7,9 @@ interface WallboardShellProps {
 	refreshedAt: string | null;
 	stale: boolean;
 	toolbar?: React.ReactNode;
+	showcase?: React.ReactNode;
 	tickerItems?: string[];
+	theme?: "light" | "dark";
 	children: React.ReactNode;
 }
 
@@ -16,46 +18,61 @@ export function WallboardShell({
 	refreshedAt,
 	stale,
 	toolbar,
+	showcase,
 	tickerItems,
+	theme = "dark",
 	children,
 }: WallboardShellProps) {
 	const refreshedDate = refreshedAt ? new Date(refreshedAt) : null;
 
 	return (
-		<div className="dark h-[100dvh] overflow-hidden bg-background text-foreground">
+		<div
+			className={cn(
+				"h-[100dvh] overflow-hidden bg-bg-app text-foreground dark:bg-background",
+				theme !== "light" && "dark",
+			)}
+		>
 			<div className="flex h-full w-full flex-col px-6 py-5 xl:px-8">
-				<header className="flex items-end justify-between border-b border-border/40 pb-4">
-					<div>
-						<h1 className="text-[2rem] font-semibold tracking-tight text-foreground">
-							{title}
-						</h1>
-						{toolbar ? <div className="mt-3">{toolbar}</div> : null}
-					</div>
-					<div className="flex items-center gap-5 text-right">
-						<div>
-							<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-								Now
+				<header className="border-b border-border/40 pb-3">
+					<div className="flex items-center justify-between">
+						<div className="flex items-baseline gap-4">
+							<h1 className="text-[2rem] font-semibold tracking-tight text-foreground">
+								{title}
+							</h1>
+							{showcase ? (
+								<>
+									<span className="text-border-strong/60 text-xl font-light">/</span>
+									{showcase}
+								</>
+							) : null}
+						</div>
+						<div className="flex items-center gap-5 text-right">
+							<div>
+								<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+									Now
+								</div>
+								<div className="whitespace-nowrap text-base font-medium text-foreground">
+									{format(new Date(), "EEE d MMM • HH:mm")}
+								</div>
 							</div>
-							<div className="whitespace-nowrap text-base font-medium text-foreground">
-								{format(new Date(), "EEE d MMM • HH:mm")}
+							<div>
+								<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+									Data
+								</div>
+								<div
+									className={cn(
+										"whitespace-nowrap text-base font-medium",
+										stale ? "text-amber-600 dark:text-amber-300" : "text-foreground",
+									)}
+								>
+									{refreshedDate
+										? `${formatDistanceToNowStrict(refreshedDate)} ago`
+										: "No sync yet"}
+								</div>
 							</div>
 						</div>
-						<div>
-							<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-								Data
-							</div>
-							<div
-								className={cn(
-									"whitespace-nowrap text-base font-medium",
-									stale ? "text-amber-300" : "text-foreground",
-								)}
-							>
-								{refreshedDate
-									? `${formatDistanceToNowStrict(refreshedDate)} ago`
-									: "No sync yet"}
-							</div>
-						</div>
 					</div>
+					{toolbar ? <div className="mt-2">{toolbar}</div> : null}
 				</header>
 				<main className="min-h-0 flex-1 overflow-hidden pt-5">{children}</main>
 				<TickerTape items={tickerItems ?? []} />
@@ -76,11 +93,13 @@ export function WallboardSection({
 	children,
 }: WallboardSectionProps) {
 	return (
-		<section className={cn(panelSurfaceClassName, className)}>
-			<div className="border-b border-border/40 px-5 py-3">
-				<h2 className="text-base font-medium text-foreground">{title}</h2>
+		<section className={cn("flex min-h-0 flex-col", className)}>
+			<div className="shrink-0 pb-2">
+				<h2 className="text-sm font-medium uppercase tracking-[0.08em] text-muted-foreground">
+					{title}
+				</h2>
 			</div>
-			<div className="p-5">{children}</div>
+			<div className="@container min-h-0 flex-1">{children}</div>
 		</section>
 	);
 }

@@ -25,7 +25,8 @@ export interface SupportCaseClassification {
 }
 
 const SUPPORT_PRODUCT_ALIASES: Record<string, string> = {
-	aftaleportalen: "CVR",
+	aftaleportalen: "Pension Broker",
+	cvr: "Pension Broker",
 };
 
 const PRODUCT_POLICY_RULES: ProductPolicyRule[] = [
@@ -48,14 +49,7 @@ const PRODUCT_POLICY_RULES: ProductPolicyRule[] = [
 		label: "Pension Broker",
 		bucket: "exception",
 		policyName: "Separate workflow",
-		matchTerms: ["pension broker", "pensionbroker"],
-	},
-	{
-		id: "cvr",
-		label: "CVR",
-		bucket: "exception",
-		policyName: "Separate workflow",
-		matchTerms: ["cvr", "aftaleportalen"],
+		matchTerms: ["pension broker", "pensionbroker", "cvr", "aftaleportalen"],
 	},
 ];
 

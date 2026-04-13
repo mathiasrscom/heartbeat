@@ -9,16 +9,19 @@ type ProductBrandStyle = {
 
 const PRODUCT_BRAND_STYLES: Record<string, ProductBrandStyle> = {
 	"addo sign": {
-		ringClassName: "border-amber-300/50 bg-amber-300/15",
-		heartClassName: "text-amber-300",
+		ringClassName:
+			"border-amber-400/50 dark:border-amber-300/50 bg-amber-100/60 dark:bg-amber-300/15",
+		heartClassName: "text-amber-500 dark:text-amber-300",
 	},
 	twoday: {
-		ringClassName: "border-slate-300/45 bg-slate-300/15",
-		heartClassName: "text-slate-200",
+		ringClassName:
+			"border-slate-400/45 dark:border-slate-300/45 bg-slate-100/60 dark:bg-slate-300/15",
+		heartClassName: "text-slate-500 dark:text-slate-200",
 	},
 	"pension broker": {
-		ringClassName: "border-emerald-300/55 bg-emerald-300/15",
-		heartClassName: "text-emerald-300",
+		ringClassName:
+			"border-emerald-400/55 dark:border-emerald-300/55 bg-emerald-100/60 dark:bg-emerald-300/15",
+		heartClassName: "text-emerald-500 dark:text-emerald-300",
 	},
 };
 

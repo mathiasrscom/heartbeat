@@ -300,7 +300,7 @@ export function buildSupportHealthSnapshot(
 		(item) => item.actionableState === "awaiting-customer",
 	).length;
 
-	const slaTrackedCases = activeCases.filter(
+	const slaTrackedCases = currentActiveCases.filter(
 		(item) => item.rawSlaStatus !== null || item.nextDueAt !== null,
 	);
 	const slaAdherencePercent =

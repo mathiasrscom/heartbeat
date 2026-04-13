@@ -63,7 +63,7 @@ describe("support policy classification", () => {
 			},
 		});
 
-		expect(classified.productName).toBe("CVR");
+		expect(classified.productName).toBe("Pension Broker");
 		expect(classified.serviceBucket).toBe("exception");
 		expect(classified.servicePolicyName).toBe("Separate workflow");
 	});
