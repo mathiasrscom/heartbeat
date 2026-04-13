@@ -277,12 +277,12 @@ function LiveWallboardPage() {
 									<QueueInlineMetric
 										label="Over SLA"
 										value={queue.breachedCount}
-										danger
+										danger={queue.breachedCount > 0}
 									/>
 									<QueueInlineMetric
 										label="Due"
 										value={queue.dueSoonCount}
-										warning
+										warning={queue.dueSoonCount > 0}
 									/>
 									<QueueInlineMetric
 										label="Unassigned"
@@ -610,8 +610,12 @@ function resolveFocusStatus(
 	queue: LiveWallboardData["mappedQueues"][number] | null,
 ): SupportHealthSnapshot["status"] {
 	if (!queue) return "yellow";
-	if (queue.breachedCount > 0 || queue.urgentCount > 0) return "red";
-	if (queue.dueSoonCount > 0 || queue.unassignedCount > 0) {
+	if (queue.breachedCount >= 2 || queue.urgentCount > 0) return "red";
+	if (
+		queue.breachedCount > 0 ||
+		queue.dueSoonCount > 0 ||
+		queue.unassignedCount > 0
+	) {
 		return "yellow";
 	}
 	return "green";
