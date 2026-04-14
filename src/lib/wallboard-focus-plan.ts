@@ -266,6 +266,7 @@ function buildOllamaPrompt(
     "Return JSON object only, no markdown.",
     "Required keys: focusProductName, headline, supportingText, topCaseExternalIds, laneOrder",
     "Rules:",
+    "- Write ALL output in English. Do not use any other language.",
     "- Keep facts true to provided data.",
     "- Office-safe: no customer names or company names.",
     "- focusProductName must be one of provided products or null.",

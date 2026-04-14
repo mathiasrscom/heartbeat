@@ -28,6 +28,9 @@ import type {
 	ClassificationHint,
 	CxPeriodSummary,
 	LiveWallboardData,
+	NpsPeriodSummary,
+	NpsRecord,
+	NpsTheme,
 	ProductHealthRow,
 	ProductHealthSummary,
 	QueueHealth,
@@ -37,9 +40,11 @@ import type {
 	SupportServiceBucket,
 	SupportTier,
 	SupportWorkflowCounts,
+	TopContributorsSummary,
 	TrendPoint,
 	TrendsWallboardData,
 } from "./types";
+import { calculateNps } from "@/lib/nps";
 
 interface ActionableStateInput {
 	status: string;
@@ -64,6 +69,8 @@ type LiveWallboardPayload = Omit<
 	| "availableProducts"
 	| "selectedProducts"
 	| "focusPlan"
+	| "wallboardTheme"
+	| "insights"
 >;
 
 type TrendsWallboardPayload = Omit<
@@ -75,6 +82,15 @@ type TrendsWallboardPayload = Omit<
 	| "intercomAppUrl"
 	| "availableProducts"
 	| "selectedProducts"
+	| "wallboardTheme"
+	| "insights"
+	| "npsSummary"
+	| "npsSeries"
+	| "npsDistribution"
+	| "npsComments"
+	| "npsThemes"
+	| "topContributors"
+	| "tickerItems"
 >;
 
 const GENERIC_QUEUE_NAMES = new Set([
@@ -1163,30 +1179,88 @@ export function buildProductHealthSummary(
 	};
 }
 
+/**
+ * Daily CX trend: average star rating on the 1–5 scale per day.
+ * (cxScore is stored normalised to 0–10; we halve it here so the chart
+ * reads in natural star-rating terms.)
+ *
+ * When the window spans more than ~45 days (e.g. year-to-date) we bucket
+ * by week to keep the chart readable.
+ */
 export function buildCxSeries(
 	cases: SupportCaseRecord[],
 	start: Date,
 	end: Date,
 ): TrendPoint[] {
 	const days = eachDayOfInterval({ start, end: endOfDay(end) });
-	return days.map((day) => {
-		const dayEnd = endOfDay(day);
-		const rated = cases.filter((item) => {
-			if (item.subtype !== "conversation") return false;
-			if (item.actionableState !== "resolved") return false;
-			if (item.cxScore === null) return false;
-			const resolvedAt = item.resolvedAt ?? item.updatedAt;
-			return isWithinInterval(resolvedAt, { start: day, end: dayEnd });
-		});
-		const positiveCount = rated.filter(
-			(item) => toFivePointRating(item.cxScore ?? 0) >= 4,
-		).length;
+	const useWeekly = days.length > 45;
+	const labelFormat = days.length > 14 ? "d MMM" : "EEE d";
 
-		return {
-			label: format(day, "d"),
-			value: toSatisfactionPercent(positiveCount, rated.length),
-		};
-	});
+	if (!useWeekly) {
+		return days.map((day) => {
+			const dayEnd = endOfDay(day);
+			const rated = cases.filter((item) => {
+				if (item.subtype !== "conversation") return false;
+				if (item.actionableState !== "resolved") return false;
+				if (item.cxScore === null) return false;
+				const resolvedAt = item.resolvedAt ?? item.updatedAt;
+				return isWithinInterval(resolvedAt, { start: day, end: dayEnd });
+			});
+			if (rated.length === 0) {
+				return { label: format(day, labelFormat), value: null };
+			}
+			const sum = rated.reduce((acc, item) => acc + (item.cxScore ?? 0), 0);
+			// cxScore is on 0–10 scale; divide by 2 to get 1–5 stars.
+			const avgFive = sum / rated.length / 2;
+			return {
+				label: format(day, labelFormat),
+				value: Math.round(avgFive * 10) / 10,
+			};
+		});
+	}
+
+	// Weekly buckets for long ranges.
+	const buckets: Array<{
+		label: string;
+		start: Date;
+		end: Date;
+		scores: number[];
+	}> = [];
+	let cursor = startOfDay(start);
+	const endBoundary = endOfDay(end);
+	while (cursor <= endBoundary) {
+		const bucketEnd = new Date(cursor);
+		bucketEnd.setDate(bucketEnd.getDate() + 6);
+		const clipped = bucketEnd > endBoundary ? endBoundary : bucketEnd;
+		buckets.push({
+			label: format(cursor, "d MMM"),
+			start: new Date(cursor),
+			end: clipped,
+			scores: [],
+		});
+		cursor = new Date(clipped);
+		cursor.setDate(cursor.getDate() + 1);
+	}
+	for (const item of cases) {
+		if (item.subtype !== "conversation") continue;
+		if (item.actionableState !== "resolved") continue;
+		if (item.cxScore === null) continue;
+		const resolvedAt = item.resolvedAt ?? item.updatedAt;
+		if (resolvedAt < start || resolvedAt > endBoundary) continue;
+		const bucket = buckets.find(
+			(b) => resolvedAt >= b.start && resolvedAt <= b.end,
+		);
+		if (bucket) bucket.scores.push(item.cxScore);
+	}
+	return buckets.map((b) => ({
+		label: b.label,
+		value:
+			b.scores.length === 0
+				? null
+				: Math.round(
+						(b.scores.reduce((s, v) => s + v, 0) / b.scores.length / 2) * 10,
+					) / 10,
+	}));
 }
 
 function collectTagCounts(cases: SupportCaseRecord[]) {
@@ -1350,6 +1424,299 @@ export function buildLiveWallboardData(
 	};
 }
 
+function filterNpsByPeriod(
+	records: NpsRecord[],
+	from: Date,
+	to: Date,
+): NpsRecord[] {
+	return records.filter((record) => {
+		if (!record.ratedAt) return false;
+		return isWithinInterval(record.ratedAt, { start: from, end: to });
+	});
+}
+
+export function buildNpsSummary(
+	records: NpsRecord[],
+	period: ResolvedSupportPeriod,
+): NpsPeriodSummary {
+	const current = filterNpsByPeriod(records, period.from, period.to);
+	const windowMs = Math.max(
+		1,
+		period.to.getTime() - period.from.getTime(),
+	);
+	const previousStart = new Date(period.from.getTime() - windowMs);
+	const previousEnd = new Date(period.from.getTime() - 1);
+	const previous = filterNpsByPeriod(records, previousStart, previousEnd);
+
+	const scores = current.map((r) => r.score);
+	const currentScore = calculateNps(scores);
+	const previousScoreValue =
+		previous.length > 0 ? calculateNps(previous.map((r) => r.score)) : null;
+	const averageScore =
+		scores.length > 0
+			? Math.round((scores.reduce((s, v) => s + v, 0) / scores.length) * 10) /
+				10
+			: null;
+
+	let promoterCount = 0;
+	let passiveCount = 0;
+	let detractorCount = 0;
+	for (const r of current) {
+		if (r.bucket === "promoter") promoterCount++;
+		else if (r.bucket === "passive") passiveCount++;
+		else detractorCount++;
+	}
+
+	return {
+		periodLabel: period.range.label,
+		score: currentScore,
+		previousScore: previousScoreValue,
+		delta:
+			previousScoreValue === null ? null : currentScore - previousScoreValue,
+		promoterCount,
+		passiveCount,
+		detractorCount,
+		responseCount: current.length,
+		averageScore,
+	};
+}
+
+export function buildNpsSeries(
+	records: NpsRecord[],
+	from: Date,
+	to: Date,
+): TrendPoint[] {
+	const current = filterNpsByPeriod(records, from, to);
+	if (current.length === 0) {
+		return [];
+	}
+	const days = eachDayOfInterval({ start: startOfDay(from), end: endOfDay(to) });
+	// Downsample to weekly buckets for long ranges. Also align daily label
+	// formatting with buildCxSeries.
+	const useWeekly = days.length > 45;
+	const dailyLabelFormat = days.length > 14 ? "d MMM" : "EEE d";
+	const buckets: Array<{ label: string; start: Date; end: Date; scores: number[] }> = [];
+
+	if (useWeekly) {
+		let cursor = startOfDay(from);
+		const endBoundary = endOfDay(to);
+		while (cursor <= endBoundary) {
+			const bucketEnd = new Date(cursor);
+			bucketEnd.setDate(bucketEnd.getDate() + 6);
+			const clipped = bucketEnd > endBoundary ? endBoundary : bucketEnd;
+			buckets.push({
+				label: format(cursor, "d MMM"),
+				start: new Date(cursor),
+				end: clipped,
+				scores: [],
+			});
+			cursor = new Date(clipped);
+			cursor.setDate(cursor.getDate() + 1);
+		}
+	} else {
+		for (const day of days) {
+			buckets.push({
+				label: format(day, dailyLabelFormat),
+				start: startOfDay(day),
+				end: endOfDay(day),
+				scores: [],
+			});
+		}
+	}
+
+	for (const record of current) {
+		if (!record.ratedAt) continue;
+		const bucket = buckets.find(
+			(b) =>
+				record.ratedAt! >= b.start && record.ratedAt! <= b.end,
+		);
+		if (bucket) bucket.scores.push(record.score);
+	}
+
+	return buckets.map((b) => ({
+		label: b.label,
+		value: b.scores.length === 0 ? null : calculateNps(b.scores),
+	}));
+}
+
+export interface TeammateLookupEntry {
+	name: string;
+	avatarUrl: string | null;
+}
+
+export function buildTopContributors(
+	cases: SupportCaseRecord[],
+	period: ResolvedSupportPeriod,
+	teammateLookup?: Map<string, TeammateLookupEntry>,
+): TopContributorsSummary {
+	// A rating is eligible only if:
+	//  - it's a conversation (not a ticket)
+	//  - it was resolved AND we have the resolvedAt timestamp (no updatedAt
+	//    fallback — that bumps on every sync and leaks historical ratings into
+	//    the current period)
+	//  - resolvedAt falls inside the selected period
+	//  - the customer actually rated it (cxScore !== null)
+	const eligible = cases.filter((item) => {
+		if (item.subtype !== "conversation") return false;
+		if (item.actionableState !== "resolved") return false;
+		if (item.cxScore === null) return false;
+		if (item.resolvedAt === null) return false;
+		return isWithinInterval(item.resolvedAt, {
+			start: period.from,
+			end: period.to,
+		});
+	});
+
+	let totalPositive = 0;
+
+	const byPerson = new Map<
+		string,
+		{
+			name: string;
+			avatarUrl: string | null;
+			positiveCount: number;
+			productCounts: Map<string, number>;
+		}
+	>();
+
+	for (const item of eligible) {
+		const rating = toFivePointRating(item.cxScore ?? 0);
+		if (rating < 4) continue;
+		totalPositive += 1;
+
+		// Prefer the teammate the customer actually rated (Intercom's
+		// `conversation_rating.teammate.id`), fall back to current assignee.
+		const ratedEntry = item.ratedTeammateExternalId
+			? teammateLookup?.get(item.ratedTeammateExternalId)
+			: undefined;
+		const name = (ratedEntry?.name ?? item.assigneeName ?? "").trim();
+		if (!name) continue;
+		const avatarUrl = ratedEntry?.avatarUrl ?? item.assigneeAvatarUrl ?? null;
+
+		const existing = byPerson.get(name) ?? {
+			name,
+			avatarUrl,
+			positiveCount: 0,
+			productCounts: new Map<string, number>(),
+		};
+		existing.positiveCount += 1;
+		existing.productCounts.set(
+			item.productName,
+			(existing.productCounts.get(item.productName) ?? 0) + 1,
+		);
+		byPerson.set(name, existing);
+	}
+
+	const contributors = [...byPerson.values()]
+		.sort((a, b) => b.positiveCount - a.positiveCount)
+		.slice(0, 5)
+		.map((entry) => {
+			// Representative product: pick the top one, but skip "Unmapped"
+			// (classifier couldn't identify the product — don't attribute).
+			const topProduct =
+				[...entry.productCounts.entries()]
+					.filter(([product]) => product !== "Unmapped")
+					.sort((a, b) => b[1] - a[1])[0] ?? null;
+			return {
+				name: entry.name,
+				avatarUrl: entry.avatarUrl,
+				positiveCount: entry.positiveCount,
+				representativeProduct: topProduct ? topProduct[0] : null,
+			};
+		});
+
+	return {
+		contributors,
+		totalRated: eligible.length,
+		totalPositive,
+	};
+}
+
+export function buildTrendsTickerItems(input: {
+	period: ResolvedSupportPeriod;
+	cases: SupportCaseRecord[];
+	npsSummary: NpsPeriodSummary;
+	npsThemes: NpsTheme[];
+	topContributors: TopContributorsSummary;
+	productHealth: ProductHealthRow[];
+}): string[] {
+	const { period, cases, npsSummary, npsThemes, topContributors, productHealth } = input;
+	const label = period.range.label;
+	const lower = label.toLowerCase();
+
+	// Require a real `resolvedAt` — drop the `updatedAt` fallback so historical
+	// conversations don't leak into the current period via sync touches.
+	const windowCases = cases.filter((c) => {
+		if (c.resolvedAt === null) return false;
+		return isWithinInterval(c.resolvedAt, { start: period.from, end: period.to });
+	});
+	const resolved = windowCases.filter((c) => c.actionableState === "resolved");
+	const ratedPositive = resolved.filter((c) => {
+		if (c.cxScore === null) return false;
+		return toFivePointRating(c.cxScore) >= 4;
+	});
+	const cxAgg = buildCxAggregate(resolved);
+	const items: string[] = [];
+
+	items.push(
+		`${label}: ${resolved.length} case${resolved.length === 1 ? "" : "s"} resolved · CX ${
+			cxAgg.satisfactionScorePercent === null ? "—" : `${cxAgg.satisfactionScorePercent}%`
+		} · NPS ${formatNpsScore(npsSummary.score)} from ${npsSummary.responseCount} response${npsSummary.responseCount === 1 ? "" : "s"}`,
+	);
+
+	if (npsSummary.delta !== null && npsSummary.delta !== 0) {
+		items.push(
+			`NPS ${npsSummary.delta > 0 ? "up" : "down"} ${Math.abs(
+				npsSummary.delta,
+			)} point${Math.abs(npsSummary.delta) === 1 ? "" : "s"} vs previous ${lower}`,
+		);
+	}
+
+	if (ratedPositive.length > 0) {
+		items.push(
+			`${ratedPositive.length} five-star CX rating${
+				ratedPositive.length === 1 ? "" : "s"
+			} this ${lower.replace(/^current /, "").replace(/^past /, "")}`,
+		);
+	}
+
+	const topContributor = topContributors.contributors[0];
+	if (topContributor && topContributor.positiveCount > 0) {
+		items.push(
+			`${topContributor.name}: ${topContributor.positiveCount} of ${topContributors.totalRated} positive rating${
+				topContributors.totalRated === 1 ? "" : "s"
+			} this ${lower.replace(/^current /, "").replace(/^past /, "")}`,
+		);
+	}
+
+	const topProduct = productHealth
+		.filter((row) => row.positiveCount > 0)
+		.sort((a, b) => b.positiveCount - a.positiveCount)[0];
+	if (topProduct) {
+		items.push(
+			`${topProduct.productName}: ${topProduct.positiveCount} positive rating${
+				topProduct.positiveCount === 1 ? "" : "s"
+			} this ${lower.replace(/^current /, "").replace(/^past /, "")}`,
+		);
+	}
+
+	const positiveTheme = npsThemes.find((t) => t.sentiment === "positive");
+	if (positiveTheme) {
+		items.push(`Customer voice: ${positiveTheme.headline}`);
+	}
+	const negativeTheme = npsThemes.find((t) => t.sentiment === "negative");
+	if (negativeTheme) {
+		items.push(`Area to watch: ${negativeTheme.headline}`);
+	}
+
+	return items.slice(0, 8);
+}
+
+function formatNpsScore(score: number): string {
+	if (score > 0) return `+${score}`;
+	return String(score);
+}
+
 export function buildTrendsWallboardData(
 	cases: SupportCaseRecord[],
 	lastSyncAt: Date | null,
@@ -1368,10 +1735,6 @@ export function buildTrendsWallboardData(
 	);
 	return {
 		snapshot,
-		peopleMoments: buildPeopleMoments(cases, now, {
-			periodStart: period.from,
-			periodEnd: period.to,
-		}),
 		period: period.range,
 		periodSummary: buildProductHealthSummary(productHealth, cases, period),
 		productHealth,

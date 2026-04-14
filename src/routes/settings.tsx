@@ -936,8 +936,8 @@ function SettingsPage() {
 				</Card>
 
 				<Card>
-					<CardContent className="p-4">
-						<div className="flex items-center gap-2 mb-3">
+					<CardContent className="space-y-4 p-4">
+						<div className="flex items-center gap-2">
 							<div className="p-1.5 rounded-md bg-violet-500/10">
 								<Monitor className="h-3.5 w-3.5 text-violet-600" />
 							</div>
@@ -949,11 +949,11 @@ function SettingsPage() {
 							</div>
 						</div>
 
-						<div className="rounded-lg border bg-muted/20 px-3 py-3">
+						<div className="rounded-lg border bg-muted/20 p-4">
 							<div className="text-xs font-medium text-foreground mb-1">
 								Theme
 							</div>
-							<div className="text-[10px] text-muted-foreground mb-2">
+							<div className="text-[10px] text-muted-foreground mb-3">
 								Choose light or dark mode for wallboard screens.
 							</div>
 							<div className="flex items-center gap-2">
@@ -979,11 +979,11 @@ function SettingsPage() {
 						</div>
 
 						{state.supportTargetProducts.length > 0 ? (
-							<div className="rounded-lg border bg-muted/20 px-3 py-3">
+							<div className="rounded-lg border bg-muted/20 p-4">
 								<div className="text-xs font-medium text-foreground mb-1">
 									Focus products
 								</div>
-								<div className="text-[10px] text-muted-foreground mb-2">
+								<div className="text-[10px] text-muted-foreground mb-3">
 									Select which products to show on wallboards. Leave empty for
 									all products.
 								</div>
@@ -1013,7 +1013,7 @@ function SettingsPage() {
 							</div>
 						) : null}
 
-						<div className="flex justify-end">
+						<div className="flex justify-end pt-1">
 							<Button
 								size="sm"
 								className="h-7 px-3 text-xs"

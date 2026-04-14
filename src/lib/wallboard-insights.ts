@@ -287,6 +287,7 @@ function buildOllamaPrompt(
     "   Never blame individuals for problems — frame improvements as team-level process changes.",
     "",
     "Rules:",
+    "- Write ALL output in English. Do not use any other language.",
     "- Office-safe: no customer names or company names.",
     "- Keep facts true to provided data.",
     "- Be concise — TV wallboard, not a report.",

@@ -8,6 +8,7 @@ import {
   startOfDay,
   startOfMonth,
   startOfWeek,
+  startOfYear,
   subMonths,
   subWeeks,
 } from "date-fns"
@@ -36,7 +37,7 @@ function parseDate(value: string | undefined) {
 }
 
 export function normalizeSupportPeriodInput(input: SupportPeriodInput | undefined) {
-  const validPresets = ["previous-week", "current-month", "previous-month", "custom"] as const
+  const validPresets = ["previous-week", "current-month", "previous-month", "year-to-date", "custom"] as const
   const preset =
     validPresets.includes(input?.period as (typeof validPresets)[number])
       ? (input!.period as SupportPeriodPreset)
@@ -102,6 +103,21 @@ export function resolveSupportPeriod(
       },
       from,
       to,
+    }
+  }
+
+  if (normalized.period === "year-to-date") {
+    const from = startOfYear(now)
+
+    return {
+      range: {
+        preset: "year-to-date",
+        label: "Year to date",
+        from: toDateInput(from),
+        to: toDateInput(now),
+      },
+      from,
+      to: now,
     }
   }
 

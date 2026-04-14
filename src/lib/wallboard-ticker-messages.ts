@@ -157,6 +157,7 @@ export async function rewriteTickerMessagesWithOllama(
   const prompt = [
     "Write short TV-news ticker messages for a support wallboard.",
     "Rules:",
+    "- Write ALL messages in English. Do not use any other language.",
     "- Keep facts exactly true to input.",
     "- Keep it office-safe. No customer or company names.",
     "- Mention teammates and products when provided.",

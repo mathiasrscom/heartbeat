@@ -47,6 +47,7 @@ function makeCase(
 		hasSlaTracking: overrides.hasSlaTracking ?? true,
 		cxScore: overrides.cxScore ?? null,
 		cxComment: overrides.cxComment ?? null,
+		ratedTeammateExternalId: overrides.ratedTeammateExternalId ?? null,
 		responseTimeMinutes: overrides.responseTimeMinutes ?? 22,
 		resolutionTimeHours: overrides.resolutionTimeHours ?? null,
 		reopenCount: overrides.reopenCount ?? 0,

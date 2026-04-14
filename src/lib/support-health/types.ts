@@ -14,7 +14,13 @@ export type SupportCasePriority = "low" | "normal" | "high" | "urgent";
 export type SupportCaseSubtype = "conversation" | "ticket";
 export type SupportTier = "free" | "starter" | "pro" | "enterprise" | "unknown";
 export type SupportServiceBucket = "headline" | "exception" | "unknown";
-export type SupportPeriodPreset = "current-week" | "previous-week" | "current-month" | "previous-month" | "custom";
+export type SupportPeriodPreset =
+	| "current-week"
+	| "previous-week"
+	| "current-month"
+	| "previous-month"
+	| "year-to-date"
+	| "custom";
 
 export interface SupportCaseRecord {
 	id: string;
@@ -44,6 +50,13 @@ export interface SupportCaseRecord {
 	hasSlaTracking: boolean;
 	cxScore: number | null;
 	cxComment: string | null;
+	/**
+	 * Intercom admin externalId identified by `conversation_rating.teammate.id`
+	 * — i.e. the teammate the customer actually rated. This is the authoritative
+	 * attribution for CX credit (distinct from `assigneeName`, which is the
+	 * *current* assignee and can change after the rating).
+	 */
+	ratedTeammateExternalId: string | null;
 	responseTimeMinutes: number | null;
 	resolutionTimeHours: number | null;
 	reopenCount: number;
@@ -253,6 +266,50 @@ export interface LiveWallboardData {
 	insights: import("@/lib/wallboard-insights").ProductInsight[];
 }
 
+export interface NpsRecord {
+	entityId: string;
+	name: string | null;
+	score: number;
+	comment: string | null;
+	ratedAt: Date | null;
+	bucket: "promoter" | "passive" | "detractor";
+}
+
+export interface NpsPeriodSummary {
+	periodLabel: string;
+	score: number;
+	previousScore: number | null;
+	delta: number | null;
+	promoterCount: number;
+	passiveCount: number;
+	detractorCount: number;
+	responseCount: number;
+	averageScore: number | null;
+}
+
+export interface NpsTheme {
+	headline: string;
+	summary: string;
+	sentiment: "positive" | "mixed" | "negative";
+	quote: string | null;
+	mentionCount: number;
+}
+
+export interface TopContributor {
+	name: string;
+	avatarUrl: string | null;
+	positiveCount: number;
+	representativeProduct: string | null;
+}
+
+export interface TopContributorsSummary {
+	contributors: TopContributor[];
+	/** Total resolved+rated conversations in scope (the denominator). */
+	totalRated: number;
+	/** Total of those that were ≥4 on the 1–5 scale. */
+	totalPositive: number;
+}
+
 export interface TrendsWallboardData {
 	snapshot: SupportHealthSnapshot;
 	workflowCounts: SupportWorkflowCounts;
@@ -262,7 +319,6 @@ export interface TrendsWallboardData {
 	intercomAppUrl: string | null;
 	availableProducts: string[];
 	selectedProducts: string[];
-	peopleMoments: string[];
 	period: SupportPeriodRange;
 	periodSummary: ProductHealthSummary;
 	productHealth: ProductHealthRow[];
@@ -277,4 +333,28 @@ export interface TrendsWallboardData {
 	refreshedAt: string;
 	wallboardTheme: "light" | "dark";
 	insights: import("@/lib/wallboard-insights").ProductInsight[];
+	npsSummary: NpsPeriodSummary;
+	npsSeries: TrendPoint[];
+	npsDistribution: { promoter: number; passive: number; detractor: number };
+	npsComments: string[];
+	npsThemes: NpsTheme[];
+	/**
+	 * Per-product NPS slices. Keyed by product name. Only includes products
+	 * that have at least one linked NPS response. When a product is focused
+	 * on the wallboard, read the slice here; fall back to the global fields
+	 * above only when no product is focused.
+	 */
+	npsByProduct: Record<
+		string,
+		{
+			summary: NpsPeriodSummary;
+			series: TrendPoint[];
+			distribution: { promoter: number; passive: number; detractor: number };
+			comments: string[];
+			themes: NpsTheme[];
+		}
+	>;
+	topContributors: TopContributorsSummary;
+	topContributorsByProduct: Record<string, TopContributorsSummary>;
+	tickerItems: string[];
 }

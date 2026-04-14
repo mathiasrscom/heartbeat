@@ -236,6 +236,22 @@ code {
   overflow: hidden;
   white-space: nowrap;
   width: 100%;
+  /* Soft fade on the left (next to the Ticker badge) and on the right edge,
+     so text doesn't hard-cut into/out of view. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 24px,
+    black calc(100% - 32px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 24px,
+    black calc(100% - 32px),
+    transparent 100%
+  );
 }
 
 .wallboard-ticker-track {

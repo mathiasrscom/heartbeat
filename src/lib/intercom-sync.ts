@@ -329,6 +329,7 @@ async function refreshWallboardContent() {
     ticker,
     focusPlan,
     insights,
+    npsThemesModule,
     { readIntercomTickerLlmSettings },
   ] = await Promise.all([
     import("@/lib/support-health/server"),
@@ -336,10 +337,11 @@ async function refreshWallboardContent() {
     import("@/lib/wallboard-ticker-messages"),
     import("@/lib/wallboard-focus-plan"),
     import("@/lib/wallboard-insights"),
+    import("@/lib/wallboard-nps-themes"),
     import("@/lib/intercom-admin"),
   ])
 
-  const { cases, lastSyncAt, now } = await loadSupportCases()
+  const { cases, lastSyncAt, now, npsRecords } = await loadSupportCases()
   const live = buildLiveWallboardData(cases, lastSyncAt, now)
   const llmSettings = await readIntercomTickerLlmSettings()
 
@@ -366,6 +368,23 @@ async function refreshWallboardContent() {
       // deterministic fallback
     }
     await insights.writeWallboardInsights(resolvedInsights)
+  }
+
+  // NPS themes from customer comments
+  if (npsRecords.length > 0) {
+    const deterministicNpsThemes = npsThemesModule.buildDeterministicNpsThemes(npsRecords)
+    let resolvedNpsThemes = deterministicNpsThemes
+    try {
+      const rewritten = await npsThemesModule.rewriteNpsThemesWithOllama(
+        deterministicNpsThemes,
+        npsRecords,
+        llmSettings,
+      )
+      if (rewritten) resolvedNpsThemes = rewritten
+    } catch {
+      // deterministic fallback
+    }
+    await npsThemesModule.writeWallboardNpsThemes(resolvedNpsThemes)
   }
 
   // Ticker messages
