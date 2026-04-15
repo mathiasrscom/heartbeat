@@ -28,11 +28,6 @@ export function RotatingPanels({
 	const [paused, setPaused] = useState(false);
 
 	useEffect(() => {
-		if (safePanels.length === 0) return;
-		setIndex((current) => current % safePanels.length);
-	}, [safePanels.length]);
-
-	useEffect(() => {
 		if (paused || safePanels.length < 2) return;
 
 		const timer = window.setInterval(() => {
@@ -44,7 +39,8 @@ export function RotatingPanels({
 
 	if (safePanels.length === 0) return null;
 
-	const active = safePanels[index];
+	const safeIndex = index % safePanels.length;
+	const active = safePanels[safeIndex];
 
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: Hover is used only to pause rotation.
