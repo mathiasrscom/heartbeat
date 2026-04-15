@@ -344,7 +344,7 @@ function TrendsWallboardPage() {
 		totalRated: contributorSummary.totalRated,
 	});
 	const contributorsPanel = (
-		<WallboardSection title="Top contributors" className="h-full">
+		<WallboardSection title="Customer love" className="h-full">
 			<PaginatedContent intervalMs={20_000}>
 				{contributorList.length === 0 ? (
 					<div
@@ -363,7 +363,7 @@ function TrendsWallboardPage() {
 						>
 							<ContributorRow
 								contributor={contributor}
-								totalRated={contributorSummary.totalRated}
+								totalPositive={contributorSummary.totalPositive}
 							/>
 						</div>
 					))
@@ -424,12 +424,12 @@ function TrendsWallboardPage() {
 							label: "Period highlights",
 							content: periodHighlightsPanel,
 						},
-						// Only rotate to Top contributors when the focused scope
-						// actually has contributors to celebrate.
+						// Only rotate to Customer love when the focused scope
+						// actually has people to celebrate.
 						contributorList.length > 0
 							? {
 									id: "trends-contributors",
-									label: "Top contributors",
+									label: "Customer love",
 									content: contributorsPanel,
 								}
 							: null,
@@ -551,11 +551,22 @@ function HighlightTile({
 
 function ContributorRow({
 	contributor,
-	totalRated,
+	totalPositive,
 }: {
 	contributor: TopContributor;
-	totalRated: number;
+	/**
+	 * Total five-star ratings across the whole team in this period. Used only
+	 * to compute a small "X% of team's 5★" context caption — never shown as a
+	 * numerator/denominator against the person's own count, which reads as a
+	 * ratio and misrepresents the underlying metric.
+	 */
+	totalPositive: number;
 }) {
+	const sharePct =
+		totalPositive > 0
+			? Math.round((contributor.positiveCount / totalPositive) * 100)
+			: null;
+
 	return (
 		<div className={cn(wbCell, "flex items-center gap-3 px-4 py-3")}>
 			<Avatar className="h-10 w-10 border border-border/60">
@@ -577,16 +588,28 @@ function ContributorRow({
 				</div>
 			</div>
 			<div className="shrink-0 text-right">
-				<div className="text-2xl font-semibold tabular-nums text-foreground">
-					{contributor.positiveCount}
-					{totalRated > 0 ? (
-						<span className="text-sm font-normal text-muted-foreground">
-							{" / "}
-							{totalRated}
+				<div className="inline-flex items-baseline gap-1.5">
+					<span
+						className="text-amber-500 dark:text-amber-300"
+						aria-hidden="true"
+					>
+						★
+					</span>
+					<span className="text-2xl font-semibold tabular-nums text-foreground">
+						{contributor.positiveCount}
+					</span>
+				</div>
+				<div className="text-[11px] text-muted-foreground">
+					{contributor.positiveCount === 1
+						? "five-star rating"
+						: "five-star ratings"}
+					{sharePct !== null ? (
+						<span className="text-muted-foreground/70">
+							{" · "}
+							{sharePct}% of team
 						</span>
 					) : null}
 				</div>
-				<div className="text-[11px] text-muted-foreground">positive ratings</div>
 			</div>
 		</div>
 	);
