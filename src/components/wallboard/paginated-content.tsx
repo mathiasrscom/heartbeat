@@ -249,8 +249,14 @@ export function PaginatedContent({
 		>
 			<div
 				ref={innerRef}
-				className="transition-transform duration-500 ease-in-out"
-				style={{ transform: `translateY(-${offset}px)` }}
+				className={cn(
+					"transition-transform duration-300 ease-in-out",
+					"motion-reduce:transition-none",
+				)}
+				style={{
+					transform: `translate3d(0, -${offset}px, 0)`,
+					willChange: pageOffsets.length > 1 ? "transform" : undefined,
+				}}
 			>
 				{children}
 			</div>

@@ -51,7 +51,7 @@ export function RotatingPanels({
 		>
 			<div
 				key={active.id}
-				className="h-full min-h-0 flex-1 animate-in overflow-hidden fade-in duration-500"
+				className="h-full min-h-0 flex-1 overflow-hidden"
 			>
 				{active.content}
 			</div>

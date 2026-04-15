@@ -44,7 +44,7 @@ const PERIOD_ROTATION_PRESETS = [
 	"year-to-date",
 ] as const;
 
-const PERIOD_ROTATION_INTERVAL_MS = 15_000;
+const PERIOD_ROTATION_INTERVAL_MS = 25_000;
 
 export const Route = createFileRoute("/wallboard/trends")({
 	ssr: false,
@@ -68,14 +68,6 @@ function TrendsWallboardPage() {
 	const navigate = useNavigate({ from: Route.fullPath });
 	const router = useRouter();
 
-	useEffect(() => {
-		const dataTimer = window.setInterval(() => {
-			void router.invalidate();
-		}, WALLBOARD_REFRESH_INTERVAL_MS);
-
-		return () => window.clearInterval(dataTimer);
-	}, [router]);
-
 	const autoplayProducts = resolveAutoplayProducts(
 		data.selectedProducts,
 		data.productHealth.map((row) => row.productName),
@@ -85,6 +77,19 @@ function TrendsWallboardPage() {
 	const totalSteps =
 		Math.max(autoplayProducts.length, 1) * PERIOD_ROTATION_PRESETS.length;
 	const [rotationStep, setRotationStep] = useState(0);
+
+	// When period rotation is active the navigate() below refetches the loader
+	// on every 15s tick, so a separate refresh timer would just double-fire
+	// (every 30s two loader runs land back-to-back). Only run the plain refresh
+	// when there's nothing to rotate.
+	useEffect(() => {
+		if (totalSteps > 1) return;
+		const dataTimer = window.setInterval(() => {
+			void router.invalidate();
+		}, WALLBOARD_REFRESH_INTERVAL_MS);
+
+		return () => window.clearInterval(dataTimer);
+	}, [router, totalSteps]);
 
 	useEffect(() => {
 		if (totalSteps <= 1) return;
@@ -148,7 +153,7 @@ function TrendsWallboardPage() {
 
 	const happinessPanel = (
 		<WallboardSection title="Customer happiness" className="h-full">
-			<PaginatedContent intervalMs={12_000}>
+			<PaginatedContent intervalMs={20_000}>
 				{/* Hero row: show CX + NPS side-by-side when NPS has data; when it
 				    doesn't, widen CX to full width so we don't leave an empty
 				    slot that would force a bigger page. */}
@@ -220,7 +225,7 @@ function TrendsWallboardPage() {
 
 	const customerVoicePanel = (
 		<WallboardSection title="Customer voice" className="h-full">
-			<PaginatedContent intervalMs={12_000}>
+			<PaginatedContent intervalMs={20_000}>
 				{!npsHasData ? (
 					<div
 						className={cn(
@@ -257,7 +262,7 @@ function TrendsWallboardPage() {
 
 	const periodHighlightsPanel = (
 		<WallboardSection title="Period highlights" className="h-full">
-			<PaginatedContent intervalMs={12_000}>
+			<PaginatedContent intervalMs={20_000}>
 				<div className="grid grid-cols-2 gap-3 @lg:grid-cols-3">
 					<HighlightTile
 						label="Cases resolved"
@@ -350,7 +355,7 @@ function TrendsWallboardPage() {
 	});
 	const contributorsPanel = (
 		<WallboardSection title="Top contributors" className="h-full">
-			<PaginatedContent intervalMs={12_000}>
+			<PaginatedContent intervalMs={20_000}>
 				{contributorList.length === 0 ? (
 					<div
 						className={cn(
@@ -419,7 +424,7 @@ function TrendsWallboardPage() {
 						(p): p is { id: string; label: string; content: React.ReactNode } =>
 							p !== null,
 					)}
-					intervalMs={18_000}
+					intervalMs={28_000}
 					className="min-h-0"
 				/>
 				<RotatingPanels
@@ -442,7 +447,7 @@ function TrendsWallboardPage() {
 						(p): p is { id: string; label: string; content: React.ReactNode } =>
 							p !== null,
 					)}
-					intervalMs={18_000}
+					intervalMs={28_000}
 					initialIndex={0}
 					className="min-h-0"
 				/>

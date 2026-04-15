@@ -121,6 +121,7 @@ export function SatisfactionTrendChart({
 									stroke: "var(--color-satisfaction)",
 									strokeWidth: 2,
 								}}
+								isAnimationActive={false}
 							/>
 						</AreaChart>
 					</ChartContainer>

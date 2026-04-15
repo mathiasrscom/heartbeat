@@ -166,6 +166,7 @@ export function CxNpsTrendChart({
 									stroke="#2563eb"
 									strokeDasharray="4 4"
 									strokeOpacity={0.55}
+									isFront={false}
 								/>
 							) : null}
 							{hasNps && Math.abs(cxTargetPct - npsTargetPct) > 0.5 ? (
@@ -174,6 +175,7 @@ export function CxNpsTrendChart({
 									stroke="#16a34a"
 									strokeDasharray="4 4"
 									strokeOpacity={0.55}
+									isFront={false}
 								/>
 							) : null}
 							{hasCx ? (
@@ -184,6 +186,7 @@ export function CxNpsTrendChart({
 									stroke="#2563eb"
 									strokeWidth={2.5}
 									dot={false}
+									isAnimationActive={false}
 								/>
 							) : null}
 							{hasNps ? (
@@ -194,6 +197,7 @@ export function CxNpsTrendChart({
 									stroke="#16a34a"
 									strokeWidth={2.5}
 									dot={false}
+									isAnimationActive={false}
 								/>
 							) : null}
 						</LineChart>

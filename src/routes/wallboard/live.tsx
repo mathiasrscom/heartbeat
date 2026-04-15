@@ -54,7 +54,7 @@ function LiveWallboardPage() {
 			),
 		[live.availableProducts, live.mappedQueues, live.selectedProducts],
 	);
-	const autoplay = useProductAutoplay(autoplayProducts, { intervalMs: 12_000 });
+	const autoplay = useProductAutoplay(autoplayProducts, { intervalMs: 20_000 });
 	const focusedProductName = resolveFocusedProductName({
 		aiFocusProductName: live.focusPlan?.focusProductName ?? null,
 		selectedProducts: live.selectedProducts,
@@ -120,7 +120,7 @@ function LiveWallboardPage() {
 
 	const immediateQueuePanel = (
 		<WallboardSection title="Immediate queue state" className="h-full">
-			<PaginatedContent intervalMs={10_000}>
+			<PaginatedContent intervalMs={16_000}>
 				<div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3 @3xl:grid-cols-4 @5xl:grid-cols-5">
 					<QueueInlineMetric
 						label="Open now"
@@ -187,7 +187,7 @@ function LiveWallboardPage() {
 			}
 			className="h-full"
 		>
-			<PaginatedContent intervalMs={12_000}>
+			<PaginatedContent intervalMs={20_000}>
 				<div className="space-y-3">
 					{visibleQueues.length === 0 ? (
 					live.snapshot.unknownCaseCount > 0 ? (
@@ -452,7 +452,7 @@ function LiveWallboardPage() {
 							content: byProductPanel,
 						},
 					]}
-					intervalMs={18_000}
+					intervalMs={28_000}
 					className="min-h-0"
 				/>
 				<RotatingPanels
@@ -468,7 +468,7 @@ function LiveWallboardPage() {
 							content: topIdsPanel,
 						},
 					]}
-					intervalMs={18_000}
+					intervalMs={28_000}
 					initialIndex={1}
 					className="min-h-0"
 				/>
