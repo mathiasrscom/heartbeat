@@ -287,6 +287,19 @@ export interface NpsPeriodSummary {
 	averageScore: number | null;
 }
 
+/**
+ * A single NPS response with a non-empty written comment, sorted for display
+ * on the wallboard (most recent first). `bucket` is derived from `score` and
+ * duplicated here so consumers don't need to import `classifyNps`.
+ */
+export interface NpsComment {
+	name: string | null;
+	score: number;
+	bucket: "promoter" | "passive" | "detractor";
+	comment: string;
+	ratedAt: string | null;
+}
+
 export interface NpsTheme {
 	headline: string;
 	summary: string;
@@ -336,7 +349,7 @@ export interface TrendsWallboardData {
 	npsSummary: NpsPeriodSummary;
 	npsSeries: TrendPoint[];
 	npsDistribution: { promoter: number; passive: number; detractor: number };
-	npsComments: string[];
+	npsComments: NpsComment[];
 	npsThemes: NpsTheme[];
 	/**
 	 * Per-product NPS slices. Keyed by product name. Only includes products
@@ -350,7 +363,7 @@ export interface TrendsWallboardData {
 			summary: NpsPeriodSummary;
 			series: TrendPoint[];
 			distribution: { promoter: number; passive: number; detractor: number };
-			comments: string[];
+			comments: NpsComment[];
 			themes: NpsTheme[];
 		}
 	>;

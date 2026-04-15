@@ -861,8 +861,14 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 					const bTime = b.ratedAt?.getTime() ?? 0;
 					return bTime - aTime;
 				})
-				.slice(0, 8)
-				.map((r) => r.comment!);
+				.slice(0, 12)
+				.map((r) => ({
+					name: r.name,
+					score: r.score,
+					bucket: r.bucket,
+					comment: r.comment!,
+					ratedAt: r.ratedAt ? r.ratedAt.toISOString() : null,
+				}));
 			return { summary, series, distribution, comments };
 		};
 

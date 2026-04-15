@@ -36,11 +36,11 @@ interface CxNpsTrendChartProps {
 	title: string;
 	/** Current CX average on the 1–5 scale (header callout). */
 	cxCurrent: number | null;
-	/** Current NPS average on the 0–10 scale (header callout). */
+	/** Current NPS score in the range −100..100 (header callout). */
 	npsCurrent: number | null;
 	/** Target CX on the 1–5 scale (reference line). Default 4. */
 	cxTarget?: number;
-	/** Target NPS on the 0–10 scale (reference line). Default 8. */
+	/** Target NPS in the range −100..100 (reference line). Default 50. */
 	npsTarget?: number;
 	className?: string;
 }
@@ -52,7 +52,7 @@ export function CxNpsTrendChart({
 	cxCurrent,
 	npsCurrent,
 	cxTarget = 4,
-	npsTarget = 8,
+	npsTarget = 50,
 	className,
 }: CxNpsTrendChartProps) {
 	const gradientId = useId().replace(/:/g, "");
@@ -64,9 +64,10 @@ export function CxNpsTrendChart({
 		const cxMap = new Map(cxSeries.map((p) => [p.label, p.value]));
 		const npsMap = new Map(npsSeries.map((p) => [p.label, p.value]));
 		return {
-			// CX is natively 1–5, NPS is natively 0–10. Normalise both to
-			// percent-of-max so the two lines are visually comparable on a
-			// single Y axis.
+			// CX is natively 1–5 → map to 0..100 via (v/5)*100.
+			// NPS is now the classic score in −100..100 → map to 0..100 via
+			// (v+100)/2 so both lines can share a single 0..100 Y axis. The
+			// raw value is preserved in `npsRaw` for the tooltip display.
 			merged: ordered.map((label) => {
 				const cxRaw = cxMap.get(label) ?? null;
 				const npsRaw = npsMap.get(label) ?? null;
@@ -75,7 +76,7 @@ export function CxNpsTrendChart({
 					cxRaw,
 					npsRaw,
 					cx: cxRaw === null ? null : Math.round((cxRaw / 5) * 100),
-					nps: npsRaw === null ? null : Math.round((npsRaw / 10) * 100),
+					nps: npsRaw === null ? null : Math.round(((npsRaw + 100) / 2)),
 				};
 			}),
 			hasCx: cxSeries.some((p) => p.value !== null),
@@ -84,7 +85,7 @@ export function CxNpsTrendChart({
 	}, [cxSeries, npsSeries]);
 
 	const cxTargetPct = (cxTarget / 5) * 100;
-	const npsTargetPct = (npsTarget / 10) * 100;
+	const npsTargetPct = (npsTarget + 100) / 2;
 
 	return (
 		<div className={cn(wbCell, "p-4", className)}>
@@ -99,13 +100,15 @@ export function CxNpsTrendChart({
 						value={cxCurrent}
 						target={cxTarget}
 						max={5}
+						display="percent"
 					/>
 					<LegendMetric
 						color="#16a34a"
 						label="NPS"
 						value={npsCurrent}
 						target={npsTarget}
-						max={10}
+						max={100}
+						display="signed"
 					/>
 					<span className="inline-flex items-center gap-1.5 text-muted-foreground">
 						<span className="inline-block h-px w-3 border-t border-dashed border-muted-foreground" />
@@ -153,7 +156,11 @@ export function CxNpsTrendChart({
 											const v = raw?.npsRaw;
 											return (
 												<span className="font-medium tabular-nums text-foreground">
-													{typeof v === "number" ? `${v.toFixed(1)} / 10.0` : "—"}
+													{typeof v === "number"
+														? v > 0
+															? `+${Math.round(v)}`
+															: `${Math.round(v)}`
+														: "—"}
 												</span>
 											);
 										}}
@@ -166,7 +173,6 @@ export function CxNpsTrendChart({
 									stroke="#2563eb"
 									strokeDasharray="4 4"
 									strokeOpacity={0.55}
-									isFront={false}
 								/>
 							) : null}
 							{hasNps && Math.abs(cxTargetPct - npsTargetPct) > 0.5 ? (
@@ -175,7 +181,6 @@ export function CxNpsTrendChart({
 									stroke="#16a34a"
 									strokeDasharray="4 4"
 									strokeOpacity={0.55}
-									isFront={false}
 								/>
 							) : null}
 							{hasCx ? (
@@ -217,15 +222,34 @@ function LegendMetric({
 	value,
 	target,
 	max,
+	display,
 }: {
 	color: string;
 	label: string;
 	value: number | null;
 	target: number;
 	max: number;
+	/**
+	 * "percent" — show value as (value/max)*100 with a "%" suffix and the raw
+	 * "(v/max)" hint. Good for a 0..N scale like CX (1–5).
+	 * "signed"  — show the value itself as a signed integer (e.g. "+42"). Good
+	 * for the classic NPS score on the −100..100 scale.
+	 */
+	display: "percent" | "signed";
 }) {
-	const percent = value === null ? null : Math.round((value / max) * 100);
 	const onTarget = value !== null && value >= target;
+	const primary =
+		value === null
+			? "—"
+			: display === "signed"
+				? value > 0
+					? `+${Math.round(value)}`
+					: `${Math.round(value)}`
+				: `${Math.round((value / max) * 100)}%`;
+	const hint =
+		value === null || display === "signed"
+			? null
+			: `(${value.toFixed(1)}/${max.toFixed(1)})`;
 	return (
 		<span className="inline-flex items-center gap-1.5">
 			<span
@@ -243,11 +267,11 @@ function LegendMetric({
 							: "text-red-600 dark:text-red-300",
 				)}
 			>
-				{percent === null ? "—" : `${percent}%`}
+				{primary}
 			</span>
-			<span className="text-[10px] text-muted-foreground">
-				{value === null ? "" : `(${value.toFixed(1)}/${max.toFixed(1)})`}
-			</span>
+			{hint ? (
+				<span className="text-[10px] text-muted-foreground">{hint}</span>
+			) : null}
 		</span>
 	);
 }
