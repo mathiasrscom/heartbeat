@@ -691,6 +691,42 @@ async function upsertConversationNode(conversation: IntercomConversation) {
     conversation.statistics?.time_to_last_close
   const cx = extractIntercomCx(conversation as unknown as Record<string, unknown>)
 
+  // Pick a stable `resolvedAt` for closed conversations.
+  //
+  // Intercom's `updated_at` bumps on EVERY sync touch (re-tagging, bot edits,
+  // raw-data refresh, etc.), so using it directly makes `resolvedAt` drift
+  // forward over time — e.g. a conversation closed in December 2025 gets
+  // stamped with March 2026 after a resync, polluting period-based metrics.
+  // Instead:
+  //   1. If we already recorded a `resolvedAt` while the row was closed, keep
+  //      it. That value reflects the first observed close — the truest
+  //      approximation of when the conversation actually closed.
+  //   2. Otherwise derive a close time from `created_at + time_to_last_close`
+  //      (Intercom's canonical close duration), which is immutable.
+  //   3. Only fall back to `updated_at` if neither is available.
+  // On open→closed transitions or brand-new closed rows, this still records
+  // a close time; the previous bumping behaviour is what we're eliminating.
+  const isClosed = mapConversationStatus(conversation.state) === "closed"
+  const previousRow = existing[0]
+  const previouslyClosed =
+    previousRow && mapConversationStatus(previousRow.status ?? "open") === "closed"
+  let resolvedAt: Date | null = null
+  if (isClosed) {
+    if (previouslyClosed && previousRow?.resolvedAt) {
+      resolvedAt = previousRow.resolvedAt
+    } else if (
+      typeof conversation.created_at === "number" &&
+      typeof conversation.statistics?.time_to_last_close === "number"
+    ) {
+      resolvedAt = new Date(
+        (conversation.created_at + conversation.statistics.time_to_last_close) *
+          1000,
+      )
+    } else {
+      resolvedAt = new Date(conversation.updated_at * 1000)
+    }
+  }
+
   const data = {
     externalId: conversation.id,
     source: "intercom" as const,
@@ -719,10 +755,7 @@ async function upsertConversationNode(conversation: IntercomConversation) {
     cxScore: cx.score,
     cxComment: cx.comment,
     rawData: conversation as unknown as Record<string, unknown>,
-    resolvedAt:
-      mapConversationStatus(conversation.state) === "closed"
-        ? new Date(conversation.updated_at * 1000)
-        : null,
+    resolvedAt,
     updatedAt: new Date(conversation.updated_at * 1000),
   }
 
@@ -762,13 +795,26 @@ async function upsertTicketNode(ticket: IntercomTicket) {
       ? ticketAttributes.description.slice(0, 500)
       : null
 
+  // Same stability logic as conversations — keep the first observed
+  // resolvedAt rather than letting `updated_at` bumps drift it forward on
+  // each sync. See `upsertConversationNode` for the rationale.
+  const ticketStatus = mapTicketStatus(ticket)
+  const ticketPreviouslyResolved =
+    existing[0] && (existing[0].status === "resolved" || existing[0].status === "closed")
+  const ticketIsResolved = ticketStatus === "resolved" || ticketStatus === "closed"
+  const resolvedAt: Date | null = ticketIsResolved
+    ? ticketPreviouslyResolved && existing[0]?.resolvedAt
+      ? existing[0].resolvedAt
+      : new Date(ticket.updated_at * 1000)
+    : null
+
   const data = {
     externalId: ticket.id,
     source: "intercom" as const,
     title,
     description,
     type: "ticket",
-    status: mapTicketStatus(ticket),
+    status: ticketStatus,
     priority: "normal" as const,
     tags: ticket.tags?.tags?.map((tag) => tag.name) || [],
     entityId,
@@ -779,10 +825,7 @@ async function upsertTicketNode(ticket: IntercomTicket) {
     },
     effortSignals: {},
     rawData: ticket as unknown as Record<string, unknown>,
-    resolvedAt:
-      mapTicketStatus(ticket) === "resolved" || mapTicketStatus(ticket) === "closed"
-        ? new Date(ticket.updated_at * 1000)
-        : null,
+    resolvedAt,
     updatedAt: new Date(ticket.updated_at * 1000),
   }
 

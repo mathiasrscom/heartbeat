@@ -823,7 +823,7 @@ function buildPeopleMoments(
 		const positiveTemplate = pickBySeed(`${item.externalId}:cx-positive`, [
 			`${assignee} turned another ${productLabel} conversation into a ${rating}/5 CX win.`,
 			`Spotlight on ${assignee}: ${rating}/5 CX delivered in ${productLabel}.`,
-			`Customer love in ${productLabel}: ${assignee} landed a ${rating}/5 CX result.`,
+			`Strong AI CX read in ${productLabel}: ${assignee} landed a ${rating}/5 result.`,
 		]);
 		const mixedTemplate = pickBySeed(`${item.externalId}:cx-mixed`, [
 			`${assignee} received ${rating}/5 CX in ${productLabel}. Keep the feedback loop moving.`,
@@ -1180,7 +1180,7 @@ export function buildProductHealthSummary(
 }
 
 /**
- * Daily CX trend: average star rating on the 1–5 scale per day.
+ * Daily CX trend: average CX rating on the 1–5 scale per day.
  * (cxScore is stored normalised to 0–10; we halve it here so the chart
  * reads in natural star-rating terms.)
  *
@@ -1670,7 +1670,7 @@ export function buildTrendsTickerItems(input: {
 
 	if (ratedPositive.length > 0) {
 		items.push(
-			`${ratedPositive.length} five-star CX rating${
+			`${ratedPositive.length} positive CX rating${
 				ratedPositive.length === 1 ? "" : "s"
 			} this ${lower.replace(/^current /, "").replace(/^past /, "")}`,
 		);
