@@ -147,6 +147,53 @@ If the update includes database changes:
 docker compose -f docker-compose.production.yml exec web pnpm db:push
 ```
 
+## Automatic Deploys From GitHub
+
+This repo now includes [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
+On every push to `main` it:
+
+1. builds the Docker image
+2. pushes it to GitHub Container Registry (`ghcr.io`)
+3. SSHes into the Pi
+4. runs `docker compose -f docker-compose.production.yml pull web worker`
+5. restarts `web` and `worker`
+
+### One-Time GitHub Setup
+
+Add these repository secrets in GitHub:
+
+- `DEPLOY_HOST`: hostname or IP of the Pi
+- `DEPLOY_USER`: SSH user on the Pi
+- `DEPLOY_SSH_KEY`: private key for that user
+- `DEPLOY_PORT`: optional SSH port, usually `22`
+- `DEPLOY_PATH`: absolute path to the checked-out project on the Pi
+
+### One-Time Pi Setup
+
+Log into GHCR once on the Pi so `docker compose pull` can read private images:
+
+```bash
+docker login ghcr.io
+```
+
+Use a GitHub personal access token with package read access when prompted.
+
+Set the image in `.env` on the Pi to your GitHub Container Registry path:
+
+```bash
+IMAGE_NAME=ghcr.io/<owner>/<repo>
+IMAGE_TAG=latest
+```
+
+Example:
+
+```bash
+IMAGE_NAME=ghcr.io/mathiasrscom/heartbeat
+IMAGE_TAG=latest
+```
+
+After that, any push to `main` will publish and deploy automatically.
+
 ## Common Problems
 
 ### Wrong compose filename
