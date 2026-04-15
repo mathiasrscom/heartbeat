@@ -44,7 +44,7 @@ import type {
 	TrendPoint,
 	TrendsWallboardData,
 } from "./types";
-import { calculateNps } from "@/lib/nps";
+import { averageNpsRating, calculateNps } from "@/lib/nps";
 
 interface ActionableStateInput {
 	status: string;
@@ -1452,11 +1452,7 @@ export function buildNpsSummary(
 	const currentScore = calculateNps(scores);
 	const previousScoreValue =
 		previous.length > 0 ? calculateNps(previous.map((r) => r.score)) : null;
-	const averageScore =
-		scores.length > 0
-			? Math.round((scores.reduce((s, v) => s + v, 0) / scores.length) * 10) /
-				10
-			: null;
+	const averageScore = averageNpsRating(scores);
 
 	let promoterCount = 0;
 	let passiveCount = 0;

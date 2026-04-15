@@ -7,7 +7,7 @@ import { startTransition, useEffect, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CxNpsTrendChart } from "@/components/cx-nps-trend-chart";
 import { NpsDistributionBar } from "@/components/nps-distribution-bar";
-import { NpsThemeCard } from "@/components/nps-theme-card";
+import { NpsCommentList } from "@/components/wallboard/nps-comment-list";
 import {
 	formatProductLabel,
 	ProductBrandLogo,
@@ -141,6 +141,7 @@ function TrendsWallboardPage() {
 	const npsSeries = productNps?.series ?? data.npsSeries;
 	const npsDistribution = productNps?.distribution ?? data.npsDistribution;
 	const npsThemes = productNps?.themes ?? data.npsThemes;
+	const npsComments = productNps?.comments ?? data.npsComments;
 	const npsHasData = focusedProductName
 		? (productNps?.summary.responseCount ?? 0) > 0
 		: data.npsSummary.responseCount > 0;
@@ -235,7 +236,7 @@ function TrendsWallboardPage() {
 					>
 						{`No NPS responses ${periodText}.`}
 					</div>
-				) : npsThemes.length === 0 ? (
+				) : npsComments.length === 0 ? (
 					<div
 						className={cn(
 							wbCell,
@@ -244,17 +245,10 @@ function TrendsWallboardPage() {
 					>
 						{npsSummary.responseCount} NPS response
 						{npsSummary.responseCount === 1 ? "" : "s"} received {periodText}, but
-						no written comments to theme.
+						no written comments.
 					</div>
 				) : (
-					npsThemes.map((theme, index) => (
-						<div
-							key={theme.headline}
-							className={index === 0 ? undefined : "mt-3"}
-						>
-							<NpsThemeCard theme={theme} />
-						</div>
-					))
+					<NpsCommentList comments={npsComments} />
 				)}
 			</PaginatedContent>
 		</WallboardSection>
@@ -283,14 +277,10 @@ function TrendsWallboardPage() {
 					/>
 					<HighlightTile
 						label="NPS"
-						value={
-							npsHasData
-								? `${Math.round((npsSummary.score / 10) * 100)}%`
-								: "—"
-						}
+						value={npsHasData ? formatNpsScore(npsSummary.score) : "—"}
 						caption={
 							npsHasData
-								? `${npsSummary.score.toFixed(1)} / 10.0 · ${npsSummary.responseCount} responses`
+								? `avg ${formatAverageRating(npsSummary.averageScore)} · ${npsSummary.responseCount} response${npsSummary.responseCount === 1 ? "" : "s"}`
 								: `No responses ${periodText}`
 						}
 					/>
@@ -354,7 +344,7 @@ function TrendsWallboardPage() {
 		totalRated: contributorSummary.totalRated,
 	});
 	const contributorsPanel = (
-		<WallboardSection title="Top contributors" className="h-full">
+		<WallboardSection title="Customer love" className="h-full">
 			<PaginatedContent intervalMs={20_000}>
 				{contributorList.length === 0 ? (
 					<div
@@ -373,7 +363,7 @@ function TrendsWallboardPage() {
 						>
 							<ContributorRow
 								contributor={contributor}
-								totalRated={contributorSummary.totalRated}
+								totalPositive={contributorSummary.totalPositive}
 							/>
 						</div>
 					))
@@ -434,12 +424,12 @@ function TrendsWallboardPage() {
 							label: "Period highlights",
 							content: periodHighlightsPanel,
 						},
-						// Only rotate to Top contributors when the focused scope
-						// actually has contributors to celebrate.
+						// Only rotate to Customer love when the focused scope
+						// actually has people to celebrate.
 						contributorList.length > 0
 							? {
 									id: "trends-contributors",
-									label: "Top contributors",
+									label: "Customer love",
 									content: contributorsPanel,
 								}
 							: null,
@@ -493,13 +483,13 @@ function NpsHeroCard({
 	periodText: string;
 }) {
 	const hasData = summary.responseCount > 0;
-	const percent = hasData ? Math.round((summary.score / 10) * 100) : null;
+	const score = hasData ? summary.score : null;
 	const deltaText =
 		summary.delta === null
 			? "No prior period data"
 			: summary.delta === 0
 				? "Unchanged vs previous period"
-				: `${summary.delta > 0 ? "+" : ""}${summary.delta.toFixed(1)} vs previous period`;
+				: `${summary.delta > 0 ? "+" : ""}${Math.round(summary.delta)} pts vs previous period`;
 	return (
 		<div className={cn(wbCell, "px-4 py-4")}>
 			<div className="flex items-center justify-between gap-2">
@@ -512,21 +502,21 @@ function NpsHeroCard({
 			</div>
 			<div
 				className={cn(
-					"mt-2 text-5xl font-semibold tracking-tight",
-					percent !== null && percent >= 80
-						? "text-emerald-600 dark:text-emerald-300"
-						: percent !== null && percent >= 60
-							? "text-foreground"
-							: percent !== null
-								? "text-red-600 dark:text-red-300"
-								: "text-foreground",
+					"mt-2 text-5xl font-semibold tabular-nums tracking-tight",
+					score === null
+						? "text-foreground"
+						: score >= 50
+							? "text-emerald-600 dark:text-emerald-300"
+							: score >= 0
+								? "text-foreground"
+								: "text-red-600 dark:text-red-300",
 				)}
 			>
-				{percent === null ? "—" : `${percent}%`}
+				{score === null ? "—" : formatNpsScore(score)}
 			</div>
 			<div className="mt-2 text-xs text-muted-foreground">
 				{hasData
-					? `${summary.score.toFixed(1)} / 10.0 avg · ${summary.responseCount} response${summary.responseCount === 1 ? "" : "s"} · ${deltaText}`
+					? `${summary.promoterCount} promoter${summary.promoterCount === 1 ? "" : "s"} − ${summary.detractorCount} detractor${summary.detractorCount === 1 ? "" : "s"} of ${summary.responseCount} · avg ${formatAverageRating(summary.averageScore)} · ${deltaText}`
 					: `No NPS responses ${periodText}`}
 			</div>
 		</div>
@@ -561,11 +551,22 @@ function HighlightTile({
 
 function ContributorRow({
 	contributor,
-	totalRated,
+	totalPositive,
 }: {
 	contributor: TopContributor;
-	totalRated: number;
+	/**
+	 * Total five-star ratings across the whole team in this period. Used only
+	 * to compute a small "X% of team's 5★" context caption — never shown as a
+	 * numerator/denominator against the person's own count, which reads as a
+	 * ratio and misrepresents the underlying metric.
+	 */
+	totalPositive: number;
 }) {
+	const sharePct =
+		totalPositive > 0
+			? Math.round((contributor.positiveCount / totalPositive) * 100)
+			: null;
+
 	return (
 		<div className={cn(wbCell, "flex items-center gap-3 px-4 py-3")}>
 			<Avatar className="h-10 w-10 border border-border/60">
@@ -587,16 +588,28 @@ function ContributorRow({
 				</div>
 			</div>
 			<div className="shrink-0 text-right">
-				<div className="text-2xl font-semibold tabular-nums text-foreground">
-					{contributor.positiveCount}
-					{totalRated > 0 ? (
-						<span className="text-sm font-normal text-muted-foreground">
-							{" / "}
-							{totalRated}
+				<div className="inline-flex items-baseline gap-1.5">
+					<span
+						className="text-amber-500 dark:text-amber-300"
+						aria-hidden="true"
+					>
+						★
+					</span>
+					<span className="text-2xl font-semibold tabular-nums text-foreground">
+						{contributor.positiveCount}
+					</span>
+				</div>
+				<div className="text-[11px] text-muted-foreground">
+					{contributor.positiveCount === 1
+						? "five-star rating"
+						: "five-star ratings"}
+					{sharePct !== null ? (
+						<span className="text-muted-foreground/70">
+							{" · "}
+							{sharePct}% of team
 						</span>
 					) : null}
 				</div>
-				<div className="text-[11px] text-muted-foreground">positive ratings</div>
 			</div>
 		</div>
 	);
@@ -694,8 +707,17 @@ function aggregateProductRows(
 	};
 }
 
+/**
+ * Classic NPS score is an integer in −100..100. Always show the sign so
+ * readers can tell at a glance whether the score is positive.
+ */
 function formatNpsScore(score: number): string {
-	return `${score.toFixed(1)} / 10.0`;
+	const rounded = Math.round(score);
+	return rounded > 0 ? `+${rounded}` : `${rounded}`;
+}
+
+function formatAverageRating(average: number | null): string {
+	return average === null ? "—" : `${average.toFixed(1)} / 10`;
 }
 
 /**
@@ -754,7 +776,7 @@ function buildFocusedTickerItems(input: {
 					return `CX ${pct}% (${raw}/5.0)`;
 				})();
 	const npsPart = npsHasData
-		? `NPS ${Math.round((npsSummary.score / 10) * 100)}% (${npsSummary.score.toFixed(1)}/10.0) from ${npsSummary.responseCount} response${npsSummary.responseCount === 1 ? "" : "s"}`
+		? `NPS ${formatNpsScore(npsSummary.score)} (avg ${formatAverageRating(npsSummary.averageScore)}) from ${npsSummary.responseCount} response${npsSummary.responseCount === 1 ? "" : "s"}`
 		: `no NPS responses ${withinPhrase}`;
 
 	items.push(
@@ -762,8 +784,9 @@ function buildFocusedTickerItems(input: {
 	);
 
 	if (npsHasData && npsSummary.delta !== null && npsSummary.delta !== 0) {
+		const deltaAbs = Math.abs(Math.round(npsSummary.delta));
 		items.push(
-			`${scope}: NPS ${npsSummary.delta > 0 ? "up" : "down"} ${Math.abs(npsSummary.delta).toFixed(1)} point${Math.abs(npsSummary.delta) === 1 ? "" : "s"} vs previous ${periodLower}`,
+			`${scope}: NPS ${npsSummary.delta > 0 ? "up" : "down"} ${deltaAbs} point${deltaAbs === 1 ? "" : "s"} vs previous ${periodLower}`,
 		);
 	}
 
@@ -798,7 +821,7 @@ function buildFocusedTickerItems(input: {
 }
 
 function formatNpsScoreShort(score: number): string {
-	return score.toFixed(1);
+	return formatNpsScore(score);
 }
 
 function formatCxScore(score: number | null): string {
@@ -826,9 +849,9 @@ function buildPeriodHeadline(
 				? ""
 				: nps.delta === 0
 					? ", flat vs previous period"
-					: `, ${nps.delta > 0 ? "up" : "down"} ${Math.abs(nps.delta).toFixed(1)} pts vs previous period`;
+					: `, ${nps.delta > 0 ? "up" : "down"} ${Math.abs(Math.round(nps.delta))} pts vs previous period`;
 		parts.push(
-			`NPS ${Math.round((nps.score / 10) * 100)}% (${nps.score.toFixed(1)}/10.0) from ${nps.responseCount} response${nps.responseCount === 1 ? "" : "s"}${deltaNote}`,
+			`NPS ${formatNpsScore(nps.score)} (avg ${formatAverageRating(nps.averageScore)}) from ${nps.responseCount} response${nps.responseCount === 1 ? "" : "s"}${deltaNote}`,
 		);
 	}
 	return `${parts.join(" · ")}.`;

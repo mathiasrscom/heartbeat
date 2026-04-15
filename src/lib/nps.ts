@@ -55,17 +55,34 @@ export function classifyNps(score: number): NpsBucket {
 }
 
 /**
- * Average NPS rating on the 0–10 scale (one decimal place).
+ * Classic Net Promoter Score: `% promoters − % detractors`, rounded to
+ * an integer in the range −100..100.
  *
- * The previous implementation returned the classic "% promoters minus
- * % detractors" index (range −100..100). We show a simple average instead
- * because it matches how teams talk about the score ("a 9", "an 8.2") and
- * isn't surprising when most customers rate high.
+ *   promoters  = scores ≥ 9
+ *   passives   = scores 7–8 (ignored in the formula but still counted)
+ *   detractors = scores ≤ 6
  *
  * Returns 0 for an empty list.
  */
 export function calculateNps(scores: number[]): number {
   if (scores.length === 0) return 0
+  let promoters = 0
+  let detractors = 0
+  for (const score of scores) {
+    if (score >= 9) promoters++
+    else if (score <= 6) detractors++
+  }
+  const pct = ((promoters - detractors) / scores.length) * 100
+  // Clamp so float noise can't push the result outside −100..100.
+  return Math.max(-100, Math.min(100, Math.round(pct)))
+}
+
+/**
+ * Simple average NPS rating on the 0–10 scale (one decimal place).
+ * Used alongside `calculateNps` for "avg rating X.X / 10" captions.
+ */
+export function averageNpsRating(scores: number[]): number | null {
+  if (scores.length === 0) return null
   const sum = scores.reduce((acc, value) => acc + value, 0)
   return Math.round((sum / scores.length) * 10) / 10
 }
