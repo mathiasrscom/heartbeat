@@ -55,7 +55,9 @@ export function WallboardShell({
 							</h1>
 							{showcase ? (
 								<>
-									<span className="text-border-strong/60 text-xl font-light">/</span>
+									<span className="text-border-strong/60 text-xl font-light">
+										/
+									</span>
 									{showcase}
 								</>
 							) : null}
@@ -76,7 +78,9 @@ export function WallboardShell({
 								<div
 									className={cn(
 										"whitespace-nowrap text-base font-medium",
-										stale ? "text-amber-600 dark:text-amber-300" : "text-foreground",
+										stale
+											? "text-amber-600 dark:text-amber-300"
+											: "text-foreground",
 									)}
 								>
 									{refreshedDate
@@ -157,7 +161,7 @@ function TickerTape({ items }: { items: string[] }) {
 		const ro = new ResizeObserver(recompute);
 		ro.observe(track);
 		return () => ro.disconnect();
-	}, [normalized.join("|")]);
+	}, []);
 
 	if (normalized.length === 0) return null;
 

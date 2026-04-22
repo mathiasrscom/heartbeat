@@ -50,7 +50,7 @@ describe("support policy classification", () => {
 		expect(classified.servicePolicyName).toBe("Separate workflow");
 	});
 
-	it("maps Aftaleportalen into the CVR exception lane", () => {
+	it("maps Aftaleportalen into its own exception lane", () => {
 		const classified = classifySupportCase({
 			title: "Customer needs help",
 			description: null,
@@ -63,7 +63,7 @@ describe("support policy classification", () => {
 			},
 		});
 
-		expect(classified.productName).toBe("Pension Broker");
+		expect(classified.productName).toBe("Aftaleportalen");
 		expect(classified.serviceBucket).toBe("exception");
 		expect(classified.servicePolicyName).toBe("Separate workflow");
 	});
@@ -136,7 +136,7 @@ describe("support policy classification", () => {
 		});
 	});
 
-	it("keeps filtered products visible for both tickets and conversations", () => {
+	it("keeps supported product views visible for regular tickets and conversations", () => {
 		expect(
 			resolveSupportCaseProductViews({
 				productName: "Addo Sign",
@@ -146,20 +146,8 @@ describe("support policy classification", () => {
 						ticket_type: "Tickets",
 					},
 				},
-			}),
-		).toEqual(["Addo Sign"]);
-
-		expect(
-			resolveSupportCaseProductViews({
-				productName: "Addo Sign",
-				assigneeName: "Fin",
-				rawData: {
-					ticket: {
-						ticket_type: "Developer",
-					},
-				},
-			}),
-		).toEqual(["Addo Sign"]);
+				}),
+			).toEqual(["Addo Sign"]);
 
 		expect(
 			resolveSupportCaseProductViews({
@@ -170,5 +158,55 @@ describe("support policy classification", () => {
 				},
 			}),
 		).toEqual(["Addo Sign"]);
+	});
+
+	it("hides Addo Sign cases excluded by the Intercom product view", () => {
+		expect(
+			resolveSupportCaseProductViews({
+				productName: "Addo Sign",
+				assigneeName: "Fin",
+				rawData: {
+					ticket: {
+						ticket_type: "Developer",
+					},
+				},
+			}),
+		).toEqual([]);
+
+		expect(
+			resolveSupportCaseProductViews({
+				productName: "Addo Sign",
+				assigneeName: null,
+				rawData: {
+					ticket: {
+						ticket_type: "Feature Request",
+					},
+				},
+			}),
+		).toEqual([]);
+
+		expect(
+			resolveSupportCaseProductViews({
+				productName: "Addo Sign",
+				assigneeName: "Jason Narcisse",
+				rawData: {
+					team_assignee: {
+						name: "Developer",
+					},
+				},
+			}),
+		).toEqual([]);
+	});
+
+	it("does not apply Addo Sign teammate exclusions to other products", () => {
+		expect(
+			resolveSupportCaseProductViews({
+				productName: "Pension Broker",
+				assigneeName: "Fin",
+				rawData: {
+					conversation: {},
+				},
+			}),
+		).toEqual(["Pension Broker"]);
 	});
 });

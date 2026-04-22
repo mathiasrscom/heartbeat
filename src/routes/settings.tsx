@@ -31,6 +31,8 @@ import {
 import type { SupportPerformanceTargets } from "@/lib/support-health/targets";
 import { cn } from "@/lib/utils";
 
+type TickerProvider = "ollama" | "codex";
+
 export const Route = createFileRoute("/settings")({
 	head: () => ({
 		meta: [
@@ -57,6 +59,9 @@ function SettingsPage() {
 	const [state, setState] = useState(initialState);
 	const [accessToken, setAccessToken] = useState("");
 	const [appUrl, setAppUrl] = useState(initialState.appUrl ?? "");
+	const [tickerLlmProvider, setTickerLlmProvider] = useState<TickerProvider>(
+		initialState.tickerLlmProvider === "codex" ? "codex" : "ollama",
+	);
 	const [tickerLlmModel, setTickerLlmModel] = useState(
 		initialState.tickerLlmModel ?? "",
 	);
@@ -97,9 +102,26 @@ function SettingsPage() {
 	const [isSavingWallboard, setIsSavingWallboard] = useState(false);
 	const tickerLookupRequestRef = useRef(0);
 	const supportTargetFieldId = useId();
-
-	const canSaveTickerLlm =
-		tickerLlmBaseUrl.trim().length > 0 && tickerLlmModel.trim().length > 0;
+	const isOllamaProvider = tickerLlmProvider === "ollama";
+	const showTickerModelSelect =
+		isOllamaProvider &&
+		availableTickerModels.length > 0 &&
+		!isCustomTickerModelMode;
+	const tickerStatusText =
+		state.tickerLlmEnabled && state.tickerLlmProvider === "codex"
+			? "Active: Codex CLI • signed-in CLI default model"
+			: state.tickerLlmEnabled && state.tickerLlmModel
+				? `Active: Ollama • ${state.tickerLlmModel}`
+				: isOllamaProvider
+					? "Ollama stays off until both base URL and model are saved."
+					: "Codex CLI always uses the signed-in CLI default model.";
+	const hasDraftTickerLlmSettings =
+		tickerLlmBaseUrl.trim().length > 0 ||
+		tickerLlmModel.trim().length > 0 ||
+		tickerLlmProvider === "codex";
+	const canSaveTickerLlm = isOllamaProvider
+		? tickerLlmModel.trim().length > 0 && tickerLlmBaseUrl.trim().length > 0
+		: true;
 
 	useEffect(() => {
 		if (!state.isSyncRunning) {
@@ -119,6 +141,15 @@ function SettingsPage() {
 	}, [refreshIntercomState, state.isSyncRunning]);
 
 	useEffect(() => {
+		if (!isOllamaProvider) {
+			tickerLookupRequestRef.current += 1;
+			setIsLoadingTickerModels(false);
+			setTickerModelsError(null);
+			setAvailableTickerModels([]);
+			setResolvedTickerBaseUrl(null);
+			return;
+		}
+
 		const rawBaseUrl = tickerLlmBaseUrl.trim();
 
 		if (!rawBaseUrl) {
@@ -171,7 +202,12 @@ function SettingsPage() {
 		return () => {
 			window.clearTimeout(timeoutId);
 		};
-	}, [isCustomTickerModelMode, listTickerModels, tickerLlmBaseUrl]);
+	}, [
+		isCustomTickerModelMode,
+		isOllamaProvider,
+		listTickerModels,
+		tickerLlmBaseUrl,
+	]);
 
 	async function handleConnect(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
@@ -235,12 +271,16 @@ function SettingsPage() {
 		try {
 			const result = await saveTickerLlmSettings({
 				data: {
-					model: tickerLlmModel,
+					provider: tickerLlmProvider,
+					model: isOllamaProvider ? tickerLlmModel : "",
 					baseUrl: tickerLlmBaseUrl,
 				},
 			});
 
 			setState(result.state);
+			setTickerLlmProvider(
+				result.state.tickerLlmProvider === "codex" ? "codex" : "ollama",
+			);
 			setTickerLlmModel(result.state.tickerLlmModel ?? "");
 			setTickerLlmBaseUrl(result.state.tickerLlmBaseUrl ?? "");
 			setResolvedTickerBaseUrl(result.state.tickerLlmBaseUrl ?? null);
@@ -264,11 +304,15 @@ function SettingsPage() {
 		try {
 			const result = await saveTickerLlmSettings({
 				data: {
+					provider: null,
 					model: "",
 					baseUrl: "",
 				},
 			});
 			setState(result.state);
+			setTickerLlmProvider(
+				result.state.tickerLlmProvider === "codex" ? "codex" : "ollama",
+			);
 			setTickerLlmModel("");
 			setTickerLlmBaseUrl("");
 			setIsCustomTickerModelMode(false);
@@ -630,25 +674,51 @@ function SettingsPage() {
 							<div className="mb-2 flex items-center justify-between gap-3">
 								<div>
 									<div className="text-xs font-medium text-foreground">
-										Ollama settings
+										AI rewrite settings
 									</div>
 									<div className="text-[10px] text-muted-foreground">
-										Add a base URL and we auto-load local models. Saving enables
-										generated wallboard messages.
+										Choose whether wallboard copy is rewritten through local
+										Ollama HTTP or a direct local `codex` CLI process.
 									</div>
 								</div>
 							</div>
 
-							<div className="grid gap-2 sm:grid-cols-2">
-								<Input
-									type="url"
-									placeholder="http://127.0.0.1:11434"
-									className="h-7 text-xs"
-									value={tickerLlmBaseUrl}
-									onChange={(event) => setTickerLlmBaseUrl(event.target.value)}
-								/>
-								{availableTickerModels.length > 0 &&
-								!isCustomTickerModelMode ? (
+							<div className="grid gap-2 sm:grid-cols-3">
+								<select
+									className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
+									value={tickerLlmProvider}
+									onChange={(event) => {
+										const nextProvider =
+											event.target.value === "codex" ? "codex" : "ollama";
+										setTickerLlmProvider(nextProvider);
+										setFeedback(null);
+										setTickerModelsError(null);
+										setIsCustomTickerModelMode(false);
+										if (nextProvider === "codex") {
+											setTickerLlmModel("");
+										}
+									}}
+								>
+									<option value="ollama">Ollama</option>
+									<option value="codex">Codex CLI</option>
+								</select>
+								{isOllamaProvider ? (
+									<Input
+										type="url"
+										placeholder="http://127.0.0.1:11434"
+										className="h-7 text-xs"
+										value={tickerLlmBaseUrl}
+										onChange={(event) =>
+											setTickerLlmBaseUrl(event.target.value)
+										}
+									/>
+								) : (
+									<div className="rounded-md border border-dashed bg-background/70 px-3 py-2 text-[10px] text-muted-foreground sm:col-span-2">
+										Codex CLI always runs `codex exec` with your signed-in CLI
+										default. There is no model setting here.
+									</div>
+								)}
+								{isOllamaProvider && showTickerModelSelect ? (
 									<select
 										className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
 										value={tickerLlmModel}
@@ -669,7 +739,7 @@ function SettingsPage() {
 										))}
 										<option value="__custom__">Custom model…</option>
 									</select>
-								) : (
+								) : isOllamaProvider ? (
 									<Input
 										type="text"
 										placeholder="llama3.1:8b"
@@ -677,23 +747,27 @@ function SettingsPage() {
 										value={tickerLlmModel}
 										onChange={(event) => setTickerLlmModel(event.target.value)}
 									/>
-								)}
+								) : null}
 							</div>
 							<div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
 								<div>
-									{isLoadingTickerModels
-										? "Querying Ollama models..."
-										: tickerModelsError
-											? tickerModelsError
-											: availableTickerModels.length > 0
-												? `${availableTickerModels.length} model${availableTickerModels.length === 1 ? "" : "s"} found at ${
-														resolvedTickerBaseUrl ?? tickerLlmBaseUrl
-													}`
-												: tickerLlmBaseUrl.trim()
-													? "No models found at this URL yet."
-													: "Fallback mode: deterministic ticker messages"}
+									{isOllamaProvider
+										? isLoadingTickerModels
+											? "Querying Ollama models..."
+											: tickerModelsError
+												? tickerModelsError
+												: availableTickerModels.length > 0
+													? `${availableTickerModels.length} model${
+															availableTickerModels.length === 1 ? "" : "s"
+														} found at ${
+															resolvedTickerBaseUrl ?? tickerLlmBaseUrl
+														}`
+													: tickerLlmBaseUrl.trim()
+														? "No Ollama models found at this URL yet."
+														: "Fallback mode: deterministic ticker messages"
+										: "Codex CLI uses the local binary and your existing `codex login` session."}
 								</div>
-								{availableTickerModels.length > 0 ? (
+								{isOllamaProvider && availableTickerModels.length > 0 ? (
 									<Button
 										size="sm"
 										type="button"
@@ -716,11 +790,16 @@ function SettingsPage() {
 									</Button>
 								) : null}
 							</div>
+							{!isOllamaProvider ? (
+								<p className="mt-2 text-[10px] text-muted-foreground">
+									If you run Heartbeat in Docker, the worker container needs the
+									`codex` binary and auth in that same container. A host-only
+									`codex login` will not be visible inside the container.
+								</p>
+							) : null}
 							<div className="mt-2 flex items-center justify-between gap-2">
 								<div className="text-[10px] text-muted-foreground">
-									{state.tickerLlmEnabled && state.tickerLlmModel
-										? `Active: ${state.tickerLlmProvider ?? "ollama"} • ${state.tickerLlmModel}`
-										: "Ollama disabled until both URL and model are saved"}
+									{tickerStatusText}
 								</div>
 								<div className="flex items-center gap-2">
 									<Button
@@ -730,9 +809,7 @@ function SettingsPage() {
 										className="h-7 text-xs px-3"
 										disabled={
 											isSavingTickerLlm ||
-											(!state.tickerLlmEnabled &&
-												!tickerLlmBaseUrl &&
-												!tickerLlmModel)
+											(!state.tickerLlmEnabled && !hasDraftTickerLlmSettings)
 										}
 										onClick={handleClearTickerLlm}
 									>
@@ -747,7 +824,9 @@ function SettingsPage() {
 										{isSavingTickerLlm ? (
 											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
 										) : null}
-										Save Ollama settings
+										{isOllamaProvider
+											? "Save Ollama settings"
+											: "Use Codex CLI default"}
 									</Button>
 								</div>
 							</div>

@@ -5,7 +5,7 @@ import {
 } from "./targets";
 
 describe("support targets", () => {
-	it("canonicalizes Aftaleportalen product targets to Pension Broker", () => {
+	it("keeps Aftaleportalen targets separate from Pension Broker", () => {
 		expect(
 			normalizeSupportTargetsConfig({
 				productTargets: {
@@ -17,7 +17,7 @@ describe("support targets", () => {
 			}),
 		).toMatchObject({
 			productTargets: {
-				"Pension Broker": {
+				Aftaleportalen: {
 					slaTargetPercent: 92,
 					satisfactionTargetPercent: 88,
 				},
@@ -25,7 +25,7 @@ describe("support targets", () => {
 		});
 	});
 
-	it("resolves Pension Broker targets when Aftaleportalen is requested", () => {
+	it("still resolves Pension Broker targets when CVR is requested", () => {
 		const config = normalizeSupportTargetsConfig({
 			productTargets: {
 				"Pension Broker": {
@@ -35,7 +35,7 @@ describe("support targets", () => {
 			},
 		});
 
-		expect(resolveSupportTargets(config, "Aftaleportalen")).toEqual({
+		expect(resolveSupportTargets(config, "CVR")).toEqual({
 			slaTargetPercent: 94,
 			satisfactionTargetPercent: 91,
 		});

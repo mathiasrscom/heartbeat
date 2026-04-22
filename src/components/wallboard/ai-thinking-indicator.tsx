@@ -24,12 +24,12 @@ const THINKING_PHRASES = [
 ];
 
 function getRandomPhrase(previous?: string) {
-	let next = previous;
-	while (next === previous) {
-		next =
-			THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
-	}
-	return next!;
+	const candidates = THINKING_PHRASES.filter((phrase) => phrase !== previous);
+	return (
+		candidates[Math.floor(Math.random() * candidates.length)] ??
+		THINKING_PHRASES[0] ??
+		""
+	);
 }
 
 let stepCounter = 0;

@@ -26,9 +26,8 @@ export function PaginatedContent({
 	const [page, setPage] = useState(0);
 	const [paused, setPaused] = useState(false);
 	const sectionMountRef = useContext(SectionPageIndicatorMountContext);
-	const [sectionMountNode, setSectionMountNode] = useState<HTMLDivElement | null>(
-		null,
-	);
+	const [sectionMountNode, setSectionMountNode] =
+		useState<HTMLDivElement | null>(null);
 	const recalcLockRef = useRef(false);
 
 	// Track the section-header mount element so the portal re-renders if the
@@ -224,16 +223,15 @@ export function PaginatedContent({
 		pageOffsets.length > 1 ? (
 			<div
 				className="flex items-center gap-1"
+				role="img"
 				aria-label={`Page ${page + 1} of ${pageOffsets.length}`}
 			>
-				{pageOffsets.map((_, i) => (
+				{pageOffsets.map((pageOffset, i) => (
 					<span
-						key={i}
+						key={pageOffset}
 						className={cn(
 							"h-1.5 rounded-full transition-colors",
-							i === page
-								? "w-5 bg-foreground"
-								: "w-3 bg-muted-foreground/30",
+							i === page ? "w-5 bg-foreground" : "w-3 bg-muted-foreground/30",
 						)}
 					/>
 				))}
@@ -241,8 +239,9 @@ export function PaginatedContent({
 		) : null;
 
 	return (
-		<div
+		<section
 			ref={outerRef}
+			aria-label="Paginated content"
 			className={cn("relative h-full min-h-0 overflow-hidden", className)}
 			onMouseEnter={() => setPaused(true)}
 			onMouseLeave={() => setPaused(false)}
@@ -261,18 +260,18 @@ export function PaginatedContent({
 				{children}
 			</div>
 
-			{pageIndicator && sectionMountNode
-				? createPortal(pageIndicator, sectionMountNode)
-				: pageIndicator ? (
-					<div
-						className={cn(
-							panelSurfaceClassName,
-							"absolute bottom-2 right-2 z-10 bg-background/95 px-2 py-0.5 backdrop-blur-sm",
-						)}
-					>
-						{pageIndicator}
-					</div>
-				) : null}
-		</div>
+			{pageIndicator && sectionMountNode ? (
+				createPortal(pageIndicator, sectionMountNode)
+			) : pageIndicator ? (
+				<div
+					className={cn(
+						panelSurfaceClassName,
+						"absolute bottom-2 right-2 z-10 bg-background/95 px-2 py-0.5 backdrop-blur-sm",
+					)}
+				>
+					{pageIndicator}
+				</div>
+			) : null}
+		</section>
 	);
 }

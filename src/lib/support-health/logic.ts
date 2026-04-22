@@ -62,6 +62,7 @@ interface ActionableStateInput {
 type LiveWallboardPayload = Omit<
 	LiveWallboardData,
 	| "workflowCounts"
+	| "productMetrics"
 	| "defaultTargets"
 	| "selectedTargets"
 	| "productTargets"
@@ -741,22 +742,6 @@ function formatMomentProductName(productName: string) {
 	return productName === "Unmapped" ? "the support queue" : productName;
 }
 
-function hashSeed(value: string) {
-	let hash = 2166136261;
-	for (let index = 0; index < value.length; index += 1) {
-		hash ^= value.charCodeAt(index);
-		hash = Math.imul(hash, 16777619);
-	}
-	return hash >>> 0;
-}
-
-function pickBySeed<T>(seed: string, values: T[]) {
-	if (values.length === 0) {
-		throw new Error("pickBySeed requires at least one option");
-	}
-	return values[hashSeed(seed) % values.length] as T;
-}
-
 function inferCaseTopic(item: SupportCaseRecord) {
 	const source =
 		`${item.title ?? ""} ${item.tags.join(" ")} ${item.teamName} ${item.productName}`.toLowerCase();
@@ -799,6 +784,105 @@ function buildPeopleMoments(
 		messages.push(normalized);
 	};
 
+	const actionable = [...cases]
+		.filter(isActionableCase)
+		.sort((left, right) => compareLookupCases(left, right, now));
+	const pressureByProduct = new Map<
+		string,
+		{
+			productLabel: string;
+			breachedCount: number;
+			dueSoonCount: number;
+			unassignedCount: number;
+			breachedOwner: string | null;
+			dueSoonOwner: string | null;
+		}
+	>();
+
+	for (const item of actionable) {
+		if (!item.isBreached && !item.isDueSoon && item.hasAssignment) continue;
+
+		const productLabel = formatMomentProductName(item.productName);
+		const current = pressureByProduct.get(productLabel) ?? {
+			productLabel,
+			breachedCount: 0,
+			dueSoonCount: 0,
+			unassignedCount: 0,
+			breachedOwner: null,
+			dueSoonOwner: null,
+		};
+
+		if (item.isBreached) {
+			current.breachedCount += 1;
+			if (!current.breachedOwner && item.assigneeName?.trim()) {
+				current.breachedOwner = item.assigneeName.trim();
+			}
+		} else if (item.isDueSoon) {
+			current.dueSoonCount += 1;
+			if (!current.dueSoonOwner && item.assigneeName?.trim()) {
+				current.dueSoonOwner = item.assigneeName.trim();
+			}
+		}
+
+		if (!item.hasAssignment) {
+			current.unassignedCount += 1;
+		}
+
+		pressureByProduct.set(productLabel, current);
+	}
+
+	for (const product of [...pressureByProduct.values()]
+		.sort((left, right) => {
+			const leftScore =
+				left.breachedCount * 100 +
+				left.dueSoonCount * 30 +
+				left.unassignedCount * 20;
+			const rightScore =
+				right.breachedCount * 100 +
+				right.dueSoonCount * 30 +
+				right.unassignedCount * 20;
+			return rightScore - leftScore;
+		})
+		.slice(0, 3)) {
+		if (product.breachedCount > 0) {
+			const ownerSuffix = product.breachedOwner
+				? ` ${product.breachedOwner} owns one right now.`
+				: "";
+			if (product.unassignedCount > 0) {
+				push(
+					`${product.productLabel}: ${asCount(product.breachedCount, "over-SLA case")} need attention; ${asCount(product.unassignedCount, "case")} are still unassigned.${ownerSuffix}`,
+				);
+				continue;
+			}
+
+			push(
+				`${product.productLabel}: ${asCount(product.breachedCount, "over-SLA case")} need attention.${ownerSuffix}`,
+			);
+			continue;
+		}
+
+		if (product.dueSoonCount > 0) {
+			const ownerSuffix = product.dueSoonOwner
+				? ` ${product.dueSoonOwner} owns one of them.`
+				: "";
+			if (product.unassignedCount > 0) {
+				push(
+					`${product.productLabel}: ${asCount(product.dueSoonCount, "case")} are due within 60 minutes; ${asCount(product.unassignedCount, "case")} are still unassigned.${ownerSuffix}`,
+				);
+				continue;
+			}
+
+			push(
+				`${product.productLabel}: ${asCount(product.dueSoonCount, "case")} are due within 60 minutes.${ownerSuffix}`,
+			);
+			continue;
+		}
+
+		push(
+			`${product.productLabel}: ${asCount(product.unassignedCount, "case")} are unassigned. Assign owners now.`,
+		);
+	}
+
 	const recentRated = [...cases]
 		.filter((item) => {
 			if (item.subtype !== "conversation") return false;
@@ -815,100 +899,79 @@ function buildPeopleMoments(
 			return rightReference.getTime() - leftReference.getTime();
 		});
 
-	for (const item of recentRated.slice(0, 4)) {
+	const recognitionByAssignee = new Map<
+		string,
+		{
+			assignee: string;
+			productLabel: string;
+			bestRating: number;
+			positiveCount: number;
+			latestResolvedAt: Date;
+			topic: string | null;
+		}
+	>();
+
+	for (const item of recentRated) {
 		const assignee = item.assigneeName?.trim();
 		if (!assignee) continue;
+
 		const rating = toFivePointRating(item.cxScore ?? 0);
-		const productLabel = formatMomentProductName(item.productName);
-		const positiveTemplate = pickBySeed(`${item.externalId}:cx-positive`, [
-			`${assignee} turned another ${productLabel} conversation into a ${rating}/5 CX win.`,
-			`Spotlight on ${assignee}: ${rating}/5 CX delivered in ${productLabel}.`,
-			`Strong AI CX read in ${productLabel}: ${assignee} landed a ${rating}/5 result.`,
-		]);
-		const mixedTemplate = pickBySeed(`${item.externalId}:cx-mixed`, [
-			`${assignee} received ${rating}/5 CX in ${productLabel}. Keep the feedback loop moving.`,
-			`${assignee} got a ${rating}/5 CX signal in ${productLabel}. Worth a quick review.`,
-		]);
-		const lowTemplate = pickBySeed(`${item.externalId}:cx-low`, [
-			`${assignee} received ${rating}/5 CX in ${productLabel}. Follow-up is recommended.`,
-			`Recovery signal for ${assignee}: ${rating}/5 CX in ${productLabel}.`,
-		]);
+		if (rating < 4) continue;
 
-		if (rating >= 4) {
-			push(positiveTemplate);
-			const topic = inferCaseTopic(item);
-			if (topic) {
-				const topicTemplate = pickBySeed(`${item.externalId}:${topic}:topic`, [
-					`${assignee} just helped a customer with ${topic} in ${productLabel}.`,
-					`${assignee} moved a ${topic} case forward in ${productLabel}.`,
-					`${assignee} supported a customer on ${topic} in ${productLabel}.`,
-				]);
-				push(topicTemplate);
+		const productLabel = formatMomentProductName(item.productName);
+		const key = `${assignee.toLowerCase()}::${productLabel.toLowerCase()}`;
+		const latestResolvedAt = item.resolvedAt ?? item.updatedAt;
+		const topic = inferCaseTopic(item);
+		const current = recognitionByAssignee.get(key);
+
+		if (!current) {
+			recognitionByAssignee.set(key, {
+				assignee,
+				productLabel,
+				bestRating: rating,
+				positiveCount: 1,
+				latestResolvedAt,
+				topic,
+			});
+			continue;
+		}
+
+		current.bestRating = Math.max(current.bestRating, rating);
+		current.positiveCount += 1;
+		if (latestResolvedAt > current.latestResolvedAt) {
+			current.latestResolvedAt = latestResolvedAt;
+		}
+		if (!current.topic && topic) {
+			current.topic = topic;
+		}
+	}
+
+	for (const recognition of [...recognitionByAssignee.values()]
+		.sort((left, right) => {
+			if (right.bestRating !== left.bestRating) {
+				return right.bestRating - left.bestRating;
 			}
+			if (right.positiveCount !== left.positiveCount) {
+				return right.positiveCount - left.positiveCount;
+			}
+			return right.latestResolvedAt.getTime() - left.latestResolvedAt.getTime();
+		})
+		.slice(0, 4)) {
+		const topicSuffix = recognition.topic ? ` on ${recognition.topic}` : "";
+
+		if (recognition.positiveCount > 1) {
+			push(
+				`${recognition.assignee} recorded ${recognition.positiveCount} recent strong CX results in ${recognition.productLabel}${topicSuffix}.`,
+			);
 			continue;
 		}
 
-		if (rating <= 2) {
-			push(lowTemplate);
-			continue;
-		}
-
-		push(mixedTemplate);
-	}
-
-	const urgentAssigned = [...cases]
-		.filter(
-			(item) =>
-				isActionableCase(item) &&
-				item.hasAssignment &&
-				!!item.assigneeName &&
-				(item.isBreached || item.isDueSoon),
-		)
-		.sort((left, right) => compareLookupCases(left, right, now));
-
-	for (const item of urgentAssigned.slice(0, 3)) {
-		const assignee = item.assigneeName?.trim();
-		if (!assignee) continue;
-		const productLabel = formatMomentProductName(item.productName);
-		if (item.isBreached) {
-			const urgentTemplate = pickBySeed(`${item.externalId}:urgent`, [
-				`Action now: ${assignee} owns an over-SLA case in ${productLabel}.`,
-				`Priority lane: ${assignee} has an over-SLA reply pending in ${productLabel}.`,
-				`Escalation focus: ${assignee} should pick up an over-SLA case in ${productLabel}.`,
-			]);
-			push(urgentTemplate);
-			continue;
-		}
-		const dueSoonTemplate = pickBySeed(`${item.externalId}:due-soon`, [
-			`Heads-up for ${assignee}: one case is due within 60 minutes in ${productLabel}.`,
-			`${assignee} has a near-deadline case in ${productLabel} due inside the hour.`,
-			`${productLabel}: ${assignee} owns a case approaching SLA in the next 60 minutes.`,
-		]);
-		push(dueSoonTemplate);
-	}
-
-	const unassignedByProduct = new Map<string, number>();
-	for (const item of cases) {
-		if (!isActionableCase(item) || item.hasAssignment) continue;
-		const key = formatMomentProductName(item.productName);
-		unassignedByProduct.set(key, (unassignedByProduct.get(key) ?? 0) + 1);
-	}
-
-	for (const [productLabel, count] of [...unassignedByProduct.entries()]
-		.sort((left, right) => right[1] - left[1])
-		.slice(0, 3)) {
-		const unassignedTemplate = pickBySeed(
-			`${productLabel}:${count}:unassigned`,
-			[
-				`Team assist needed: ${productLabel} has ${asCount(count, "unassigned case")} waiting for an owner.`,
-				`${productLabel} needs assignment help: ${asCount(count, "case")} are unassigned.`,
-				`Ownership gap in ${productLabel}: ${asCount(count, "case")} still unassigned.`,
-			],
+		push(
+			`${recognition.assignee} delivered ${recognition.bestRating}/5 CX in ${recognition.productLabel}${topicSuffix}.`,
 		);
-		push(unassignedTemplate);
 	}
 
-	return messages.slice(0, 10);
+	return messages.slice(0, 8);
 }
 
 export function buildLookupCases(
@@ -1398,6 +1461,13 @@ export function buildLiveWallboardData(
 	lastSyncAt: Date | null,
 	now: Date,
 ): LiveWallboardPayload {
+	const actionableLookupPoolLimit = Math.min(
+		100,
+		Math.max(
+			20,
+			cases.filter((item) => isActionableCase(item)).length,
+		),
+	);
 	const snapshot = buildSupportHealthSnapshot(cases, lastSyncAt, now);
 	const queues = buildQueueHealth(cases, now, "headline");
 	const exceptionQueues = buildQueueHealth(cases, now, "exception");
@@ -1419,7 +1489,7 @@ export function buildLiveWallboardData(
 		unknownQueues,
 		unknownSignals: buildUnknownSignals(cases),
 		actionItems: buildCoverageActionItems(mappedQueues),
-		lookupCases: buildLookupCases(cases, now),
+		lookupCases: buildLookupCases(cases, now, actionableLookupPoolLimit),
 		refreshedAt: now.toISOString(),
 	};
 }
@@ -1440,10 +1510,7 @@ export function buildNpsSummary(
 	period: ResolvedSupportPeriod,
 ): NpsPeriodSummary {
 	const current = filterNpsByPeriod(records, period.from, period.to);
-	const windowMs = Math.max(
-		1,
-		period.to.getTime() - period.from.getTime(),
-	);
+	const windowMs = Math.max(1, period.to.getTime() - period.from.getTime());
 	const previousStart = new Date(period.from.getTime() - windowMs);
 	const previousEnd = new Date(period.from.getTime() - 1);
 	const previous = filterNpsByPeriod(records, previousStart, previousEnd);
@@ -1486,12 +1553,20 @@ export function buildNpsSeries(
 	if (current.length === 0) {
 		return [];
 	}
-	const days = eachDayOfInterval({ start: startOfDay(from), end: endOfDay(to) });
+	const days = eachDayOfInterval({
+		start: startOfDay(from),
+		end: endOfDay(to),
+	});
 	// Downsample to weekly buckets for long ranges. Also align daily label
 	// formatting with buildCxSeries.
 	const useWeekly = days.length > 45;
 	const dailyLabelFormat = days.length > 14 ? "d MMM" : "EEE d";
-	const buckets: Array<{ label: string; start: Date; end: Date; scores: number[] }> = [];
+	const buckets: Array<{
+		label: string;
+		start: Date;
+		end: Date;
+		scores: number[];
+	}> = [];
 
 	if (useWeekly) {
 		let cursor = startOfDay(from);
@@ -1521,11 +1596,9 @@ export function buildNpsSeries(
 	}
 
 	for (const record of current) {
-		if (!record.ratedAt) continue;
-		const bucket = buckets.find(
-			(b) =>
-				record.ratedAt! >= b.start && record.ratedAt! <= b.end,
-		);
+		const ratedAt = record.ratedAt;
+		if (!ratedAt) continue;
+		const bucket = buckets.find((b) => ratedAt >= b.start && ratedAt <= b.end);
 		if (bucket) bucket.scores.push(record.score);
 	}
 
@@ -1636,7 +1709,14 @@ export function buildTrendsTickerItems(input: {
 	topContributors: TopContributorsSummary;
 	productHealth: ProductHealthRow[];
 }): string[] {
-	const { period, cases, npsSummary, npsThemes, topContributors, productHealth } = input;
+	const {
+		period,
+		cases,
+		npsSummary,
+		npsThemes,
+		topContributors,
+		productHealth,
+	} = input;
 	const label = period.range.label;
 	const lower = label.toLowerCase();
 
@@ -1644,7 +1724,10 @@ export function buildTrendsTickerItems(input: {
 	// conversations don't leak into the current period via sync touches.
 	const windowCases = cases.filter((c) => {
 		if (c.resolvedAt === null) return false;
-		return isWithinInterval(c.resolvedAt, { start: period.from, end: period.to });
+		return isWithinInterval(c.resolvedAt, {
+			start: period.from,
+			end: period.to,
+		});
 	});
 	const resolved = windowCases.filter((c) => c.actionableState === "resolved");
 	const ratedPositive = resolved.filter((c) => {
@@ -1656,7 +1739,9 @@ export function buildTrendsTickerItems(input: {
 
 	items.push(
 		`${label}: ${resolved.length} case${resolved.length === 1 ? "" : "s"} resolved · CX ${
-			cxAgg.satisfactionScorePercent === null ? "—" : `${cxAgg.satisfactionScorePercent}%`
+			cxAgg.satisfactionScorePercent === null
+				? "—"
+				: `${cxAgg.satisfactionScorePercent}%`
 		} · NPS ${formatNpsScore(npsSummary.score)} from ${npsSummary.responseCount} response${npsSummary.responseCount === 1 ? "" : "s"}`,
 	);
 

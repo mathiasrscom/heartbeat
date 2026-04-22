@@ -22,6 +22,7 @@ RUN pnpm build
 FROM node:22-slim AS runner
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
+RUN npm install -g @openai/codex
 
 WORKDIR /app
 

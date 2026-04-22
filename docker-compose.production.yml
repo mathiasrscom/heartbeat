@@ -4,9 +4,11 @@
 ##   IMAGE_NAME=<dockerhub-user>/heartbeat IMAGE_TAG=pi docker compose -f docker-compose.production.yml pull
 ##   IMAGE_NAME=<dockerhub-user>/heartbeat IMAGE_TAG=pi docker compose -f docker-compose.production.yml up -d
 ##
-## Ollama runs natively on the host (not in Docker) for direct ARM64 access.
-## Install: curl -fsSL https://ollama.com/install.sh | sh
-## Then:    ollama pull qwen2.5:1.5b
+## Optional AI providers:
+## - Ollama can run natively on the host for direct ARM64 access.
+##   Install: curl -fsSL https://ollama.com/install.sh | sh
+##   Then:    ollama pull qwen2.5:1.5b
+## - Codex CLI can run directly inside the worker container after `codex login`.
 
 services:
   # ── PostgreSQL with pgvector ──────────────────────────────────────────
@@ -14,6 +16,7 @@ services:
     image: pgvector/pgvector:pg17
     container_name: heartbeat-postgres
     restart: unless-stopped
+    shm_size: 256mb
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-heartbeat}
       POSTGRES_USER: ${POSTGRES_USER:-heartbeat}
@@ -78,7 +81,7 @@ services:
         limits:
           memory: 512M
 
-  # ── Background worker (Intercom sync + Ollama ticker rewrite) ────────
+  # ── Background worker (Intercom sync + AI wallboard rewrite) ─────────
   worker:
     image: ${IMAGE_NAME:-heartbeat}:${IMAGE_TAG:-latest}
     build:

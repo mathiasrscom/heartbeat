@@ -403,6 +403,123 @@ describe("support health logic", () => {
 		expect(ticker).toContain("unassigned");
 	});
 
+	it("summarizes ticker moments into actionable pressure and one recognition line per teammate", () => {
+		const cases = [
+			makeCase({
+				id: "kasper-mixed",
+				productName: "Addo Sign",
+				title: "Signing follow-up",
+				tags: ["signing"],
+				status: "closed",
+				actionableState: "resolved",
+				assigneeName: "Kasper Christensen",
+				cxScore: 6,
+				resolvedAt: new Date("2026-03-31T09:00:00.000Z"),
+				updatedAt: new Date("2026-03-31T09:00:00.000Z"),
+			}),
+			makeCase({
+				id: "kasper-positive",
+				productName: "Addo Sign",
+				title: "Signing case moved forward",
+				tags: ["signing"],
+				status: "closed",
+				actionableState: "resolved",
+				assigneeName: "Kasper Christensen",
+				cxScore: 8,
+				resolvedAt: new Date("2026-03-31T10:00:00.000Z"),
+				updatedAt: new Date("2026-03-31T10:00:00.000Z"),
+			}),
+			makeCase({
+				id: "fin-five",
+				productName: "Addo Sign",
+				title: "Signing completed",
+				tags: ["signing"],
+				status: "closed",
+				actionableState: "resolved",
+				assigneeName: "Fin",
+				cxScore: 10,
+				resolvedAt: new Date("2026-03-31T11:00:00.000Z"),
+				updatedAt: new Date("2026-03-31T11:00:00.000Z"),
+			}),
+			makeCase({
+				id: "fin-four",
+				productName: "Addo Sign",
+				title: "Signing progress update",
+				tags: ["signing"],
+				status: "closed",
+				actionableState: "resolved",
+				assigneeName: "Fin",
+				cxScore: 8,
+				resolvedAt: new Date("2026-03-31T10:30:00.000Z"),
+				updatedAt: new Date("2026-03-31T10:30:00.000Z"),
+			}),
+			makeCase({
+				id: "ellinor-breached",
+				productName: "Addo Sign",
+				assigneeName: "Ellinor",
+				actionableState: "breached",
+				isBreached: true,
+				hasAssignment: true,
+			}),
+			makeCase({
+				id: "unassigned-a",
+				productName: "Addo Sign",
+				assigneeName: null,
+				hasAssignment: false,
+				actionableState: "unassigned",
+			}),
+			makeCase({
+				id: "unassigned-b",
+				productName: "Addo Sign",
+				assigneeName: null,
+				hasAssignment: false,
+				actionableState: "unassigned",
+			}),
+			makeCase({
+				id: "unassigned-c",
+				productName: "Addo Sign",
+				assigneeName: null,
+				hasAssignment: false,
+				actionableState: "unassigned",
+			}),
+		];
+
+		const live = buildLiveWallboardData(
+			cases,
+			new Date("2026-03-31T11:57:00.000Z"),
+			now,
+		);
+
+		expect(
+			live.peopleMoments.some(
+				(item) =>
+					item.includes("Addo Sign") &&
+					item.includes("over-SLA") &&
+					item.includes("unassigned") &&
+					item.includes("Ellinor"),
+			),
+		).toBe(true);
+		expect(
+			live.peopleMoments.some(
+				(item) => item.includes("Kasper Christensen") && item.includes("4/5"),
+			),
+		).toBe(true);
+		expect(
+			live.peopleMoments.some(
+				(item) => item.includes("Fin") && item.includes("2 recent strong CX results"),
+			),
+		).toBe(true);
+		expect(live.peopleMoments.filter((item) => item.includes("Fin"))).toHaveLength(
+			1,
+		);
+		expect(
+			live.peopleMoments.some((item) => item.includes("Worth a quick review")),
+		).toBe(false);
+		expect(
+			live.peopleMoments.some((item) => item.includes("Strong AI CX read")),
+		).toBe(false);
+	});
+
 	it("keeps exception lanes out of headline SLA health", () => {
 		const cases = [
 			makeCase({
@@ -448,6 +565,36 @@ describe("support health logic", () => {
 		expect(live.exceptionQueues[0]?.teamName).toBe("Pension Broker");
 		expect(live.mappedQueues).toHaveLength(2);
 		expect(live.actionItems[0]?.label).toContain("Reply to");
+	});
+
+	it("keeps Aftaleportalen and Pension Broker as separate exception queues", () => {
+		const live = buildLiveWallboardData(
+			[
+				makeCase({
+					id: "aftaleportalen-1",
+					teamName: "General",
+					productName: "Aftaleportalen",
+					serviceBucket: "exception",
+					servicePolicyName: "Separate workflow",
+					actionableState: "awaiting-team",
+				}),
+				makeCase({
+					id: "pension-broker-1",
+					teamName: "General",
+					productName: "Pension Broker",
+					serviceBucket: "exception",
+					servicePolicyName: "Separate workflow",
+					actionableState: "awaiting-team",
+				}),
+			],
+			new Date("2026-03-31T11:57:00.000Z"),
+			now,
+		);
+
+		expect(live.exceptionQueues.map((queue) => queue.teamName)).toEqual([
+			"Aftaleportalen",
+			"Pension Broker",
+		]);
 	});
 
 	it("counts breached cases as unassigned when they have no person or team assignment", () => {
@@ -705,7 +852,7 @@ describe("support health logic", () => {
 		expect(trends.periodSummary.satisfactionScorePercent).toBe(100);
 	});
 
-	it("builds daily CX series as satisfaction percent from rated resolved conversations", () => {
+	it("builds daily CX series as average five-point score from rated resolved conversations", () => {
 		const series = buildCxSeries(
 			[
 				makeCase({
@@ -744,8 +891,8 @@ describe("support health logic", () => {
 			.map((point) => point.value)
 			.filter((value): value is number => value !== null);
 
-		expect(values).toContain(50);
-		expect(values).toContain(100);
+		expect(values).toContain(3.5);
+		expect(values).toContain(4);
 	});
 
 	it("shows only five lookup IDs and ranks longest-overdue breaches first", () => {
@@ -800,5 +947,44 @@ describe("support health logic", () => {
 		expect(lookupCases[1]?.externalId).toBe("breach-short");
 		expect(lookupCases[0]?.ageLabel).toBe("3h overdue");
 		expect(lookupCases[2]?.ageLabel).toBe("Due in 20m");
+	});
+
+	it("keeps a deeper live lookup pool so focused products retain their own IDs", () => {
+		const addoCases = Array.from({ length: 6 }, (_, index) =>
+			makeCase({
+				id: `addo-${index}`,
+				externalId: `addo-${index}`,
+				productName: "Addo Sign",
+				teamName: "Addo Sign",
+				nextDueAt: new Date(`2026-03-31T1${index}:00:00.000Z`),
+				actionableState: "breached",
+				isBreached: true,
+				waitingSinceAt: new Date(`2026-03-31T0${index}:00:00.000Z`),
+			}),
+		);
+		const pensionBrokerCase = makeCase({
+			id: "pension-broker-focus",
+			externalId: "pension-broker-focus",
+			productName: "Pension Broker",
+			teamName: "Pension Broker",
+			nextDueAt: new Date("2026-03-31T14:30:00.000Z"),
+			actionableState: "awaiting-team",
+			isBreached: false,
+			isDueSoon: false,
+			waitingSinceAt: new Date("2026-03-31T10:45:00.000Z"),
+		});
+
+		const live = buildLiveWallboardData(
+			[...addoCases, pensionBrokerCase],
+			new Date("2026-03-31T11:57:00.000Z"),
+			now,
+		);
+
+		expect(live.lookupCases.length).toBeGreaterThan(5);
+		expect(
+			live.lookupCases.some(
+				(item) => item.externalId === "pension-broker-focus",
+			),
+		).toBe(true);
 	});
 });

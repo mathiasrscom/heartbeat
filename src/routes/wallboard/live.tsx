@@ -4,10 +4,8 @@ import { useEffect, useMemo } from "react";
 import { InfoTooltip } from "@/components/info-tooltip";
 import {
 	formatProductLabel,
-	ProductBrandLabel,
 	ProductBrandLogo,
 } from "@/components/product-brand";
-const wbCell = "rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 import { CaseLookupCard } from "@/components/wallboard/case-lookup-card";
 import { PaginatedContent } from "@/components/wallboard/paginated-content";
 import { useProductAutoplay } from "@/components/wallboard/product-autoplay-strip";
@@ -20,11 +18,12 @@ import { getLiveWallboard } from "@/lib/support-health/server";
 import { resolveSupportTargets } from "@/lib/support-health/targets";
 import type {
 	CaseLookupItem,
-	LiveFocusLane,
 	LiveWallboardData,
-	SupportHealthSnapshot,
 } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
+
+const wbCell =
+	"rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 
 const TOP_LOOKUP_LIMIT = 20;
 const WALLBOARD_REFRESH_INTERVAL_MS = 30_000;
@@ -88,25 +87,37 @@ function LiveWallboardPage() {
 					},
 					focusedProductName,
 				);
+	const focusedMetrics =
+		focusedProductName === null
+			? null
+			: (live.productMetrics[focusedProductName] ?? null);
+	const currentSnapshot = focusedMetrics?.snapshot ?? live.snapshot;
+	const currentWorkflowCounts =
+		focusedMetrics?.workflowCounts ?? live.workflowCounts;
 	const focusStatus = resolveFocusStatus(focusedQueue);
 	const focusStatusLabel = buildStatusLabel(focusStatus);
-	const focusPrimaryAction = buildFocusPrimaryAction(focusedQueue);
-	const focusSecondaryAction = buildFocusSecondaryAction(focusedQueue);
-	const isOllamaPlan = live.focusPlan?.source === "ollama";
-	const aiHeadline = isOllamaPlan ? (live.focusPlan?.headline?.trim() || null) : null;
-	const aiSupportingText = isOllamaPlan ? (live.focusPlan?.supportingText?.trim() || null) : null;
-	const laneRows = buildLaneRows(live.snapshot);
-	const orderedLaneRows = resolveLaneOrder(live.focusPlan?.laneOrder).map(
-		(lane) => laneRows[lane],
-	);
+	const isAiPlan = live.focusPlan?.source !== "deterministic";
+	const aiHeadline = isAiPlan ? live.focusPlan?.headline?.trim() || null : null;
+	const aiSupportingText = isAiPlan
+		? live.focusPlan?.supportingText?.trim() || null
+		: null;
 	const liveTickerItems = buildLiveTickerItems(
 		live,
 		focusedProductName,
 		focusedQueue,
 	);
 	const focusedInsight = focusedProductName
-		? live.insights.find((i) => i.productName === focusedProductName) ?? null
+		? (live.insights.find((i) => i.productName === focusedProductName) ?? null)
 		: null;
+	const aggregateScope = describeAggregateScope(
+		live.selectedProducts,
+		live.availableProducts,
+	);
+	const immediateQueueScopeText = focusedProductName
+		? formatProductLabel(focusedProductName)
+		: aggregateScope.isSubset
+			? "the selected products"
+			: "all products";
 
 	useEffect(() => {
 		const timer = window.setInterval(() => {
@@ -119,54 +130,62 @@ function LiveWallboardPage() {
 	}, [router]);
 
 	const immediateQueuePanel = (
-		<WallboardSection title="Immediate queue state" className="h-full">
+		<WallboardSection
+			title={
+				focusedProductName
+					? `Immediate queue state • ${formatProductLabel(focusedProductName)}`
+					: aggregateScope.isSubset
+						? "Immediate queue state • Selected products"
+						: "Immediate queue state"
+			}
+			className="h-full"
+		>
 			<PaginatedContent intervalMs={16_000}>
 				<div className="grid gap-4 @sm:grid-cols-2 @lg:grid-cols-3 @3xl:grid-cols-4 @5xl:grid-cols-5">
 					<QueueInlineMetric
 						label="Open now"
-						tooltip="Currently open support cases in the selected products."
-						value={live.snapshot.currentActiveCaseCount}
+						tooltip={`Currently open support cases in ${immediateQueueScopeText}.`}
+						value={currentSnapshot.currentActiveCaseCount}
 					/>
 					<QueueInlineMetric
 						label="Waiting on us"
-						tooltip="Open cases where support owes the next reply."
-						value={live.snapshot.currentAwaitingTeamCount}
+						tooltip={`Open cases where support owes the next reply in ${immediateQueueScopeText}.`}
+						value={currentSnapshot.currentAwaitingTeamCount}
 					/>
 					<QueueInlineMetric
 						label="Over SLA"
-						tooltip="Open cases currently past SLA due time."
-						value={live.snapshot.currentBreachedCount}
-						danger={live.snapshot.currentBreachedCount > 0}
+						tooltip={`Open cases currently past SLA due time in ${immediateQueueScopeText}.`}
+						value={currentSnapshot.currentBreachedCount}
+						danger={currentSnapshot.currentBreachedCount > 0}
 					/>
 					<QueueInlineMetric
 						label="Due in 60m"
-						tooltip="Open SLA-tracked cases due within the next 60 minutes."
-						value={live.snapshot.currentDueSoonCount}
-						warning={live.snapshot.currentDueSoonCount > 0}
+						tooltip={`Open SLA-tracked cases due within the next 60 minutes in ${immediateQueueScopeText}.`}
+						value={currentSnapshot.currentDueSoonCount}
+						warning={currentSnapshot.currentDueSoonCount > 0}
 					/>
 					<QueueInlineMetric
 						label="Unassigned"
-						tooltip="Open cases without an owner assigned."
-						value={live.snapshot.currentUnassignedCount}
-						warning={live.snapshot.currentUnassignedCount > 0}
+						tooltip={`Open cases without an owner assigned in ${immediateQueueScopeText}.`}
+						value={currentSnapshot.currentUnassignedCount}
+						warning={currentSnapshot.currentUnassignedCount > 0}
 					/>
 					<QueueInlineMetric
 						label="Waiting on customer"
-						tooltip="Open cases paused while waiting on the customer or another external party."
-						value={live.snapshot.currentAwaitingCustomerCount}
+						tooltip={`Open cases paused while waiting on the customer or another external party in ${immediateQueueScopeText}.`}
+						value={currentSnapshot.currentAwaitingCustomerCount}
 					/>
 					<QueueInlineMetric
 						label="Ticket review"
-						tooltip="Open developer tickets in Submitted or Waiting on support. This follows the global Intercom Ticket review view."
-						value={live.workflowCounts.ticketReviewCount}
+						tooltip={`Open developer tickets in Submitted or Waiting on support in ${immediateQueueScopeText}.`}
+						value={currentWorkflowCounts.ticketReviewCount}
 					/>
 					<QueueInlineMetric
 						label="Dev team assigned"
-						tooltip="Open developer tickets already assigned to the developer team. This is tracked globally, not by the selected product filter."
-						value={live.workflowCounts.developerTeamAssignedCount}
+						tooltip={`Open developer tickets already assigned to the developer team in ${immediateQueueScopeText}.`}
+						value={currentWorkflowCounts.developerTeamAssignedCount}
 					/>
 				</div>
-
 			</PaginatedContent>
 		</WallboardSection>
 	);
@@ -183,149 +202,169 @@ function LiveWallboardPage() {
 			title={
 				focusedProductName
 					? `Product spotlight • ${formatProductLabel(focusedProductName)}`
-					: "By product right now"
+					: aggregateScope.isSubset
+						? "Selected products right now"
+						: "By product right now"
 			}
 			className="h-full"
 		>
 			<PaginatedContent intervalMs={20_000}>
 				<div className="space-y-3">
 					{visibleQueues.length === 0 ? (
-					live.snapshot.unknownCaseCount > 0 ? (
-						<div className="py-10 text-lg text-muted-foreground">
-							Product mapping is still incomplete, so this wallboard cannot show
-							product rows yet.
-						</div>
+						live.snapshot.unknownCaseCount > 0 ? (
+							<div className="py-10 text-lg text-muted-foreground">
+								Product mapping is still incomplete, so this wallboard cannot
+								show product rows yet.
+							</div>
+						) : (
+							<div className="py-10 text-lg text-muted-foreground">
+								No Intercom data yet.
+							</div>
+						)
 					) : (
-						<div className="py-10 text-lg text-muted-foreground">
-							No Intercom data yet.
-						</div>
-					)
-				) : (
-					visibleQueues.map((queue) => {
-						const nextAction = buildQueueRowAction(queue);
-						const isSolo = visibleQueues.length === 1;
+						visibleQueues.map((queue) => {
+							const nextAction = buildQueueRowAction(queue);
+							const isSolo = visibleQueues.length === 1;
 
-						if (!isSolo) {
-							return (
-								<div
-									key={queue.teamName}
-									className={cn(
-										wbCell,
-										"flex items-center gap-4 rounded-lg px-4 py-2.5",
-									)}
-								>
-									<ProductBrandLogo
-										productName={queue.teamName}
-										size="sm"
-									/>
-									<div className="min-w-0 flex-1">
-										<div className="text-sm font-medium text-foreground">
-											{formatProductLabel(queue.teamName)}
+							if (!isSolo) {
+								return (
+									<div
+										key={queue.teamName}
+										className={cn(
+											wbCell,
+											"flex items-center gap-4 rounded-lg px-4 py-2.5",
+										)}
+									>
+										<ProductBrandLogo productName={queue.teamName} size="sm" />
+										<div className="min-w-0 flex-1">
+											<div className="text-sm font-medium text-foreground">
+												{formatProductLabel(queue.teamName)}
+											</div>
+											<QueueActionValue
+												text={nextAction.text}
+												tone={nextAction.tone}
+												className="text-xs"
+											/>
 										</div>
+										<div className="flex shrink-0 gap-4 text-right text-sm tabular-nums">
+											<div>
+												<div className="text-muted-foreground text-[10px] uppercase">
+													Open
+												</div>
+												<div className="font-semibold">
+													{queue.activeCaseCount}
+												</div>
+											</div>
+											<div>
+												<div className="text-muted-foreground text-[10px] uppercase">
+													Wait
+												</div>
+												<div className="font-semibold">
+													{queue.awaitingTeamCount}
+												</div>
+											</div>
+											<div>
+												<div className="text-muted-foreground text-[10px] uppercase">
+													SLA
+												</div>
+												<div
+													className={cn(
+														"font-semibold",
+														queue.breachedCount > 0 &&
+															"text-red-600 dark:text-red-300",
+													)}
+												>
+													{queue.breachedCount}
+												</div>
+											</div>
+											<div>
+												<div className="text-muted-foreground text-[10px] uppercase">
+													Unasgn
+												</div>
+												<div
+													className={cn(
+														"font-semibold",
+														queue.unassignedCount > 0 &&
+															"text-amber-600 dark:text-amber-300",
+													)}
+												>
+													{queue.unassignedCount}
+												</div>
+											</div>
+										</div>
+									</div>
+								);
+							}
+
+							return (
+								<div key={queue.teamName} className="px-1 py-3">
+									<div className="mb-1 text-sm text-muted-foreground">
 										<QueueActionValue
 											text={nextAction.text}
 											tone={nextAction.tone}
-											className="text-xs"
 										/>
 									</div>
-									<div className="flex shrink-0 gap-4 text-right text-sm tabular-nums">
-										<div>
-											<div className="text-muted-foreground text-[10px] uppercase">Open</div>
-											<div className="font-semibold">{queue.activeCaseCount}</div>
-										</div>
-										<div>
-											<div className="text-muted-foreground text-[10px] uppercase">Wait</div>
-											<div className="font-semibold">{queue.awaitingTeamCount}</div>
-										</div>
-										<div>
-											<div className="text-muted-foreground text-[10px] uppercase">SLA</div>
-											<div className={cn("font-semibold", queue.breachedCount > 0 && "text-red-600 dark:text-red-300")}>
-												{queue.breachedCount}
-											</div>
-										</div>
-										<div>
-											<div className="text-muted-foreground text-[10px] uppercase">Unasgn</div>
-											<div className={cn("font-semibold", queue.unassignedCount > 0 && "text-amber-600 dark:text-amber-300")}>
-												{queue.unassignedCount}
-											</div>
-										</div>
+									<div className="mt-3 grid grid-cols-2 @sm:grid-cols-3 @xl:grid-cols-5 gap-2">
+										<QueueInlineMetric
+											label="Open"
+											value={queue.activeCaseCount}
+										/>
+										<QueueInlineMetric
+											label="Waiting"
+											value={queue.awaitingTeamCount}
+										/>
+										<QueueInlineMetric
+											label="Over SLA"
+											value={queue.breachedCount}
+											danger={queue.breachedCount > 0}
+										/>
+										<QueueInlineMetric
+											label="Due"
+											value={queue.dueSoonCount}
+											warning={queue.dueSoonCount > 0}
+										/>
+										<QueueInlineMetric
+											label="Unassigned"
+											value={queue.unassignedCount}
+										/>
 									</div>
 								</div>
 							);
-						}
+						})
+					)}
 
-						return (
+					{focusedInsight ? (
+						<div className="mt-4 grid gap-3 @sm:grid-cols-2">
 							<div
-								key={queue.teamName}
-								className="px-1 py-3"
+								className={cn(
+									wbCell,
+									"border-l-2 border-l-emerald-500 px-4 py-4 dark:border-l-emerald-400",
+								)}
 							>
-								<div className="mb-1 text-sm text-muted-foreground">
-									<QueueActionValue
-										text={nextAction.text}
-										tone={nextAction.tone}
-									/>
+								<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+									<span className="text-sm normal-case">&#10003;</span>
+									What went well
 								</div>
-								<div className="mt-3 grid grid-cols-2 @sm:grid-cols-3 @xl:grid-cols-5 gap-2">
-									<QueueInlineMetric
-										label="Open"
-										value={queue.activeCaseCount}
-									/>
-									<QueueInlineMetric
-										label="Waiting"
-										value={queue.awaitingTeamCount}
-									/>
-									<QueueInlineMetric
-										label="Over SLA"
-										value={queue.breachedCount}
-										danger={queue.breachedCount > 0}
-									/>
-									<QueueInlineMetric
-										label="Due"
-										value={queue.dueSoonCount}
-										warning={queue.dueSoonCount > 0}
-									/>
-									<QueueInlineMetric
-										label="Unassigned"
-										value={queue.unassignedCount}
-									/>
+								<p className="mt-2 text-sm leading-relaxed text-foreground">
+									{focusedInsight.wentWell}
+								</p>
+							</div>
+							<div
+								className={cn(
+									wbCell,
+									"border-l-2 border-l-amber-500 px-4 py-4 dark:border-l-amber-400",
+								)}
+							>
+								<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+									<span className="text-sm normal-case">&#9672;</span>
+									To improve
 								</div>
+								<p className="mt-2 text-sm leading-relaxed text-foreground">
+									{focusedInsight.toImprove}
+								</p>
 							</div>
-						);
-					})
-				)}
-
-				{focusedInsight ? (
-					<div className="mt-4 grid gap-3 @sm:grid-cols-2">
-						<div
-							className={cn(
-								wbCell,
-								"border-l-2 border-l-emerald-500 px-4 py-4 dark:border-l-emerald-400",
-							)}
-						>
-							<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-								<span className="text-sm normal-case">&#10003;</span>
-								What went well
-							</div>
-							<p className="mt-2 text-sm leading-relaxed text-foreground">
-								{focusedInsight.wentWell}
-							</p>
 						</div>
-						<div
-							className={cn(
-								wbCell,
-								"border-l-2 border-l-amber-500 px-4 py-4 dark:border-l-amber-400",
-							)}
-						>
-							<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
-								<span className="text-sm normal-case">&#9672;</span>
-								To improve
-							</div>
-							<p className="mt-2 text-sm leading-relaxed text-foreground">
-								{focusedInsight.toImprove}
-							</p>
-						</div>
-					</div>
-				) : null}
+					) : null}
 				</div>
 			</PaginatedContent>
 		</WallboardSection>
@@ -350,9 +389,7 @@ function LiveWallboardPage() {
 				</div>
 				{aiHeadline ? (
 					<>
-						<p className="text-base leading-7 text-foreground">
-							{aiHeadline}
-						</p>
+						<p className="text-base leading-7 text-foreground">{aiHeadline}</p>
 						{aiSupportingText ? (
 							<p className="text-sm leading-6 text-muted-foreground">
 								{aiSupportingText}
@@ -400,7 +437,9 @@ function LiveWallboardPage() {
 			title={
 				focusedProductName
 					? `Top IDs • ${formatProductLabel(focusedProductName)}`
-					: "Top IDs to check"
+					: aggregateScope.isSubset
+						? "Top IDs • Selected products"
+						: "Top IDs to check"
 			}
 			className="min-h-0"
 		>
@@ -430,12 +469,21 @@ function LiveWallboardPage() {
 			tickerItems={liveTickerItems}
 			theme={live.wallboardTheme}
 			showcase={
-				<span className="inline-flex items-center gap-2 font-semibold text-[1.75rem] tracking-tight text-foreground">
-					{focusedProductName ? (
-						<ProductBrandLogo productName={focusedProductName} size="md" />
+				<>
+					<span className="inline-flex items-center gap-2 font-semibold text-[1.75rem] tracking-tight text-foreground">
+						{focusedProductName ? (
+							<ProductBrandLogo productName={focusedProductName} size="md" />
+						) : null}
+						{focusedProductName
+							? formatProductLabel(focusedProductName)
+							: aggregateScope.label}
+					</span>
+					{!focusedProductName && aggregateScope.detail ? (
+						<span className="text-sm font-medium text-muted-foreground">
+							{aggregateScope.detail}
+						</span>
 					) : null}
-					{formatProductLabel(focusedProductName)}
-				</span>
+				</>
 			}
 		>
 			<div className="grid h-full min-h-0 grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)] grid-rows-1 gap-6">
@@ -502,9 +550,7 @@ function resolveAutoplayProducts(
 			: mappedQueueProducts.length > 0
 				? Array.from(new Set(mappedQueueProducts))
 				: availableProducts;
-	return products.length > 1
-		? [ALL_PRODUCTS_SENTINEL, ...products]
-		: products;
+	return products.length > 1 ? [ALL_PRODUCTS_SENTINEL, ...products] : products;
 }
 
 function resolveFocusedProductName(input: {
@@ -549,66 +595,24 @@ function prioritizeLookupCases(
 		priority.set(externalId, index);
 	});
 
-	return [...lookupCases].sort((left, right) => {
-		const leftPriority = priority.get(left.externalId);
-		const rightPriority = priority.get(right.externalId);
-		if (leftPriority !== undefined || rightPriority !== undefined) {
-			if (leftPriority === undefined) return 1;
-			if (rightPriority === undefined) return -1;
-			return leftPriority - rightPriority;
-		}
-		return left.externalId.localeCompare(right.externalId);
-	});
-}
-
-function buildLaneRows(snapshot: SupportHealthSnapshot): Record<
-	LiveFocusLane,
-	{
-		id: LiveFocusLane;
-		label: string;
-		count: number;
-		detail: string;
-		tone: "neutral" | "warning" | "danger";
-	}
-> {
-	return {
-		"over-sla": {
-			id: "over-sla",
-			label: "Over SLA lane",
-			count: snapshot.currentBreachedCount,
-			detail: "Reply first to cases already past SLA.",
-			tone: snapshot.currentBreachedCount > 0 ? "danger" : "neutral",
-		},
-		"due-soon": {
-			id: "due-soon",
-			label: "Due soon lane",
-			count: snapshot.currentDueSoonCount,
-			detail: "Prevent new breaches in the next 60 minutes.",
-			tone: snapshot.currentDueSoonCount > 0 ? "warning" : "neutral",
-		},
-		unassigned: {
-			id: "unassigned",
-			label: "Unassigned lane",
-			count: snapshot.currentUnassignedCount,
-			detail: "Assign owners so no case is waiting without responsibility.",
-			tone: snapshot.currentUnassignedCount > 0 ? "warning" : "neutral",
-		},
-	};
-}
-
-function resolveLaneOrder(laneOrder?: LiveFocusLane[] | null) {
-	const defaultOrder: LiveFocusLane[] = ["over-sla", "due-soon", "unassigned"];
-	if (!laneOrder || laneOrder.length !== defaultOrder.length)
-		return defaultOrder;
-	const unique = new Set(laneOrder);
-	if (unique.size !== defaultOrder.length) return defaultOrder;
-	if (defaultOrder.some((lane) => !unique.has(lane))) return defaultOrder;
-	return laneOrder;
+	return lookupCases
+		.map((item, index) => ({ item, index }))
+		.sort((left, right) => {
+			const leftPriority = priority.get(left.item.externalId);
+			const rightPriority = priority.get(right.item.externalId);
+			if (leftPriority !== undefined || rightPriority !== undefined) {
+				if (leftPriority === undefined) return 1;
+				if (rightPriority === undefined) return -1;
+				return leftPriority - rightPriority;
+			}
+			return left.index - right.index;
+		})
+		.map(({ item }) => item);
 }
 
 function resolveFocusStatus(
 	queue: LiveWallboardData["mappedQueues"][number] | null,
-): SupportHealthSnapshot["status"] {
+): LiveWallboardData["snapshot"]["status"] {
 	if (!queue) return "yellow";
 	if (queue.breachedCount >= 2 || queue.urgentCount > 0) return "red";
 	if (
@@ -621,37 +625,6 @@ function resolveFocusStatus(
 	return "green";
 }
 
-function buildFocusPrimaryAction(
-	queue: LiveWallboardData["mappedQueues"][number] | null,
-) {
-	if (!queue) return "No open queue pressure in this product right now.";
-	if (queue.breachedCount > 0) {
-		return `Clear ${queue.breachedCount} over-SLA case${queue.breachedCount === 1 ? "" : "s"} first.`;
-	}
-	if (queue.dueSoonCount > 0) {
-		return `Prioritize ${queue.dueSoonCount} case${queue.dueSoonCount === 1 ? "" : "s"} due in the next hour.`;
-	}
-	if (queue.unassignedCount > 0) {
-		return `Assign ${queue.unassignedCount} unassigned case${queue.unassignedCount === 1 ? "" : "s"}.`;
-	}
-	if (queue.awaitingTeamCount > 0) {
-		return `${queue.awaitingTeamCount} case${queue.awaitingTeamCount === 1 ? "" : "s"} are waiting on support.`;
-	}
-	return "No immediate risk. Keep normal response cadence.";
-}
-
-function buildFocusSecondaryAction(
-	queue: LiveWallboardData["mappedQueues"][number] | null,
-) {
-	if (!queue) return "Select or map a product to start focused playback.";
-	const parts = [
-		`${queue.activeCaseCount} open`,
-		`${queue.awaitingTeamCount} waiting on support`,
-		`${queue.breachedCount} over SLA`,
-	];
-	return parts.join(" • ");
-}
-
 function buildLiveTickerItems(
 	live: LiveWallboardData,
 	focusedProductName: string | null,
@@ -661,7 +634,9 @@ function buildLiveTickerItems(
 		return live.peopleMoments;
 	}
 
-	const queueLabel = focusedProductName ?? "All products";
+	const queueLabel = focusedProductName
+		? focusedProductName
+		: describeAggregateScope(live.selectedProducts, live.availableProducts).label;
 	const items: string[] = [
 		`${queueLabel}: ${live.snapshot.currentBreachedCount} over SLA now`,
 		`${queueLabel}: ${live.snapshot.currentUnassignedCount} unassigned`,
@@ -677,37 +652,23 @@ function buildLiveTickerItems(
 	return items;
 }
 
-function buildQueueHeadline(snapshot: SupportHealthSnapshot) {
-	if (snapshot.currentBreachedCount > 0) {
-		return `${snapshot.currentBreachedCount} case${snapshot.currentBreachedCount === 1 ? "" : "s"} ${
-			snapshot.currentBreachedCount === 1 ? "is" : "are"
-		} over SLA right now`;
-	}
-	if (snapshot.currentDueSoonCount > 0) {
-		return `${snapshot.currentDueSoonCount} case${snapshot.currentDueSoonCount === 1 ? "" : "s"} ${
-			snapshot.currentDueSoonCount === 1 ? "is" : "are"
-		} due within 60 minutes`;
-	}
-	if (snapshot.currentAwaitingTeamCount > 0) {
-		return `${snapshot.currentAwaitingTeamCount} open case${snapshot.currentAwaitingTeamCount === 1 ? "" : "s"} ${
-			snapshot.currentAwaitingTeamCount === 1 ? "needs" : "need"
-		} a support reply`;
-	}
-	return "No open cases need a support reply right now";
-}
-
-function buildQueueSupportingText(snapshot: SupportHealthSnapshot) {
-	const parts = [
-		`${snapshot.currentAwaitingTeamCount} waiting on support`,
-		`${snapshot.currentUnassignedCount} unassigned`,
-		`${snapshot.currentAwaitingCustomerCount} waiting on customer`,
-	];
-
-	if (snapshot.unknownCaseCount > 0) {
-		parts.push(`${snapshot.unknownCaseCount} not mapped to a product yet`);
+function describeAggregateScope(
+	selectedProducts: string[],
+	availableProducts: string[],
+) {
+	if (selectedProducts.length > 0 && selectedProducts.length < availableProducts.length) {
+		return {
+			label: "Selected products",
+			detail: selectedProducts.join(" · "),
+			isSubset: true,
+		};
 	}
 
-	return parts.join(" • ");
+	return {
+		label: "All products",
+		detail: null,
+		isSubset: false,
+	};
 }
 
 function QueueActionValue({
@@ -766,39 +727,6 @@ function QueueInlineMetric({
 	);
 }
 
-function LiveLaneRow({
-	label,
-	count,
-	detail,
-	tone,
-}: {
-	label: string;
-	count: number;
-	detail: string;
-	tone: "neutral" | "warning" | "danger";
-}) {
-	return (
-		<div
-			className={cn(
-				wbCell,
-				"grid grid-cols-[200px_100px_minmax(0,1fr)] items-center gap-4 rounded-lg px-4 py-3",
-			)}
-		>
-			<div className="text-base text-foreground">{label}</div>
-			<div
-				className={cn(
-					"text-3xl font-semibold tabular-nums text-foreground",
-					tone === "warning" && "text-amber-600 dark:text-amber-300",
-					tone === "danger" && "text-red-600 dark:text-red-300",
-				)}
-			>
-				{count}
-			</div>
-			<div className="text-sm text-muted-foreground">{detail}</div>
-		</div>
-	);
-}
-
 function StateBlock({
 	label,
 	tooltip,
@@ -820,12 +748,6 @@ function StateBlock({
 			</div>
 		</div>
 	);
-}
-
-function formatQueueSources(sourceQueues: string[]) {
-	if (sourceQueues.length === 0) return "No dedicated queue detected";
-	if (sourceQueues.length === 1) return `Queue ${sourceQueues[0]}`;
-	return `Queues ${sourceQueues.join(", ")}`;
 }
 
 function buildQueueRowAction(

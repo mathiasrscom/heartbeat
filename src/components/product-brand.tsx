@@ -23,12 +23,18 @@ const PRODUCT_BRAND_STYLES: Record<string, ProductBrandStyle> = {
 			"border-emerald-400/55 dark:border-emerald-300/55 bg-emerald-100/60 dark:bg-emerald-300/15",
 		heartClassName: "text-emerald-500 dark:text-emerald-300",
 	},
+	aftaleportalen: {
+		ringClassName:
+			"border-sky-400/55 dark:border-sky-300/55 bg-sky-100/60 dark:bg-sky-300/15",
+		heartClassName: "text-sky-500 dark:text-sky-300",
+	},
 };
 
 const PRODUCT_LOGO_PATHS: Record<string, string> = {
 	"addo sign": "/product-logos/addo_sign_logo.png",
 	twoday: "/product-logos/twoday_logo.jpeg",
 	"pension broker": "/product-logos/pension_broker_logo.png",
+	aftaleportalen: "/product-logos/pension_broker_logo.png",
 };
 
 const DEFAULT_BRAND_STYLE: ProductBrandStyle = {
@@ -44,8 +50,10 @@ function resolveCanonicalBrandKey(productName: string | null | undefined) {
 	const key = normalizeProductKey(productName);
 
 	if (key.includes("pension broker")) return "pension broker";
+	if (key.includes("pensionbroker")) return "pension broker";
 	if (key.includes("cvr")) return "pension broker";
-	if (key.includes("aftaleportalen")) return "pension broker";
+	if (key.includes("aftaleportalen")) return "aftaleportalen";
+	if (key.includes("aftale portalen")) return "aftaleportalen";
 	if (key.includes("addo sign")) return "addo sign";
 	if (key.includes("twoday")) return "twoday";
 

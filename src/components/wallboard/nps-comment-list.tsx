@@ -1,4 +1,5 @@
 import type { NpsComment } from "@/lib/support-health/types";
+import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
 import { cn } from "@/lib/utils";
 
 const wbCell =
@@ -44,6 +45,10 @@ function NpsCommentRow({ entry }: { entry: NpsComment }) {
 			: entry.bucket === "detractor"
 				? "Detractor"
 				: "Passive";
+	const englishComment = getEnglishNpsCommentToDisplay(
+		entry.comment,
+		entry.englishComment,
+	);
 
 	return (
 		<div className={cn(wbCell, "flex gap-3 px-4 py-3")}>
@@ -79,6 +84,16 @@ function NpsCommentRow({ entry }: { entry: NpsComment }) {
 					{entry.comment}
 					<span className="text-muted-foreground">”</span>
 				</p>
+				{englishComment ? (
+					<div className="mt-2 border-t border-border/40 pt-2">
+						<div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+							English
+						</div>
+						<p className="mt-1 text-sm leading-snug text-foreground">
+							{englishComment}
+						</p>
+					</div>
+				) : null}
 			</div>
 		</div>
 	);

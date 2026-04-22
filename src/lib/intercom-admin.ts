@@ -15,12 +15,17 @@ import {
 	readSupportTargetsFromSettings,
 	type SupportTargetsConfig,
 } from "./support-health/targets";
+import {
+	DEFAULT_OLLAMA_BASE_URL,
+	type TickerLlmConfig,
+	type WallboardLlmProvider,
+} from "./wallboard-llm-config";
 
 type JsonRecord = Record<string, unknown>;
 
 type IntercomStatus = "not-configured" | "configured" | "connected" | "error";
 type TokenSource = "environment" | "database" | null;
-type TickerLlmProvider = "ollama" | null;
+type TickerLlmProvider = WallboardLlmProvider;
 
 interface SaveIntercomInput {
 	accessToken: string;
@@ -31,6 +36,7 @@ interface SaveIntercomWorkspaceUrlInput {
 }
 
 interface SaveIntercomTickerLlmSettingsInput {
+	provider: TickerLlmProvider;
 	model: string;
 	baseUrl: string;
 }
@@ -99,12 +105,7 @@ interface IntercomMutationResult {
 	sync?: SyncRunPayload;
 }
 
-export interface IntercomTickerLlmSettings {
-	provider: TickerLlmProvider;
-	enabled: boolean;
-	model: string | null;
-	baseUrl: string;
-}
+export type IntercomTickerLlmSettings = TickerLlmConfig;
 
 interface ListIntercomTickerOllamaModelsResult {
 	baseUrl: string;
@@ -146,18 +147,30 @@ function normalizeTickerLlmBaseUrl(value: unknown) {
 	}
 }
 
+function normalizeTickerLlmProvider(value: unknown): TickerLlmProvider {
+	return value === "ollama" || value === "codex" ? value : null;
+}
+
 function getTickerLlmConfig(settings: JsonRecord) {
-	const model = normalizeTickerLlmModel(settings.tickerLlmModel);
+	const provider =
+		normalizeTickerLlmProvider(settings.tickerLlmProvider) ??
+		(normalizeTickerLlmModel(settings.tickerLlmModel) ? "ollama" : null);
+	const model =
+		provider === "codex"
+			? null
+			: normalizeTickerLlmModel(settings.tickerLlmModel);
 	const configuredBaseUrl = normalizeTickerLlmBaseUrl(
 		settings.tickerLlmBaseUrl,
 	);
-	const enabled = settings.tickerLlmEnabled === true && Boolean(model);
+	const enabled =
+		settings.tickerLlmEnabled === true &&
+		(provider === "codex" || (Boolean(model) && Boolean(configuredBaseUrl)));
 
 	return {
-		provider: "ollama" as TickerLlmProvider,
+		provider,
 		enabled,
 		model,
-		baseUrl: configuredBaseUrl ?? "http://127.0.0.1:11434",
+		baseUrl: configuredBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
 	};
 }
 
@@ -281,11 +294,12 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		: {};
 	const settings = isRecord(configRow?.settings) ? configRow.settings : {};
 	const tickerLlm = getTickerLlmConfig(settings);
-	const tickerLlmModel = normalizeTickerLlmModel(settings.tickerLlmModel);
-	const tickerLlmBaseUrl = normalizeTickerLlmBaseUrl(settings.tickerLlmBaseUrl);
-	const tickerLlmEnabled =
-		settings.tickerLlmEnabled === true &&
-		Boolean(tickerLlmModel && tickerLlmBaseUrl);
+	const tickerLlmModel = tickerLlm.model;
+	const tickerLlmBaseUrl =
+		tickerLlm.provider === "ollama"
+			? normalizeTickerLlmBaseUrl(settings.tickerLlmBaseUrl)
+			: null;
+	const tickerLlmEnabled = tickerLlm.enabled;
 	const supportTargets = readSupportTargetsFromSettings(settings);
 
 	const envToken = normalizeToken(process.env.INTERCOM_ACCESS_TOKEN);
@@ -607,13 +621,19 @@ export const saveIntercomWorkspaceLink = createServerFn({ method: "POST" })
 export const saveIntercomTickerLlmSettings = createServerFn({ method: "POST" })
 	.inputValidator((data: SaveIntercomTickerLlmSettingsInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
+		const provider = normalizeTickerLlmProvider(data.provider);
 		const model = normalizeTickerLlmModel(data.model);
 		const baseUrl = normalizeTickerLlmBaseUrl(data.baseUrl);
 		const hasBaseUrlInput =
 			typeof data.baseUrl === "string" && data.baseUrl.trim().length > 0;
-		const enabled = Boolean(model && baseUrl);
+		const enabled =
+			provider === "codex"
+				? true
+				: provider === "ollama"
+					? Boolean(model) && Boolean(baseUrl)
+					: false;
 
-		if (hasBaseUrlInput && !baseUrl) {
+		if (provider === "ollama" && hasBaseUrlInput && !baseUrl) {
 			throw new Error(
 				"Set a valid Ollama base URL, for example http://127.0.0.1:11434.",
 			);
@@ -636,10 +656,10 @@ export const saveIntercomTickerLlmSettings = createServerFn({ method: "POST" })
 			credentials,
 			settings: {
 				...existingSettings,
-				tickerLlmProvider: "ollama",
+				tickerLlmProvider: provider,
 				tickerLlmEnabled: enabled,
-				tickerLlmModel: enabled ? model : null,
-				tickerLlmBaseUrl: enabled ? baseUrl : null,
+				tickerLlmModel: enabled && provider === "ollama" ? model : null,
+				tickerLlmBaseUrl: enabled && provider === "ollama" ? baseUrl : null,
 				syncIntervalMinutes:
 					typeof existingSettings.syncIntervalMinutes === "number"
 						? existingSettings.syncIntervalMinutes
@@ -669,10 +689,12 @@ export const saveIntercomTickerLlmSettings = createServerFn({ method: "POST" })
 
 		return {
 			message: enabled
-				? `Ollama enabled with model ${model} for generated wallboard messages.`
-				: hasBaseUrlInput || model
+				? provider === "codex"
+					? "Codex CLI enabled using the signed-in CLI default model for generated wallboard messages."
+					: `Ollama enabled with model ${model} for generated wallboard messages.`
+				: provider === "ollama" && (hasBaseUrlInput || model)
 					? "Ollama disabled. Add both base URL and model to enable."
-					: "Ollama settings cleared and disabled.",
+					: "AI rewrite settings cleared and disabled.",
 			state: await readIntercomState(),
 		};
 	});
@@ -781,7 +803,10 @@ function normalizeWallboardTheme(value: unknown): WallboardTheme {
 function normalizeWallboardProducts(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return value
-		.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+		.filter(
+			(item): item is string =>
+				typeof item === "string" && item.trim().length > 0,
+		)
 		.map((item) => item.trim());
 }
 

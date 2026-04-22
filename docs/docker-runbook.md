@@ -59,6 +59,7 @@ Notes:
 
 - `IMAGE_NAME` and `IMAGE_TAG` tell Docker which prebuilt app image to pull.
 - `OLLAMA_BASE_URL` should point to the Pi host if Ollama is running there.
+- If you use Codex CLI in Docker, run `codex login` inside the worker container so the worker and CLI share the same runtime.
 
 ## Start The Full App
 

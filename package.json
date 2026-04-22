@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently \"vite dev --port 3010\" \"tsx jobs/index.ts\"",
+    "dev:full": "node scripts/dev-full.mjs",
     "dev:web": "vite dev --port 3000",
     "build": "vite build",
     "preview": "vite preview",
@@ -17,7 +18,7 @@
     "db:pull": "drizzle-kit pull",
     "db:studio": "drizzle-kit studio",
     "workers": "tsx jobs/index.ts",
-    "dev:all": "pnpm dev"
+    "dev:all": "pnpm dev:full"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.0.0",

@@ -5,14 +5,19 @@ import {
 	getDefaultIntercomAppUrl,
 	normalizeIntercomAppUrl,
 } from "@/lib/intercom-links";
+import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
 import { readLiveWallboardFocusPlan } from "@/lib/wallboard-focus-plan";
-import { buildDeterministicInsights, readWallboardInsights } from "@/lib/wallboard-insights";
+import {
+	buildDeterministicInsights,
+	readWallboardInsights,
+} from "@/lib/wallboard-insights";
 import { readWallboardTickerMessages } from "@/lib/wallboard-ticker-messages";
 import {
 	buildCxSeries,
 	buildLiveWallboardData,
 	buildNpsSeries,
 	buildNpsSummary,
+	buildSupportHealthSnapshot,
 	buildTopContributors,
 	buildTrendsTickerItems,
 	buildTrendsWallboardData,
@@ -533,64 +538,65 @@ export async function loadSupportCases() {
 
 		const { adapterConfigs, nodes, entities, teamMembers, syncState } = schema;
 
-		const [rows, syncRows, configRows, entityRows, teammateRows] = await Promise.all([
-			db
-				.select({
-					id: nodes.id,
-					externalId: nodes.externalId,
-					source: nodes.source,
-					type: nodes.type,
-					status: nodes.status,
-					priority: nodes.priority,
-					title: nodes.title,
-					description: nodes.description,
-					tags: nodes.tags,
-					createdAt: nodes.createdAt,
-					updatedAt: nodes.updatedAt,
-					resolvedAt: nodes.resolvedAt,
-					rawData: nodes.rawData,
-					cxScore: nodes.cxScore,
-					cxComment: nodes.cxComment,
-					responseTimeMinutes: nodes.responseTimeMinutes,
-					resolutionTimeHours: nodes.resolutionTimeHours,
-					assigneeName: teamMembers.name,
-					assigneeAvatarUrl: teamMembers.avatarUrl,
-					teamName: teamMembers.teamName,
-					entityId: nodes.entityId,
-					entityValue: entities.value,
-				})
-				.from(nodes)
-				.leftJoin(entities, eq(nodes.entityId, entities.id))
-				.leftJoin(teamMembers, eq(nodes.assigneeId, teamMembers.id))
-				.where(eq(nodes.source, "intercom")),
-			db
-				.select()
-				.from(syncState)
-				.where(eq(syncState.adapterId, "intercom"))
-				.limit(1),
-			db
-				.select()
-				.from(adapterConfigs)
-				.where(eq(adapterConfigs.adapterId, "intercom"))
-				.limit(1),
-			db
-				.select({
-					id: entities.id,
-					externalId: entities.externalId,
-					name: entities.name,
-					rawData: entities.rawData,
-				})
-				.from(entities)
-				.where(eq(entities.source, "intercom")),
-			db
-				.select({
-					externalId: teamMembers.externalId,
-					name: teamMembers.name,
-					avatarUrl: teamMembers.avatarUrl,
-				})
-				.from(teamMembers)
-				.where(eq(teamMembers.source, "intercom")),
-		]);
+		const [rows, syncRows, configRows, entityRows, teammateRows] =
+			await Promise.all([
+				db
+					.select({
+						id: nodes.id,
+						externalId: nodes.externalId,
+						source: nodes.source,
+						type: nodes.type,
+						status: nodes.status,
+						priority: nodes.priority,
+						title: nodes.title,
+						description: nodes.description,
+						tags: nodes.tags,
+						createdAt: nodes.createdAt,
+						updatedAt: nodes.updatedAt,
+						resolvedAt: nodes.resolvedAt,
+						rawData: nodes.rawData,
+						cxScore: nodes.cxScore,
+						cxComment: nodes.cxComment,
+						responseTimeMinutes: nodes.responseTimeMinutes,
+						resolutionTimeHours: nodes.resolutionTimeHours,
+						assigneeName: teamMembers.name,
+						assigneeAvatarUrl: teamMembers.avatarUrl,
+						teamName: teamMembers.teamName,
+						entityId: nodes.entityId,
+						entityValue: entities.value,
+					})
+					.from(nodes)
+					.leftJoin(entities, eq(nodes.entityId, entities.id))
+					.leftJoin(teamMembers, eq(nodes.assigneeId, teamMembers.id))
+					.where(eq(nodes.source, "intercom")),
+				db
+					.select()
+					.from(syncState)
+					.where(eq(syncState.adapterId, "intercom"))
+					.limit(1),
+				db
+					.select()
+					.from(adapterConfigs)
+					.where(eq(adapterConfigs.adapterId, "intercom"))
+					.limit(1),
+				db
+					.select({
+						id: entities.id,
+						externalId: entities.externalId,
+						name: entities.name,
+						rawData: entities.rawData,
+					})
+					.from(entities)
+					.where(eq(entities.source, "intercom")),
+				db
+					.select({
+						externalId: teamMembers.externalId,
+						name: teamMembers.name,
+						avatarUrl: teamMembers.avatarUrl,
+					})
+					.from(teamMembers)
+					.where(eq(teamMembers.source, "intercom")),
+			]);
 
 		// Pair each raw row with its normalized case so we can map contact → products.
 		const paired: Array<{ entityId: string | null; productName: string }> = [];
@@ -697,7 +703,7 @@ export async function loadSupportCases() {
 	}
 }
 
-function getAvailableProducts(cases: SupportCaseRecord[]) {
+export function getAvailableProducts(cases: SupportCaseRecord[]) {
 	const seen = new Set<string>();
 	const products: string[] = [];
 
@@ -718,7 +724,7 @@ function getAvailableProducts(cases: SupportCaseRecord[]) {
 	return products;
 }
 
-function filterSupportCasesByProduct(
+export function filterSupportCasesByProduct(
 	cases: SupportCaseRecord[],
 	selectedProducts: string[],
 	options?: {
@@ -726,10 +732,16 @@ function filterSupportCasesByProduct(
 	},
 ) {
 	const includeUnknownWhenAll = options?.includeUnknownWhenAll ?? true;
+	const hasVisibleProductView = (item: SupportCaseRecord) =>
+		item.serviceBucket !== "unknown" &&
+		(item.productViewNames ?? [item.productName]).length > 0;
+
 	if (selectedProducts.length === 0) {
 		return includeUnknownWhenAll
-			? cases
-			: cases.filter((item) => item.serviceBucket !== "unknown");
+			? cases.filter(
+					(item) => item.serviceBucket === "unknown" || hasVisibleProductView(item),
+				)
+			: cases.filter(hasVisibleProductView);
 	}
 
 	const selected = new Set(selectedProducts);
@@ -742,10 +754,18 @@ function filterSupportCasesByProduct(
 	);
 }
 
-export const getLiveWallboard = createServerFn({ method: "GET" })
-	.handler(async (): Promise<LiveWallboardData> => {
+export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
+	async (): Promise<LiveWallboardData> => {
 		const [
-			{ cases, lastSyncAt, now, intercomAppUrl, supportTargets, wallboardTheme, wallboardProducts },
+			{
+				cases,
+				lastSyncAt,
+				now,
+				intercomAppUrl,
+				supportTargets,
+				wallboardTheme,
+				wallboardProducts,
+			},
 			storedPeopleMoments,
 			storedInsights,
 		] = await Promise.all([
@@ -753,7 +773,6 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
 			readWallboardTickerMessages(),
 			readWallboardInsights(),
 		]);
-		const workflowCounts = buildWorkflowCounts(cases);
 		const availableProducts = getAvailableProducts(cases);
 		const selectedProducts = wallboardProducts.filter((product) =>
 			availableProducts.includes(product),
@@ -761,7 +780,33 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
 		const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
 			includeUnknownWhenAll: true,
 		});
+		const metricProducts =
+			selectedProducts.length > 0 ? selectedProducts : availableProducts;
+		const productMetrics = Object.fromEntries(
+			metricProducts.map((productName) => {
+				const productCases = filterSupportCasesByProduct(
+					filteredCases,
+					[productName],
+					{
+						includeUnknownWhenAll: false,
+					},
+				);
+
+				return [
+					productName,
+					{
+						snapshot: buildSupportHealthSnapshot(
+							productCases,
+							lastSyncAt,
+							now,
+						),
+						workflowCounts: buildWorkflowCounts(productCases),
+					},
+				];
+			}),
+		);
 		const payload = buildLiveWallboardData(filteredCases, lastSyncAt, now);
+		const workflowCounts = buildWorkflowCounts(filteredCases);
 		const focusPlan = await readLiveWallboardFocusPlan({
 			availableProducts,
 			lookupCases: payload.lookupCases,
@@ -770,6 +815,7 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
 		return {
 			...payload,
 			workflowCounts,
+			productMetrics,
 			defaultTargets: supportTargets.defaultTargets,
 			selectedTargets: resolveSelectedSupportTargets(
 				supportTargets,
@@ -789,16 +835,21 @@ export const getLiveWallboard = createServerFn({ method: "GET" })
 				storedInsights?.products ??
 				buildDeterministicInsights(cases, availableProducts).products,
 		};
-	});
+	},
+);
 
 export const getTrendsWallboard = createServerFn({ method: "GET" })
 	.inputValidator((data: SupportViewInput | undefined) =>
 		normalizeSupportPeriodInput(data),
 	)
 	.handler(async ({ data }): Promise<TrendsWallboardData> => {
-		const { readWallboardNpsThemes, buildDeterministicNpsThemes } = await import(
-			"../wallboard-nps-themes"
-		);
+		const [
+			{ readWallboardNpsThemes, buildDeterministicNpsThemes },
+			{ buildNpsCommentTranslationKey, readWallboardNpsCommentTranslations },
+		] = await Promise.all([
+			import("../wallboard-nps-themes"),
+			import("../wallboard-nps-comment-translations"),
+		]);
 		const [
 			{
 				cases,
@@ -814,10 +865,12 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			},
 			storedInsights,
 			storedNpsThemes,
+			storedNpsCommentTranslations,
 		] = await Promise.all([
 			loadSupportCases(),
 			readWallboardInsights(),
 			readWallboardNpsThemes(),
+			readWallboardNpsCommentTranslations(),
 		]);
 		const workflowCounts = buildWorkflowCounts(cases);
 		const availableProducts = getAvailableProducts(cases);
@@ -840,7 +893,11 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			(productName) => resolveSupportTargets(supportTargets, productName),
 		);
 		// Override the cxSeries to use the natural period end.
-		const cxSeriesDisplay = buildCxSeries(filteredCases, period.from, visualEnd);
+		const cxSeriesDisplay = buildCxSeries(
+			filteredCases,
+			period.from,
+			visualEnd,
+		);
 
 		const buildNpsBlock = (records: typeof npsRecords) => {
 			const summary = buildNpsSummary(records, period);
@@ -862,13 +919,25 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 					return bTime - aTime;
 				})
 				.slice(0, 12)
-				.map((r) => ({
-					name: r.name,
-					score: r.score,
-					bucket: r.bucket,
-					comment: r.comment!,
-					ratedAt: r.ratedAt ? r.ratedAt.toISOString() : null,
-				}));
+				.flatMap((r) => {
+					const comment = r.comment;
+					if (!comment) return [];
+					return [
+						{
+							name: r.name,
+							score: r.score,
+							bucket: r.bucket,
+							comment,
+							englishComment: getEnglishNpsCommentToDisplay(
+								comment,
+								storedNpsCommentTranslations?.translations[
+									buildNpsCommentTranslationKey(r)
+								] ?? null,
+							),
+							ratedAt: r.ratedAt ? r.ratedAt.toISOString() : null,
+						},
+					];
+				});
 			return { summary, series, distribution, comments };
 		};
 
@@ -927,7 +996,11 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			const productCases = filteredCases.filter(
 				(c) => c.productName === product,
 			);
-			const summary = buildTopContributors(productCases, period, teammateLookup);
+			const summary = buildTopContributors(
+				productCases,
+				period,
+				teammateLookup,
+			);
 			if (summary.contributors.length > 0) {
 				topContributorsByProduct[product] = summary;
 			}

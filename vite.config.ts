@@ -7,6 +7,9 @@ import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import viteTsConfigPaths from "vite-tsconfig-paths";
 
+const disableDevtoolsEventBus =
+	process.env.HEARTBEAT_DISABLE_DEVTOOLS_EVENT_BUS === "1";
+
 const config = defineConfig({
 	resolve: {
 		dedupe: ["react", "react-dom"],
@@ -26,7 +29,11 @@ const config = defineConfig({
 		],
 	},
 	plugins: [
-		devtools(),
+		devtools({
+			eventBusConfig: {
+				enabled: !disableDevtoolsEventBus,
+			},
+		}),
 		nitro(),
 		// this is the plugin that enables path aliases
 		viteTsConfigPaths({

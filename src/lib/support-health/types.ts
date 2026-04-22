@@ -74,6 +74,11 @@ export interface SupportWorkflowCounts {
 	developerTeamAssignedCount: number;
 }
 
+export interface ProductLiveMetrics {
+	snapshot: SupportHealthSnapshot;
+	workflowCounts: SupportWorkflowCounts;
+}
+
 export interface SupportHealthSnapshot {
 	status: SupportHealthStatus;
 	statusLabel: string;
@@ -233,7 +238,7 @@ export type LiveFocusLane = "over-sla" | "due-soon" | "unassigned";
 
 export interface LiveWallboardFocusPlan {
 	generatedAt: string;
-	source: "deterministic" | "ollama";
+	source: "deterministic" | "ollama" | "codex";
 	model: string | null;
 	focusProductName: string | null;
 	headline: string;
@@ -245,6 +250,7 @@ export interface LiveWallboardFocusPlan {
 export interface LiveWallboardData {
 	snapshot: SupportHealthSnapshot;
 	workflowCounts: SupportWorkflowCounts;
+	productMetrics: Record<string, ProductLiveMetrics>;
 	defaultTargets: SupportPerformanceTargets;
 	selectedTargets: SupportPerformanceTargets;
 	productTargets: Record<string, SupportPerformanceTargets>;
@@ -297,6 +303,7 @@ export interface NpsComment {
 	score: number;
 	bucket: "promoter" | "passive" | "detractor";
 	comment: string;
+	englishComment: string | null;
 	ratedAt: string | null;
 }
 

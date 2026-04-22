@@ -66,12 +66,13 @@ async function runSyncCycle() {
 async function refreshTickerMessages() {
   try {
     const [
-      { loadSupportCases },
+      { filterSupportCasesByProduct, getAvailableProducts, loadSupportCases },
       { buildLiveWallboardData },
       ticker,
       focusPlan,
       insights,
       npsThemesModule,
+      npsCommentTranslationsModule,
       { readIntercomTickerLlmSettings },
     ] = await Promise.all([
       import("@/lib/support-health/server"),
@@ -80,18 +81,26 @@ async function refreshTickerMessages() {
       import("@/lib/wallboard-focus-plan"),
       import("@/lib/wallboard-insights"),
       import("@/lib/wallboard-nps-themes"),
+      import("@/lib/wallboard-nps-comment-translations"),
       import("@/lib/intercom-admin"),
     ])
 
-    const { cases, lastSyncAt, now, npsRecords } = await loadSupportCases()
-    const live = buildLiveWallboardData(cases, lastSyncAt, now)
+    const { cases, lastSyncAt, now, npsRecords, wallboardProducts } =
+      await loadSupportCases()
+    const selectedProducts = wallboardProducts.filter((product) =>
+      getAvailableProducts(cases).includes(product),
+    )
+    const scopedCases = filterSupportCasesByProduct(cases, selectedProducts, {
+      includeUnknownWhenAll: true,
+    })
+    const live = buildLiveWallboardData(scopedCases, lastSyncAt, now)
     const deterministicItems = live.peopleMoments
     const llmSettings = await readIntercomTickerLlmSettings()
     const deterministicFocusPlan = focusPlan.buildDeterministicLiveFocusPlan(live)
 
     let resolvedFocusPlan = deterministicFocusPlan
     try {
-      const rewrittenFocusPlan = await focusPlan.rewriteLiveFocusPlanWithOllama(
+      const rewrittenFocusPlan = await focusPlan.rewriteLiveFocusPlanWithLlm(
         deterministicFocusPlan,
         live,
         llmSettings
@@ -100,7 +109,7 @@ async function refreshTickerMessages() {
         resolvedFocusPlan = rewrittenFocusPlan.plan
       }
     } catch (error) {
-      console.error("[workers] Ollama focus-plan rewrite failed. Using deterministic plan.", error)
+      console.error("[workers] AI focus-plan rewrite failed. Using deterministic plan.", error)
     }
 
     await focusPlan.writeLiveWallboardFocusPlan(resolvedFocusPlan)
@@ -108,18 +117,21 @@ async function refreshTickerMessages() {
     // Product insights (what went well / what to improve)
     const productNames = live.mappedQueues.map((q) => q.teamName)
     if (productNames.length > 0) {
-      const deterministicInsights = insights.buildDeterministicInsights(cases, productNames)
+      const deterministicInsights = insights.buildDeterministicInsights(
+        scopedCases,
+        productNames,
+      )
       let resolvedInsights = deterministicInsights
       try {
-        const rewritten = await insights.rewriteInsightsWithOllama(
+        const rewritten = await insights.rewriteInsightsWithLlm(
           deterministicInsights,
-          cases,
+          scopedCases,
           productNames,
           llmSettings
         )
         if (rewritten) resolvedInsights = rewritten
       } catch (error) {
-        console.error("[workers] Ollama insights rewrite failed. Using deterministic.", error)
+        console.error("[workers] AI insights rewrite failed. Using deterministic.", error)
       }
       await insights.writeWallboardInsights(resolvedInsights)
       console.info(`[workers] Wallboard insights refreshed (${resolvedInsights.source}).`)
@@ -130,17 +142,38 @@ async function refreshTickerMessages() {
       const deterministicNpsThemes = npsThemesModule.buildDeterministicNpsThemes(npsRecords)
       let resolvedNpsThemes = deterministicNpsThemes
       try {
-        const rewritten = await npsThemesModule.rewriteNpsThemesWithOllama(
+        const rewritten = await npsThemesModule.rewriteNpsThemesWithLlm(
           deterministicNpsThemes,
           npsRecords,
           llmSettings,
         )
         if (rewritten) resolvedNpsThemes = rewritten
       } catch (error) {
-        console.error("[workers] Ollama NPS themes rewrite failed. Using deterministic.", error)
+        console.error("[workers] AI NPS themes rewrite failed. Using deterministic.", error)
       }
       await npsThemesModule.writeWallboardNpsThemes(resolvedNpsThemes)
       console.info(`[workers] Wallboard NPS themes refreshed (${resolvedNpsThemes.source}).`)
+
+      try {
+        const translatedComments =
+          await npsCommentTranslationsModule.rewriteNpsCommentTranslationsWithLlm(
+            npsRecords,
+            llmSettings,
+          )
+        if (translatedComments) {
+          await npsCommentTranslationsModule.writeWallboardNpsCommentTranslations(
+            translatedComments,
+          )
+          console.info(
+            `[workers] Wallboard NPS comment translations refreshed (${translatedComments.source}).`,
+          )
+        }
+      } catch (error) {
+        console.error(
+          "[workers] AI NPS comment translations failed. Keeping stored translations.",
+          error,
+        )
+      }
     }
 
     if (deterministicItems.length === 0) {
@@ -149,21 +182,21 @@ async function refreshTickerMessages() {
     }
 
     let items = deterministicItems
-    let source: "deterministic" | "ollama" = "deterministic"
+    let source: "deterministic" | "ollama" | "codex" = "deterministic"
     let model: string | null = null
 
     try {
-      const rewritten = await ticker.rewriteTickerMessagesWithOllama(
+      const rewritten = await ticker.rewriteTickerMessagesWithLlm(
         deterministicItems,
         llmSettings
       )
       if (rewritten?.items.length) {
         items = rewritten.items
-        source = "ollama"
+        source = rewritten.source
         model = rewritten.model
       }
     } catch (error) {
-      console.error("[workers] Ollama ticker rewrite failed. Using deterministic messages.", error)
+      console.error("[workers] AI ticker rewrite failed. Using deterministic messages.", error)
     }
 
     await ticker.writeWallboardTickerMessages({

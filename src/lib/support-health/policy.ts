@@ -25,8 +25,23 @@ export interface SupportCaseClassification {
 }
 
 const SUPPORT_PRODUCT_ALIASES: Record<string, string> = {
-	aftaleportalen: "Pension Broker",
+	"aftale portalen": "Aftaleportalen",
 	cvr: "Pension Broker",
+	pensionbroker: "Pension Broker",
+};
+
+const PRODUCT_VIEW_EXCLUDED_TICKET_TYPES = new Set([
+	"developer",
+	"feature request",
+	"internal task",
+	"issue tracker",
+	"knowledge",
+]);
+
+const PRODUCT_VIEW_EXCLUDED_TEAM_ASSIGNMENTS = new Set(["developer"]);
+
+const PRODUCT_VIEW_EXCLUDED_ASSIGNEES: Record<string, Set<string>> = {
+	"Addo Sign": new Set(["fin"]),
 };
 
 const PRODUCT_POLICY_RULES: ProductPolicyRule[] = [
@@ -49,7 +64,14 @@ const PRODUCT_POLICY_RULES: ProductPolicyRule[] = [
 		label: "Pension Broker",
 		bucket: "exception",
 		policyName: "Separate workflow",
-		matchTerms: ["pension broker", "pensionbroker", "cvr", "aftaleportalen"],
+		matchTerms: ["pension broker", "pensionbroker", "cvr"],
+	},
+	{
+		id: "aftaleportalen",
+		label: "Aftaleportalen",
+		bucket: "exception",
+		policyName: "Separate workflow",
+		matchTerms: ["aftaleportalen", "aftale portalen"],
 	},
 ];
 
@@ -181,6 +203,36 @@ function getExplicitProduct(rawData: unknown) {
 	return null;
 }
 
+function getTicketTypeForProductView(rawData: unknown) {
+	const candidates = [
+		getNestedValue(rawData, ["ticket", "ticket_type"]),
+		getNestedValue(rawData, ["ticket_type", "name"]),
+		getNestedValue(rawData, ["ticket_type"]),
+	];
+
+	for (const candidate of candidates) {
+		const resolved = getStringCandidate(candidate);
+		if (resolved) return resolved;
+	}
+
+	return null;
+}
+
+function getTeamAssignmentForProductView(rawData: unknown) {
+	const candidates = [
+		getNestedValue(rawData, ["team_assignee", "name"]),
+		getNestedValue(rawData, ["team_assignee"]),
+		getNestedValue(rawData, ["team", "name"]),
+	];
+
+	for (const candidate of candidates) {
+		const resolved = getStringCandidate(candidate);
+		if (resolved) return resolved;
+	}
+
+	return null;
+}
+
 function matchesRule(
 	rule: ProductPolicyRule,
 	haystack: string,
@@ -257,5 +309,36 @@ export function resolveSupportCaseProductViews(input: {
 		return [];
 	}
 
-	return [normalizeSupportProductName(input.productName) ?? input.productName];
+	const normalizedProductName =
+		normalizeSupportProductName(input.productName) ?? input.productName;
+	const ticketType = getTicketTypeForProductView(input.rawData);
+	if (
+		ticketType &&
+		PRODUCT_VIEW_EXCLUDED_TICKET_TYPES.has(normalizeSearchValue(ticketType))
+	) {
+		return [];
+	}
+
+	const teamAssignment = getTeamAssignmentForProductView(input.rawData);
+	if (
+		teamAssignment &&
+		PRODUCT_VIEW_EXCLUDED_TEAM_ASSIGNMENTS.has(
+			normalizeSearchValue(teamAssignment),
+		)
+	) {
+		return [];
+	}
+
+	const assigneeName = input.assigneeName?.trim();
+	if (assigneeName) {
+		const excludedAssignees =
+			PRODUCT_VIEW_EXCLUDED_ASSIGNEES[normalizedProductName];
+		if (
+			excludedAssignees?.has(normalizeSearchValue(assigneeName))
+		) {
+			return [];
+		}
+	}
+
+	return [normalizedProductName];
 }

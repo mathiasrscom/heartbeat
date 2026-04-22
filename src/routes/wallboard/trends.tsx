@@ -135,7 +135,7 @@ function TrendsWallboardPage() {
 	// product's spotlight. If the focused product has no NPS yet, render an
 	// empty state rather than falling back to global.
 	const productNps = focusedProductName
-		? data.npsByProduct[focusedProductName] ?? null
+		? (data.npsByProduct[focusedProductName] ?? null)
 		: null;
 	const npsSummary = productNps?.summary ?? data.npsSummary;
 	const npsSeries = productNps?.series ?? data.npsSeries;
@@ -176,7 +176,6 @@ function TrendsWallboardPage() {
 						<NpsHeroCard
 							summary={npsSummary}
 							scopeLabel={npsScopeName}
-							emptyScope={focusedProductName !== null && !npsHasData}
 							periodText={periodText}
 						/>
 					</div>
@@ -244,8 +243,8 @@ function TrendsWallboardPage() {
 						)}
 					>
 						{npsSummary.responseCount} NPS response
-						{npsSummary.responseCount === 1 ? "" : "s"} received {periodText}, but
-						no written comments.
+						{npsSummary.responseCount === 1 ? "" : "s"} received {periodText},
+						but no written comments.
 					</div>
 				) : (
 					<NpsCommentList comments={npsComments} />
@@ -260,7 +259,9 @@ function TrendsWallboardPage() {
 				<div className="grid grid-cols-2 gap-3 @lg:grid-cols-3">
 					<HighlightTile
 						label="Cases resolved"
-						value={String(focusedSummary.ratedCount + focusedSummary.unratedResolved)}
+						value={String(
+							focusedSummary.ratedCount + focusedSummary.unratedResolved,
+						)}
 					/>
 					<HighlightTile
 						label="CX"
@@ -312,25 +313,20 @@ function TrendsWallboardPage() {
 						What happened
 					</div>
 					<p className="mt-2 text-sm leading-relaxed text-foreground">
-						{buildPeriodHeadline(
-							data.period.label,
-							focusedSummary,
-							npsSummary,
-						)}
+						{buildPeriodHeadline(data.period.label, focusedSummary, npsSummary)}
 					</p>
 				</div>
 			</PaginatedContent>
 		</WallboardSection>
 	);
 
-	const contributorSummary =
-		(focusedProductName
-			? data.topContributorsByProduct[focusedProductName]
-			: data.topContributors) ?? {
-			contributors: [],
-			totalRated: 0,
-			totalPositive: 0,
-		};
+	const contributorSummary = (focusedProductName
+		? data.topContributorsByProduct[focusedProductName]
+		: data.topContributors) ?? {
+		contributors: [],
+		totalRated: 0,
+		totalPositive: 0,
+	};
 	const contributorList = contributorSummary.contributors;
 
 	const tickerItems = buildFocusedTickerItems({
@@ -471,12 +467,10 @@ function HeroStatCard({
 function NpsHeroCard({
 	summary,
 	scopeLabel,
-	emptyScope = false,
 	periodText,
 }: {
 	summary: NpsPeriodSummary;
 	scopeLabel: string | null;
-	emptyScope?: boolean;
 	periodText: string;
 }) {
 	const hasData = summary.responseCount > 0;
@@ -538,19 +532,13 @@ function HighlightTile({
 				{value}
 			</div>
 			{caption ? (
-				<div className="mt-1 text-[11px] text-muted-foreground">
-					{caption}
-				</div>
+				<div className="mt-1 text-[11px] text-muted-foreground">{caption}</div>
 			) : null}
 		</div>
 	);
 }
 
-function ContributorRow({
-	contributor,
-}: {
-	contributor: TopContributor;
-}) {
+function ContributorRow({ contributor }: { contributor: TopContributor }) {
 	return (
 		<div className={cn(wbCell, "flex items-center gap-3 px-4 py-3")}>
 			<Avatar className="h-10 w-10 border border-border/60">
@@ -663,15 +651,13 @@ function aggregateProductRows(
 						((slaTrackedCount - slaMissedCount) / slaTrackedCount) * 100,
 					),
 		satisfactionScorePercent:
-			ratedCount === 0
-				? null
-				: Math.round((positiveCount / ratedCount) * 100),
+			ratedCount === 0 ? null : Math.round((positiveCount / ratedCount) * 100),
 		averageCxScore:
-			cxWeight === 0 ? null : Math.round((cxScoreWeighted / cxWeight) * 10) / 10,
+			cxWeight === 0
+				? null
+				: Math.round((cxScoreWeighted / cxWeight) * 10) / 10,
 		responseRatePercent:
-			eligibleCount === 0
-				? 0
-				: Math.round((ratedCount / eligibleCount) * 100),
+			eligibleCount === 0 ? 0 : Math.round((ratedCount / eligibleCount) * 100),
 	};
 }
 
@@ -737,9 +723,7 @@ function buildFocusedTickerItems(input: {
 		focusedSummary.averageCxScore === null
 			? `no CX ratings ${withinPhrase}`
 			: (() => {
-					const pct = Math.round(
-						(focusedSummary.averageCxScore / 10) * 100,
-					);
+					const pct = Math.round((focusedSummary.averageCxScore / 10) * 100);
 					const raw = (focusedSummary.averageCxScore / 2).toFixed(1);
 					return `CX ${pct}% (${raw}/5.0)`;
 				})();
@@ -786,18 +770,6 @@ function buildFocusedTickerItems(input: {
 	}
 
 	return items.slice(0, 8);
-}
-
-function formatNpsScoreShort(score: number): string {
-	return formatNpsScore(score);
-}
-
-function formatCxScore(score: number | null): string {
-	if (score === null) return "—";
-	// cxScore is normalised 0–10 in the DB (doubled from Intercom's 1–5
-	// conversation rating). Present as a familiar X/5 average.
-	const onFive = score / 2;
-	return `${onFive.toFixed(1)} / 5.0`;
 }
 
 function buildPeriodHeadline(

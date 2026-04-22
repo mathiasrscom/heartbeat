@@ -40,6 +40,23 @@ pnpm dev
 pnpm dev:web
 ```
 
+If you want one command that boots the local database, waits for readiness, pushes the schema, and starts the app + worker, run:
+
+```bash
+pnpm dev:full
+```
+
+If Docker Postgres ever reports shared-memory errors such as `could not resize shared memory segment`, recreate the container so the configured `shm_size` is applied:
+
+```bash
+docker compose up -d --force-recreate postgres
+```
+
+For wallboard AI rewrites you can now use either:
+
+- Ollama via `OLLAMA_BASE_URL`
+- Codex CLI directly on the same machine as the worker via `codex login`
+
 ## Database
 
 The repo ships with a local Postgres service in [docker-compose.yml](./docker-compose.yml).
@@ -85,6 +102,8 @@ IMAGE_TAG=pi
 POSTGRES_PASSWORD=change-me
 OLLAMA_BASE_URL=http://<pi-ip>:11434
 ```
+
+If you pick Codex CLI, Heartbeat runs `codex exec` directly in the worker process using the signed-in CLI default model. That removes the extra local HTTP hop, but the `codex` binary and auth must exist in the same runtime as the worker. A host login does not automatically carry into Docker.
 
 Then start the production stack:
 
