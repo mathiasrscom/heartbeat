@@ -980,7 +980,11 @@ export function buildLookupCases(
 	limit = 5,
 ): CaseLookupItem[] {
 	return [...cases]
-		.filter(isActionableCase)
+		.filter(
+			(item) =>
+				isActionableCase(item) &&
+				item.actionableState !== "awaiting-customer",
+		)
 		.sort((left, right) => compareLookupCases(left, right, now))
 		.slice(0, limit)
 		.map((item) => {
@@ -989,6 +993,7 @@ export function buildLookupCases(
 				externalId: item.externalId,
 				productName: item.productName || "Unmapped",
 				queueName: item.teamName,
+				contactName: item.contactName?.trim() || null,
 				assigneeName: item.assigneeName,
 				assigneeAvatarUrl: item.assigneeAvatarUrl,
 				subtype: item.subtype,

@@ -99,6 +99,9 @@ function SettingsPage() {
 	const [wallboardProducts, setWallboardProducts] = useState<string[]>(
 		initialState.wallboardProducts,
 	);
+	const [wallboardTrackedTeammates, setWallboardTrackedTeammates] = useState<
+		string[]
+	>(initialState.wallboardTrackedTeammates);
 	const [isSavingWallboard, setIsSavingWallboard] = useState(false);
 	const tickerLookupRequestRef = useRef(0);
 	const supportTargetFieldId = useId();
@@ -474,11 +477,16 @@ function SettingsPage() {
 
 		try {
 			const result = await saveWallboardDisplay({
-				data: { theme: wallboardTheme, products: wallboardProducts },
+				data: {
+					theme: wallboardTheme,
+					products: wallboardProducts,
+					trackedTeammates: wallboardTrackedTeammates,
+				},
 			});
 			setState(result.state);
 			setWallboardTheme(result.state.wallboardTheme);
 			setWallboardProducts(result.state.wallboardProducts);
+			setWallboardTrackedTeammates(result.state.wallboardTrackedTeammates);
 			setSupportTargets(result.state.supportTargets);
 			setFeedback({ tone: "success", text: result.message });
 		} catch (error) {
@@ -1085,6 +1093,52 @@ function SettingsPage() {
 												}}
 											>
 												{product}
+											</Button>
+										);
+									})}
+								</div>
+							</div>
+						) : null}
+
+						{state.availableWallboardTeammates.length > 0 ? (
+							<div className="rounded-lg border bg-muted/20 p-4">
+								<div className="text-xs font-medium text-foreground mb-1">
+									Tracked teammates
+								</div>
+								<div className="text-[10px] text-muted-foreground mb-3">
+									Select who should appear in the live assignment load view.
+								</div>
+								<div className="flex flex-wrap gap-2">
+									{state.availableWallboardTeammates.map((teammate) => {
+										const isSelected = wallboardTrackedTeammates.includes(
+											teammate.externalId,
+										);
+										return (
+											<Button
+												key={teammate.externalId}
+												size="sm"
+												type="button"
+												variant={isSelected ? "default" : "outline"}
+												className="h-7 gap-2 px-3 text-xs"
+												onClick={() => {
+													setWallboardTrackedTeammates((current) =>
+														isSelected
+															? current.filter(
+																	(id) => id !== teammate.externalId,
+																)
+															: [...current, teammate.externalId],
+													);
+												}}
+											>
+												<span
+													className={cn(
+														"h-1.5 w-1.5 rounded-full",
+														teammate.isAvailable
+															? "bg-emerald-500"
+															: "bg-amber-500",
+													)}
+												/>
+												{teammate.name}
 											</Button>
 										);
 									})}

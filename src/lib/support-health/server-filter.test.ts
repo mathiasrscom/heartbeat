@@ -20,6 +20,7 @@ function makeCase(
 		serviceBucket: overrides.serviceBucket ?? "headline",
 		servicePolicyName: overrides.servicePolicyName ?? "Standard workflow",
 		productViewNames: overrides.productViewNames ?? ["Addo Sign"],
+		assigneeExternalId: overrides.assigneeExternalId ?? null,
 		assigneeName: overrides.assigneeName ?? null,
 		assigneeAvatarUrl: overrides.assigneeAvatarUrl ?? null,
 		hasAssignment: overrides.hasAssignment ?? false,

@@ -765,6 +765,7 @@ async function upsertTeamMember(
 		email: admin.email,
 		teamName,
 		avatarUrl: getAdminAvatarUrl(admin),
+		isAvailable: admin.away_mode_enabled !== true,
 		updatedAt: new Date(),
 	};
 
@@ -848,7 +849,7 @@ function normalizeTier(plan?: string | null) {
 
 function getAdminAvatarUrl(admin: IntercomAdmin) {
 	const candidateValues = [
-		admin.avatar?.image_url,
+		typeof admin.avatar === "string" ? admin.avatar : admin.avatar?.image_url,
 		admin.avatar_url,
 		admin.profile_image_url,
 	];

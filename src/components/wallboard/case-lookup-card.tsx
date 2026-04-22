@@ -17,6 +17,7 @@ export function CaseLookupCard({
 		subtype: item.subtype,
 	});
 	const assignee = item.assigneeName?.trim() || null;
+	const contactName = item.contactName?.trim() || null;
 
 	return (
 		<article className={cn(wbCell, "flex items-center gap-3 px-3 py-2")}>
@@ -36,11 +37,15 @@ export function CaseLookupCard({
 							#{item.externalId || item.id}
 						</span>
 					)}
-					<LookupMetaPill>{item.subtype === "ticket" ? "Ticket" : "Conv"}</LookupMetaPill>
 					{item.isHighRisk ? (
 						<LookupMetaPill tone="danger">Risk</LookupMetaPill>
 					) : null}
 				</div>
+				{contactName ? (
+					<div className="mt-0.5 truncate text-xs text-foreground/80">
+						{contactName}
+					</div>
+				) : null}
 				<div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
 					{assignee ? (
 						<Avatar className="h-4 w-4 border border-border/40">

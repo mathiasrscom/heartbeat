@@ -33,6 +33,8 @@ function makeCase(
 		productName: overrides.productName ?? "Billing",
 		serviceBucket: overrides.serviceBucket ?? "headline",
 		servicePolicyName: overrides.servicePolicyName ?? "Standard workflow",
+		contactName: overrides.contactName ?? null,
+		assigneeExternalId: overrides.assigneeExternalId ?? null,
 		assigneeName: overrides.assigneeName ?? "Casey",
 		assigneeAvatarUrl: overrides.assigneeAvatarUrl ?? null,
 		hasAssignment: overrides.hasAssignment ?? true,
@@ -947,6 +949,42 @@ describe("support health logic", () => {
 		expect(lookupCases[1]?.externalId).toBe("breach-short");
 		expect(lookupCases[0]?.ageLabel).toBe("3h overdue");
 		expect(lookupCases[2]?.ageLabel).toBe("Due in 20m");
+	});
+
+	it("excludes waiting-on-customer cases from lookup attention IDs", () => {
+		const lookupCases = buildLookupCases(
+			[
+				makeCase({
+					id: "customer-wait",
+					externalId: "customer-wait",
+					actionableState: "awaiting-customer",
+				}),
+				makeCase({
+					id: "team-wait",
+					externalId: "team-wait",
+					actionableState: "awaiting-team",
+				}),
+			],
+			now,
+		);
+
+		expect(lookupCases.map((item) => item.externalId)).toEqual(["team-wait"]);
+	});
+
+	it("includes contact names in lookup attention items when available", () => {
+		const lookupCases = buildLookupCases(
+			[
+				makeCase({
+					id: "contact-case",
+					externalId: "contact-case",
+					contactName: "Jane Customer",
+					actionableState: "awaiting-team",
+				}),
+			],
+			now,
+		);
+
+		expect(lookupCases[0]?.contactName).toBe("Jane Customer");
 	});
 
 	it("keeps a deeper live lookup pool so focused products retain their own IDs", () => {

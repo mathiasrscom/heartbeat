@@ -218,10 +218,14 @@ export interface IntercomAdmin {
   type: "admin"
   name: string
   email: string
+  away_mode_enabled?: boolean | null
   team_ids?: string[]
-  avatar?: {
-    image_url?: string | null
-  } | null
+  avatar?:
+    | {
+        image_url?: string | null
+      }
+    | string
+    | null
   avatar_url?: string | null
   profile_image_url?: string | null
 }

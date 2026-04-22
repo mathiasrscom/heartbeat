@@ -37,6 +37,8 @@ export interface SupportCaseRecord {
 	serviceBucket: SupportServiceBucket;
 	servicePolicyName: string;
 	productViewNames?: string[];
+	contactName?: string | null;
+	assigneeExternalId: string | null;
 	assigneeName: string | null;
 	assigneeAvatarUrl: string | null;
 	hasAssignment: boolean;
@@ -136,6 +138,7 @@ export interface CaseLookupItem {
 	externalId: string;
 	productName: string;
 	queueName: string;
+	contactName: string | null;
 	assigneeName: string | null;
 	assigneeAvatarUrl: string | null;
 	subtype: SupportCaseSubtype;
@@ -248,6 +251,17 @@ export interface LiveWallboardFocusPlan {
 	laneOrder: LiveFocusLane[];
 }
 
+export interface WallboardTeammateOption {
+	externalId: string;
+	name: string;
+	avatarUrl: string | null;
+	isAvailable: boolean;
+}
+
+export interface LiveWallboardTeammate extends WallboardTeammateOption {
+	openCaseCount: number;
+}
+
 export interface LiveWallboardData {
 	snapshot: SupportHealthSnapshot;
 	workflowCounts: SupportWorkflowCounts;
@@ -258,6 +272,7 @@ export interface LiveWallboardData {
 	intercomAppUrl: string | null;
 	availableProducts: string[];
 	selectedProducts: string[];
+	trackedTeammates: LiveWallboardTeammate[];
 	focusPlan?: LiveWallboardFocusPlan | null;
 	peopleMoments: string[];
 	statusBreakdown: CaseStatusBreakdown;

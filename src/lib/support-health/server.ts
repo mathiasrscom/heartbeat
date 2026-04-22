@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { eq } from "drizzle-orm";
 import { extractIntercomCx } from "@/lib/intercom-cx";
+import { createIntercomClient } from "@/lib/intercom";
 import {
 	getDefaultIntercomAppUrl,
 	normalizeIntercomAppUrl,
@@ -42,20 +43,37 @@ import {
 	resolveSupportTargets,
 } from "./targets";
 import type {
+	LiveWallboardTeammate,
 	LiveWallboardData,
 	NpsRecord,
 	SupportCasePriority,
 	SupportCaseRecord,
 	SupportTier,
 	TrendsWallboardData,
+	WallboardTeammateOption,
 } from "./types";
 
 export type SupportViewInput = SupportPeriodInput;
 
 type JsonRecord = Record<string, unknown>;
+const LIVE_ADMIN_AVAILABILITY_CACHE_MS = 60_000;
+
+let liveAdminAvailabilityCache:
+	| {
+			expiresAt: number;
+			appUrl: string | null;
+			statuses: Map<string, boolean>;
+	  }
+	| null = null;
 
 function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeToken(value: unknown) {
+	return typeof value === "string" && value.trim().length > 0
+		? value.trim()
+		: null;
 }
 
 function hasMeaningfulValue(value: unknown): boolean {
@@ -149,6 +167,75 @@ function getFirstTimestamp(raw: unknown, paths: string[][]) {
 		}
 	}
 	return null;
+}
+
+function normalizeWallboardTrackedTeammates(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+
+	const seen = new Set<string>();
+	const teammates: string[] = [];
+
+	for (const item of value) {
+		if (typeof item !== "string") continue;
+		const normalized = item.trim();
+		if (!normalized || seen.has(normalized)) continue;
+		seen.add(normalized);
+		teammates.push(normalized);
+	}
+
+	return teammates;
+}
+
+async function readLiveAdminAvailability(input: {
+	accessToken: string | null;
+	appUrl: string | null;
+}): Promise<Map<string, boolean> | null> {
+	if (!input.accessToken) return null;
+
+	const normalizedAppUrl = normalizeIntercomAppUrl(input.appUrl);
+	const cached = liveAdminAvailabilityCache;
+	if (
+		cached &&
+		cached.expiresAt > Date.now() &&
+		cached.appUrl === normalizedAppUrl
+	) {
+		return cached.statuses;
+	}
+
+	const client = createIntercomClient({
+		accessToken: input.accessToken,
+		appUrl: normalizedAppUrl,
+	});
+	const statuses = new Map<string, boolean>();
+	let cursor: string | undefined;
+	let hasMore = true;
+
+	while (hasMore) {
+		const response = await client.listAdmins({
+			per_page: 50,
+			starting_after: cursor,
+		});
+		const admins = response.admins || response.data || [];
+		for (const admin of admins) {
+			if (!admin?.id) continue;
+			statuses.set(admin.id, admin.away_mode_enabled !== true);
+		}
+
+		const next = response.pages?.next;
+		cursor =
+			typeof next === "string"
+				? next
+				: next?.starting_after || undefined;
+		hasMore = Boolean(cursor);
+	}
+
+	liveAdminAvailabilityCache = {
+		expiresAt: Date.now() + LIVE_ADMIN_AVAILABILITY_CACHE_MS,
+		appUrl: normalizedAppUrl,
+		statuses,
+	};
+
+	return statuses;
 }
 
 function getTicketType(raw: unknown) {
@@ -391,10 +478,12 @@ function normalizeSupportCase(input: {
 	updatedAt: Date | null;
 	resolvedAt: Date | null;
 	rawData: unknown;
+	assigneeExternalId: string | null;
 	assigneeName: string | null;
 	assigneeAvatarUrl: string | null;
 	teamName: string | null;
 	entityValue: unknown;
+	entityName: string | null;
 	cxScore: number | null;
 	cxComment: string | null;
 	responseTimeMinutes: number | null;
@@ -490,6 +579,8 @@ function normalizeSupportCase(input: {
 			assigneeName: input.assigneeName,
 			rawData: input.rawData,
 		}),
+		contactName: input.entityName,
+		assigneeExternalId: input.assigneeExternalId,
 		assigneeName: input.assigneeName,
 		assigneeAvatarUrl: input.assigneeAvatarUrl,
 		hasAssignment,
@@ -559,10 +650,12 @@ export async function loadSupportCases() {
 						cxComment: nodes.cxComment,
 						responseTimeMinutes: nodes.responseTimeMinutes,
 						resolutionTimeHours: nodes.resolutionTimeHours,
+						assigneeExternalId: teamMembers.externalId,
 						assigneeName: teamMembers.name,
 						assigneeAvatarUrl: teamMembers.avatarUrl,
 						teamName: teamMembers.teamName,
 						entityId: nodes.entityId,
+						entityName: entities.name,
 						entityValue: entities.value,
 					})
 					.from(nodes)
@@ -593,6 +686,7 @@ export async function loadSupportCases() {
 						externalId: teamMembers.externalId,
 						name: teamMembers.name,
 						avatarUrl: teamMembers.avatarUrl,
+						isAvailable: teamMembers.isAvailable,
 					})
 					.from(teamMembers)
 					.where(eq(teamMembers.source, "intercom")),
@@ -631,7 +725,23 @@ export async function loadSupportCases() {
 
 		const configRow = configRows[0] ?? null;
 		const settings = isRecord(configRow?.settings) ? configRow.settings : {};
+		const credentials = isRecord(configRow?.credentials)
+			? configRow.credentials
+			: {};
 		const supportTargets = readSupportTargetsFromSettings(settings);
+		const accessToken =
+			normalizeToken(process.env.INTERCOM_ACCESS_TOKEN) ??
+			normalizeToken(credentials.accessToken);
+		let liveAdminAvailability: Map<string, boolean> | null = null;
+
+		try {
+			liveAdminAvailability = await readLiveAdminAvailability({
+				accessToken,
+				appUrl: typeof settings.appUrl === "string" ? settings.appUrl : null,
+			});
+		} catch (error) {
+			console.error("Failed to refresh live Intercom admin availability", error);
+		}
 
 		const { extractNps, classifyNps } = await import("@/lib/nps");
 		const npsRecords: NpsRecord[] = [];
@@ -662,6 +772,17 @@ export async function loadSupportCases() {
 				avatarUrl: row.avatarUrl ?? null,
 			});
 		}
+		const trackedTeammateInboxOpenCounts = new Map<string, number>();
+		for (const row of rows) {
+			if (row.status !== "open") continue;
+			const assigneeExternalId = row.assigneeExternalId?.trim();
+			if (!assigneeExternalId) continue;
+
+			trackedTeammateInboxOpenCounts.set(
+				assigneeExternalId,
+				(trackedTeammateInboxOpenCounts.get(assigneeExternalId) ?? 0) + 1,
+			);
+		}
 
 		return {
 			now,
@@ -678,9 +799,24 @@ export async function loadSupportCases() {
 						(v) => typeof v === "string" && v.trim().length > 0,
 					)
 				: [],
+			wallboardTrackedTeammates: normalizeWallboardTrackedTeammates(
+				settings.wallboardTrackedTeammates,
+			),
+			availableWallboardTeammates: teammateRows
+				.filter((row) => row.externalId.trim().length > 0)
+				.map((row) => ({
+					externalId: row.externalId,
+					name: row.name,
+					avatarUrl: row.avatarUrl ?? null,
+					isAvailable:
+						liveAdminAvailability?.get(row.externalId) ??
+						(row.isAvailable !== false),
+				}))
+				.sort((left, right) => left.name.localeCompare(right.name)),
 			cases,
 			npsRecords,
 			contactProducts,
+			trackedTeammateInboxOpenCounts,
 			teammateLookup,
 		};
 	} catch (error) {
@@ -692,9 +828,12 @@ export async function loadSupportCases() {
 			supportTargets: readSupportTargetsFromSettings(null),
 			wallboardTheme: "dark" as const,
 			wallboardProducts: [] as string[],
+			wallboardTrackedTeammates: [] as string[],
+			availableWallboardTeammates: [] as WallboardTeammateOption[],
 			cases: [] as SupportCaseRecord[],
 			npsRecords: [] as NpsRecord[],
 			contactProducts: {} as Record<string, string[]>,
+			trackedTeammateInboxOpenCounts: new Map<string, number>(),
 			teammateLookup: new Map<
 				string,
 				{ name: string; avatarUrl: string | null }
@@ -754,6 +893,77 @@ export function filterSupportCasesByProduct(
 	);
 }
 
+export function buildTrackedTeammateAssignments(
+	cases: SupportCaseRecord[],
+	trackedTeammateIds: string[],
+	availableTeammates: WallboardTeammateOption[],
+): LiveWallboardTeammate[] {
+	if (trackedTeammateIds.length === 0 || availableTeammates.length === 0) {
+		return [];
+	}
+
+	const availableById = new Map(
+		availableTeammates.map((teammate) => [teammate.externalId, teammate]),
+	);
+	const openCounts = new Map<string, number>();
+
+	for (const item of cases) {
+		if (item.actionableState === "resolved") continue;
+		const assigneeExternalId = item.assigneeExternalId?.trim();
+		if (!assigneeExternalId) continue;
+		openCounts.set(
+			assigneeExternalId,
+			(openCounts.get(assigneeExternalId) ?? 0) + 1,
+		);
+	}
+
+	return trackedTeammateIds.flatMap((externalId) => {
+		const teammate = availableById.get(externalId);
+		if (!teammate) return [];
+
+		return [
+			{
+				...teammate,
+				openCaseCount: openCounts.get(externalId) ?? 0,
+			},
+		];
+	});
+}
+
+export function buildTrackedTeammateInboxAssignments(
+	openCountsByExternalId: Map<string, number>,
+	trackedTeammateIds: string[],
+	availableTeammates: WallboardTeammateOption[],
+): LiveWallboardTeammate[] {
+	if (trackedTeammateIds.length === 0 || availableTeammates.length === 0) {
+		return [];
+	}
+
+	const availableById = new Map(
+		availableTeammates.map((teammate) => [teammate.externalId, teammate]),
+	);
+
+	return trackedTeammateIds
+		.flatMap((externalId) => {
+		const teammate = availableById.get(externalId);
+		if (!teammate) return [];
+
+		return [
+			{
+				...teammate,
+				openCaseCount: openCountsByExternalId.get(externalId) ?? 0,
+			},
+		];
+		})
+		.sort((left, right) => {
+			if (right.openCaseCount !== left.openCaseCount) {
+				return right.openCaseCount - left.openCaseCount;
+			}
+
+			return left.name.localeCompare(right.name);
+		});
+}
+
 export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 	async (): Promise<LiveWallboardData> => {
 		const [
@@ -765,6 +975,9 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				supportTargets,
 				wallboardTheme,
 				wallboardProducts,
+				wallboardTrackedTeammates,
+				availableWallboardTeammates,
+				trackedTeammateInboxOpenCounts,
 			},
 			storedPeopleMoments,
 			storedInsights,
@@ -777,9 +990,19 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 		const selectedProducts = wallboardProducts.filter((product) =>
 			availableProducts.includes(product),
 		);
+		const trackedTeammateIds = wallboardTrackedTeammates.filter((externalId) =>
+			availableWallboardTeammates.some(
+				(teammate) => teammate.externalId === externalId,
+			),
+		);
 		const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
 			includeUnknownWhenAll: true,
 		});
+		const trackedTeammates = buildTrackedTeammateInboxAssignments(
+			trackedTeammateInboxOpenCounts,
+			trackedTeammateIds,
+			availableWallboardTeammates,
+		);
 		const metricProducts =
 			selectedProducts.length > 0 ? selectedProducts : availableProducts;
 		const productMetrics = Object.fromEntries(
@@ -822,6 +1045,7 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				selectedProducts,
 			),
 			productTargets: supportTargets.productTargets,
+			trackedTeammates,
 			focusPlan,
 			peopleMoments:
 				storedPeopleMoments.length > 0

@@ -15,6 +15,7 @@ import {
 	readSupportTargetsFromSettings,
 	type SupportTargetsConfig,
 } from "./support-health/targets";
+import type { WallboardTeammateOption } from "./support-health/types";
 import {
 	DEFAULT_OLLAMA_BASE_URL,
 	type TickerLlmConfig,
@@ -50,6 +51,7 @@ export type WallboardTheme = "light" | "dark";
 interface SaveWallboardDisplayInput {
 	theme: WallboardTheme;
 	products: string[];
+	trackedTeammates: string[];
 }
 
 interface ListIntercomTickerOllamaModelsInput {
@@ -97,6 +99,8 @@ export interface IntercomConnectionState {
 	supportTargetProducts: string[];
 	wallboardTheme: WallboardTheme;
 	wallboardProducts: string[];
+	wallboardTrackedTeammates: string[];
+	availableWallboardTeammates: WallboardTeammateOption[];
 }
 
 interface IntercomMutationResult {
@@ -230,6 +234,9 @@ function emptyState(
 		supportTargetProducts: overrides.supportTargetProducts ?? [],
 		wallboardTheme: overrides.wallboardTheme ?? "dark",
 		wallboardProducts: overrides.wallboardProducts ?? [],
+		wallboardTrackedTeammates: overrides.wallboardTrackedTeammates ?? [],
+		availableWallboardTeammates:
+			overrides.availableWallboardTeammates ?? [],
 	};
 }
 
@@ -261,9 +268,45 @@ async function getIntercomRows() {
 	};
 }
 
+async function readAvailableWallboardTeammates(): Promise<
+	WallboardTeammateOption[]
+> {
+	const [{ db }, { teamMembers }] = await Promise.all([
+		import("@/db"),
+		import("@/db/schema"),
+	]);
+
+	const rows = await db
+		.select({
+			externalId: teamMembers.externalId,
+			name: teamMembers.name,
+			avatarUrl: teamMembers.avatarUrl,
+			isAvailable: teamMembers.isAvailable,
+		})
+		.from(teamMembers)
+		.where(eq(teamMembers.source, "intercom"));
+
+	return rows
+		.filter(
+			(row) =>
+				typeof row.externalId === "string" &&
+				row.externalId.trim().length > 0 &&
+				typeof row.name === "string" &&
+				row.name.trim().length > 0,
+		)
+		.map((row) => ({
+			externalId: row.externalId.trim(),
+			name: row.name.trim(),
+			avatarUrl: row.avatarUrl ?? null,
+			isAvailable: row.isAvailable !== false,
+		}))
+		.sort((left, right) => left.name.localeCompare(right.name));
+}
+
 async function readIntercomState(): Promise<IntercomConnectionState> {
 	let configRow: Awaited<ReturnType<typeof getIntercomRows>>["configRow"];
 	let syncRow: Awaited<ReturnType<typeof getIntercomRows>>["syncRow"];
+	let availableWallboardTeammates: WallboardTeammateOption[] = [];
 	let runtime: IntercomSyncRuntime = {
 		isRunning: false,
 		currentStage: "idle",
@@ -277,6 +320,7 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		configRow = rows.configRow;
 		syncRow = rows.syncRow;
 		runtime = await readIntercomSyncRuntime();
+		availableWallboardTeammates = await readAvailableWallboardTeammates();
 	} catch (error) {
 		const message =
 			error instanceof Error
@@ -367,6 +411,14 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		supportTargetProducts: listSupportTargetProducts(supportTargets),
 		wallboardTheme: normalizeWallboardTheme(settings.wallboardTheme),
 		wallboardProducts: normalizeWallboardProducts(settings.wallboardProducts),
+		wallboardTrackedTeammates: normalizeWallboardTrackedTeammates(
+			settings.wallboardTrackedTeammates,
+		).filter((externalId) =>
+			availableWallboardTeammates.some(
+				(teammate) => teammate.externalId === externalId,
+			),
+		),
+		availableWallboardTeammates,
 	});
 }
 
@@ -810,11 +862,31 @@ function normalizeWallboardProducts(value: unknown): string[] {
 		.map((item) => item.trim());
 }
 
+function normalizeWallboardTrackedTeammates(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+
+	const seen = new Set<string>();
+	const teammates: string[] = [];
+
+	for (const item of value) {
+		if (typeof item !== "string") continue;
+		const normalized = item.trim();
+		if (!normalized || seen.has(normalized)) continue;
+		seen.add(normalized);
+		teammates.push(normalized);
+	}
+
+	return teammates;
+}
+
 export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 	.inputValidator((data: SaveWallboardDisplayInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
 		const theme = normalizeWallboardTheme(data.theme);
 		const products = normalizeWallboardProducts(data.products);
+		const trackedTeammates = normalizeWallboardTrackedTeammates(
+			data.trackedTeammates,
+		);
 
 		const { db, adapterConfigs, configRow } = await getIntercomRows();
 		const credentials = isRecord(configRow?.credentials)
@@ -835,6 +907,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 				...existingSettings,
 				wallboardTheme: theme,
 				wallboardProducts: products,
+				wallboardTrackedTeammates: trackedTeammates,
 			},
 			updatedAt: new Date(),
 		};
@@ -852,7 +925,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 		}
 
 		return {
-			message: `Wallboard display updated: ${theme} theme, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}.`,
+			message: `Wallboard display updated: ${theme} theme, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
 			state: await readIntercomState(),
 		};
 	});
