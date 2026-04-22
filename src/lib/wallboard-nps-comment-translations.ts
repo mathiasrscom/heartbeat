@@ -6,6 +6,7 @@ import {
 	type TickerLlmConfig,
 	type WallboardLlmSource,
 } from "./wallboard-llm";
+import { hashWallboardLlmInput } from "./wallboard-llm-cache";
 
 const SETTINGS_KEY = "wallboard_nps_comment_translations";
 const MAX_COMMENT_LENGTH = 220;
@@ -33,6 +34,7 @@ export interface WallboardNpsCommentTranslations {
 	generatedAt: string;
 	source: WallboardLlmSource;
 	model: string | null;
+	inputHash?: string | null;
 	translations: Record<string, string | null>;
 }
 
@@ -119,11 +121,8 @@ function sanitizeTranslations(
 	return translations;
 }
 
-export async function rewriteNpsCommentTranslationsWithLlm(
-	records: NpsRecord[],
-	config: TickerLlmConfig,
-): Promise<WallboardNpsCommentTranslations | null> {
-	const keyedComments = records
+function buildKeyedComments(records: NpsRecord[]) {
+	return records
 		.map((record) => {
 			const comment = getMeaningfulComment(record.comment);
 			if (!comment) return null;
@@ -149,10 +148,19 @@ export async function rewriteNpsCommentTranslationsWithLlm(
 			return list.findIndex((candidate) => candidate.key === record.key) === index;
 		})
 		.slice(0, MAX_COMMENTS);
+}
 
+function buildNpsCommentTranslationsPrompt(
+	keyedComments: Array<{
+		key: string;
+		score: number;
+		comment: string;
+		ratedAtMs: number;
+	}>,
+) {
 	if (keyedComments.length === 0) return null;
 
-	const prompt = [
+	return [
 		"You are translating customer feedback comments for an internal trends wallboard.",
 		"Return ONLY a JSON array with objects containing: key, englishComment.",
 		"Rules:",
@@ -169,6 +177,22 @@ export async function rewriteNpsCommentTranslationsWithLlm(
 				`${index + 1}. key=${record.key} [${record.score}/10] "${anonymizeComment(record.comment).slice(0, MAX_COMMENT_LENGTH)}"`,
 		),
 	].join("\n");
+}
+
+export function buildNpsCommentTranslationsInputHash(records: NpsRecord[]) {
+	const keyedComments = buildKeyedComments(records);
+	const prompt = buildNpsCommentTranslationsPrompt(keyedComments);
+	if (!prompt) return null;
+	return hashWallboardLlmInput(prompt);
+}
+
+export async function rewriteNpsCommentTranslationsWithLlm(
+	records: NpsRecord[],
+	config: TickerLlmConfig,
+): Promise<WallboardNpsCommentTranslations | null> {
+	const keyedComments = buildKeyedComments(records);
+	const prompt = buildNpsCommentTranslationsPrompt(keyedComments);
+	if (!prompt) return null;
 
 	const result = await generateWallboardText({
 		config,
@@ -285,6 +309,7 @@ export async function readWallboardNpsCommentTranslations(): Promise<WallboardNp
 				? value.source
 				: "deterministic",
 		model: typeof value.model === "string" ? value.model : null,
+		inputHash: typeof value.inputHash === "string" ? value.inputHash : null,
 		translations,
 	};
 }

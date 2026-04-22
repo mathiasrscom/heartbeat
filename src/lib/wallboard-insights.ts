@@ -5,6 +5,7 @@ import {
 	type TickerLlmConfig,
 	type WallboardLlmSource,
 } from "./wallboard-llm";
+import { hashWallboardLlmInput } from "./wallboard-llm-cache";
 
 const SETTINGS_KEY = "wallboard_product_insights";
 const MAX_TEXT_LENGTH = 300;
@@ -32,6 +33,7 @@ export interface WallboardProductInsights {
 	generatedAt: string;
 	source: WallboardLlmSource;
 	model: string | null;
+	inputHash?: string | null;
 	products: ProductInsight[];
 }
 
@@ -343,6 +345,17 @@ function buildOllamaPrompt(
 	].join("\n");
 }
 
+export function buildInsightsInputHash(
+	deterministic: WallboardProductInsights,
+	cases: SupportCaseRecord[],
+	productNames: string[],
+) {
+	if (productNames.length === 0) return null;
+	return hashWallboardLlmInput(
+		buildOllamaPrompt(deterministic, cases, productNames),
+	);
+}
+
 function extractJsonArrayFromText(text: string): unknown[] | null {
 	const trimmed = text.trim();
 	if (!trimmed) return null;
@@ -495,6 +508,7 @@ export async function readWallboardInsights(): Promise<WallboardProductInsights 
 				? value.source
 				: "deterministic",
 		model: typeof value.model === "string" ? value.model : null,
+		inputHash: typeof value.inputHash === "string" ? value.inputHash : null,
 		products,
 	};
 }

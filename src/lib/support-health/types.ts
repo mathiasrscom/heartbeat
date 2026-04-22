@@ -240,6 +240,7 @@ export interface LiveWallboardFocusPlan {
 	generatedAt: string;
 	source: "deterministic" | "ollama" | "codex";
 	model: string | null;
+	inputHash?: string | null;
 	focusProductName: string | null;
 	headline: string;
 	supportingText: string;

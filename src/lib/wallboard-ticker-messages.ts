@@ -4,6 +4,7 @@ import {
 	type TickerLlmConfig,
 	type WallboardLlmSource,
 } from "./wallboard-llm";
+import { hashWallboardLlmInput } from "./wallboard-llm-cache";
 
 const WALLBOARD_TICKER_MESSAGES_KEY = "wallboard_ticker_messages";
 const MAX_TICKER_ITEMS = 10;
@@ -16,11 +17,12 @@ const TICKER_OUTPUT_SCHEMA = {
 	maxItems: MAX_TICKER_ITEMS,
 };
 
-interface StoredTickerMessages {
+export interface StoredTickerMessages {
 	items: string[];
 	generatedAt: string;
 	source: WallboardLlmSource;
 	model: string | null;
+	inputHash?: string | null;
 }
 
 interface TickerRewriteResult {
@@ -123,6 +125,11 @@ async function upsertTickerMessages(value: StoredTickerMessages) {
 }
 
 export async function readWallboardTickerMessages() {
+	const stored = await readStoredWallboardTickerMessages();
+	return stored?.items ?? [];
+}
+
+export async function readStoredWallboardTickerMessages(): Promise<StoredTickerMessages | null> {
 	const [{ db }, { settings }] = await Promise.all([
 		import("@/db"),
 		import("@/db/schema"),
@@ -134,14 +141,31 @@ export async function readWallboardTickerMessages() {
 		.limit(1);
 
 	const value = rows[0]?.value;
-	if (!isRecord(value)) return [];
-	return normalizeMessageList(value.items);
+	if (!isRecord(value)) return null;
+
+	const items = normalizeMessageList(value.items);
+	if (items.length === 0) return null;
+
+	return {
+		items,
+		generatedAt:
+			typeof value.generatedAt === "string"
+				? value.generatedAt
+				: new Date().toISOString(),
+		source:
+			value.source === "ollama" || value.source === "codex"
+				? value.source
+				: "deterministic",
+		model: typeof value.model === "string" ? value.model : null,
+		inputHash: typeof value.inputHash === "string" ? value.inputHash : null,
+	};
 }
 
 export async function writeWallboardTickerMessages(input: {
 	items: string[];
 	source: WallboardLlmSource;
 	model: string | null;
+	inputHash?: string | null;
 }) {
 	const items = normalizeMessageList(input.items);
 	if (items.length === 0) return;
@@ -151,17 +175,12 @@ export async function writeWallboardTickerMessages(input: {
 		generatedAt: new Date().toISOString(),
 		source: input.source,
 		model: input.model,
+		inputHash: input.inputHash ?? null,
 	});
 }
 
-export async function rewriteTickerMessagesWithLlm(
-	seedItems: string[],
-	config: TickerLlmConfig,
-) {
-	const facts = normalizeMessageList(seedItems);
-	if (facts.length === 0) return null;
-
-	const prompt = [
+function buildTickerMessagesPrompt(facts: string[]) {
+	return [
 		"Write short TV-news ticker messages for a support wallboard.",
 		"Rules:",
 		"- Write ALL messages in English. Do not use any other language.",
@@ -174,6 +193,22 @@ export async function rewriteTickerMessagesWithLlm(
 		"Facts:",
 		...facts.map((item, index) => `${index + 1}. ${item}`),
 	].join("\n");
+}
+
+export function buildTickerMessagesInputHash(seedItems: string[]) {
+	const facts = normalizeMessageList(seedItems);
+	if (facts.length === 0) return null;
+	return hashWallboardLlmInput(buildTickerMessagesPrompt(facts));
+}
+
+export async function rewriteTickerMessagesWithLlm(
+	seedItems: string[],
+	config: TickerLlmConfig,
+) {
+	const facts = normalizeMessageList(seedItems);
+	if (facts.length === 0) return null;
+
+	const prompt = buildTickerMessagesPrompt(facts);
 
 	const result = await generateWallboardText({
 		config,

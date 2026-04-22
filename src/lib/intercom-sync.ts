@@ -364,7 +364,10 @@ export async function startIntercomSyncInBackground(accessToken: string) {
 	return true;
 }
 
-async function refreshWallboardContent() {
+export async function refreshWallboardContent(input?: {
+	logPrefix?: string;
+}) {
+	const logPrefix = input?.logPrefix ?? "[intercom-sync]";
 	const [
 		{ filterSupportCasesByProduct, getAvailableProducts, loadSupportCases },
 		{ buildLiveWallboardData },
@@ -374,6 +377,7 @@ async function refreshWallboardContent() {
 		npsThemesModule,
 		npsCommentTranslationsModule,
 		{ readIntercomTickerLlmSettings },
+		{ shouldReuseWallboardLlmResult },
 	] = await Promise.all([
 		import("@/lib/support-health/server"),
 		import("@/lib/support-health/logic"),
@@ -383,6 +387,7 @@ async function refreshWallboardContent() {
 		import("@/lib/wallboard-nps-themes"),
 		import("@/lib/wallboard-nps-comment-translations"),
 		import("@/lib/intercom-admin"),
+		import("@/lib/wallboard-llm-cache"),
 	]);
 
 	const { cases, lastSyncAt, now, npsRecords, wallboardProducts } =
@@ -399,18 +404,53 @@ async function refreshWallboardContent() {
 	// Focus plan
 	const deterministicFocusPlan =
 		focusPlan.buildDeterministicLiveFocusPlan(live);
-	let resolvedFocusPlan = deterministicFocusPlan;
-	try {
-		const rewritten = await focusPlan.rewriteLiveFocusPlanWithLlm(
-			deterministicFocusPlan,
-			live,
-			llmSettings,
+	const focusPlanInputHash = focusPlan.buildLiveFocusPlanInputHash(
+		deterministicFocusPlan,
+		live,
+	);
+	const storedFocusPlan = await focusPlan.readLiveWallboardFocusPlan({
+		availableProducts: live.mappedQueues.map((queue) => queue.teamName),
+		lookupCases: live.lookupCases,
+	});
+
+	if (
+		shouldReuseWallboardLlmResult({
+			provider: llmSettings.provider,
+			enabled: llmSettings.enabled,
+			model: llmSettings.model,
+			inputHash: focusPlanInputHash,
+			stored: storedFocusPlan,
+		})
+	) {
+		console.info(`${logPrefix} Reusing stored AI focus plan.`);
+	} else {
+		let resolvedFocusPlan = {
+			...deterministicFocusPlan,
+			inputHash: null,
+		};
+		try {
+			const rewritten = await focusPlan.rewriteLiveFocusPlanWithLlm(
+				deterministicFocusPlan,
+				live,
+				llmSettings,
+			);
+			if (rewritten?.plan) {
+				resolvedFocusPlan = {
+					...rewritten.plan,
+					inputHash: focusPlanInputHash,
+				};
+			}
+		} catch (error) {
+			console.error(
+				`${logPrefix} AI focus-plan rewrite failed. Using deterministic plan.`,
+				error,
+			);
+		}
+		await focusPlan.writeLiveWallboardFocusPlan(resolvedFocusPlan);
+		console.info(
+			`${logPrefix} Wallboard focus plan refreshed (${resolvedFocusPlan.source}).`,
 		);
-		if (rewritten?.plan) resolvedFocusPlan = rewritten.plan;
-	} catch {
-		// deterministic fallback
 	}
-	await focusPlan.writeLiveWallboardFocusPlan(resolvedFocusPlan);
 
 	// Product insights
 	const productNames = live.mappedQueues.map((q) => q.teamName);
@@ -419,76 +459,197 @@ async function refreshWallboardContent() {
 			scopedCases,
 			productNames,
 		);
-		let resolvedInsights = deterministicInsights;
-		try {
-			const rewritten = await insights.rewriteInsightsWithLlm(
-				deterministicInsights,
-				scopedCases,
-				productNames,
-				llmSettings,
+		const insightsInputHash = insights.buildInsightsInputHash(
+			deterministicInsights,
+			scopedCases,
+			productNames,
+		);
+		const storedInsights = await insights.readWallboardInsights();
+
+		if (
+			shouldReuseWallboardLlmResult({
+				provider: llmSettings.provider,
+				enabled: llmSettings.enabled,
+				model: llmSettings.model,
+				inputHash: insightsInputHash,
+				stored: storedInsights,
+			})
+		) {
+			console.info(`${logPrefix} Reusing stored AI wallboard insights.`);
+		} else {
+			let resolvedInsights = {
+				...deterministicInsights,
+				inputHash: null,
+			};
+			try {
+				const rewritten = await insights.rewriteInsightsWithLlm(
+					deterministicInsights,
+					scopedCases,
+					productNames,
+					llmSettings,
+				);
+				if (rewritten) {
+					resolvedInsights = {
+						...rewritten,
+						inputHash: insightsInputHash,
+					};
+				}
+			} catch (error) {
+				console.error(
+					`${logPrefix} AI insights rewrite failed. Using deterministic.`,
+					error,
+				);
+			}
+			await insights.writeWallboardInsights(resolvedInsights);
+			console.info(
+				`${logPrefix} Wallboard insights refreshed (${resolvedInsights.source}).`,
 			);
-			if (rewritten) resolvedInsights = rewritten;
-		} catch {
-			// deterministic fallback
 		}
-		await insights.writeWallboardInsights(resolvedInsights);
 	}
 
 	// NPS themes from customer comments
 	if (npsRecords.length > 0) {
 		const deterministicNpsThemes =
 			npsThemesModule.buildDeterministicNpsThemes(npsRecords);
-		let resolvedNpsThemes = deterministicNpsThemes;
-		try {
-			const rewritten = await npsThemesModule.rewriteNpsThemesWithLlm(
-				deterministicNpsThemes,
-				npsRecords,
-				llmSettings,
-			);
-			if (rewritten) resolvedNpsThemes = rewritten;
-		} catch {
-			// deterministic fallback
-		}
-		await npsThemesModule.writeWallboardNpsThemes(resolvedNpsThemes);
+		const npsThemesInputHash = npsThemesModule.buildNpsThemesInputHash(
+			deterministicNpsThemes,
+			npsRecords,
+		);
+		const storedNpsThemes = await npsThemesModule.readWallboardNpsThemes();
 
-		try {
-			const translatedComments =
-				await npsCommentTranslationsModule.rewriteNpsCommentTranslationsWithLlm(
+		if (
+			shouldReuseWallboardLlmResult({
+				provider: llmSettings.provider,
+				enabled: llmSettings.enabled,
+				model: llmSettings.model,
+				inputHash: npsThemesInputHash,
+				stored: storedNpsThemes,
+			})
+		) {
+			console.info(`${logPrefix} Reusing stored AI NPS themes.`);
+		} else {
+			let resolvedNpsThemes = {
+				...deterministicNpsThemes,
+				inputHash: null,
+			};
+			try {
+				const rewritten = await npsThemesModule.rewriteNpsThemesWithLlm(
+					deterministicNpsThemes,
 					npsRecords,
 					llmSettings,
 				);
-			if (translatedComments) {
-				await npsCommentTranslationsModule.writeWallboardNpsCommentTranslations(
-					translatedComments,
+				if (rewritten) {
+					resolvedNpsThemes = {
+						...rewritten,
+						inputHash: npsThemesInputHash,
+					};
+				}
+			} catch (error) {
+				console.error(
+					`${logPrefix} AI NPS themes rewrite failed. Using deterministic.`,
+					error,
 				);
 			}
-		} catch {
-			// keep previous translations
+			await npsThemesModule.writeWallboardNpsThemes(resolvedNpsThemes);
+			console.info(
+				`${logPrefix} Wallboard NPS themes refreshed (${resolvedNpsThemes.source}).`,
+			);
+		}
+
+		const npsCommentTranslationsInputHash =
+			npsCommentTranslationsModule.buildNpsCommentTranslationsInputHash(
+				npsRecords,
+			);
+		const storedTranslations =
+			await npsCommentTranslationsModule.readWallboardNpsCommentTranslations();
+
+		if (
+			shouldReuseWallboardLlmResult({
+				provider: llmSettings.provider,
+				enabled: llmSettings.enabled,
+				model: llmSettings.model,
+				inputHash: npsCommentTranslationsInputHash,
+				stored: storedTranslations,
+			})
+		) {
+			console.info(`${logPrefix} Reusing stored AI NPS comment translations.`);
+		} else {
+			try {
+				const translatedComments =
+					await npsCommentTranslationsModule.rewriteNpsCommentTranslationsWithLlm(
+						npsRecords,
+						llmSettings,
+					);
+				if (translatedComments) {
+					await npsCommentTranslationsModule.writeWallboardNpsCommentTranslations(
+						{
+							...translatedComments,
+							inputHash: npsCommentTranslationsInputHash,
+						},
+					);
+					console.info(
+						`${logPrefix} Wallboard NPS comment translations refreshed (${translatedComments.source}).`,
+					);
+				}
+			} catch (error) {
+				console.error(
+					`${logPrefix} AI NPS comment translations failed. Keeping stored translations.`,
+					error,
+				);
+			}
 		}
 	}
 
 	// Ticker messages
 	if (live.peopleMoments.length > 0) {
-		let items = live.peopleMoments;
-		let source: "deterministic" | "ollama" | "codex" = "deterministic";
-		let model: string | null = null;
-		try {
-			const rewritten = await ticker.rewriteTickerMessagesWithLlm(
-				live.peopleMoments,
-				llmSettings,
-			);
-			if (rewritten?.items.length) {
-				items = rewritten.items;
-				source = rewritten.source;
-				model = rewritten.model;
+		const tickerInputHash = ticker.buildTickerMessagesInputHash(
+			live.peopleMoments,
+		);
+		const storedTicker = await ticker.readStoredWallboardTickerMessages();
+
+		if (
+			shouldReuseWallboardLlmResult({
+				provider: llmSettings.provider,
+				enabled: llmSettings.enabled,
+				model: llmSettings.model,
+				inputHash: tickerInputHash,
+				stored: storedTicker,
+			})
+		) {
+			console.info(`${logPrefix} Reusing stored AI ticker messages.`);
+		} else {
+			let items = live.peopleMoments;
+			let source: "deterministic" | "ollama" | "codex" = "deterministic";
+			let model: string | null = null;
+			try {
+				const rewritten = await ticker.rewriteTickerMessagesWithLlm(
+					live.peopleMoments,
+					llmSettings,
+				);
+				if (rewritten?.items.length) {
+					items = rewritten.items;
+					source = rewritten.source;
+					model = rewritten.model;
+				}
+			} catch (error) {
+				console.error(
+					`${logPrefix} AI ticker rewrite failed. Using deterministic messages.`,
+					error,
+				);
 			}
-		} catch {
-			// deterministic fallback
+			await ticker.writeWallboardTickerMessages({
+				items,
+				source,
+				model,
+				inputHash: source === "deterministic" ? null : tickerInputHash,
+			});
+			console.info(`${logPrefix} Wallboard ticker refreshed (${source}).`);
 		}
-		await ticker.writeWallboardTickerMessages({ items, source, model });
+	} else {
+		console.info(`${logPrefix} No people moments available for ticker refresh.`);
 	}
 
-	console.info("[intercom-sync] Post-sync wallboard content refreshed.");
+	console.info(`${logPrefix} Post-sync wallboard content refreshed.`);
 }
 
 function getNextCursor(

@@ -6,6 +6,7 @@ import {
 	type TickerLlmConfig,
 	type WallboardLlmSource,
 } from "./wallboard-llm";
+import { hashWallboardLlmInput } from "./wallboard-llm-cache";
 
 const SETTINGS_KEY = "wallboard_nps_themes";
 const MAX_TEXT_LENGTH = 220;
@@ -36,6 +37,7 @@ export interface WallboardNpsThemes {
 	generatedAt: string;
 	source: WallboardLlmSource;
 	model: string | null;
+	inputHash?: string | null;
 	themes: NpsTheme[];
 }
 
@@ -175,6 +177,69 @@ export function buildDeterministicNpsThemes(
 	};
 }
 
+function buildNpsThemesPrompt(
+	deterministic: WallboardNpsThemes,
+	records: NpsRecord[],
+) {
+	const eligibleComments = records
+		.filter((r) => r.comment && r.comment.trim().length > 0)
+		.sort((a, b) => {
+			const aTime = a.ratedAt?.getTime() ?? 0;
+			const bTime = b.ratedAt?.getTime() ?? 0;
+			return bTime - aTime;
+		})
+		.slice(0, 40);
+
+	if (eligibleComments.length === 0) return null;
+
+	const commentLines = eligibleComments.flatMap((r, idx) => {
+		const comment = r.comment;
+		if (!comment) return [];
+		return [
+			`${idx + 1}. [${r.score}/10] "${anonymizeComment(comment).slice(0, 200)}"`,
+		];
+	});
+
+	return [
+		"You are summarising NPS customer feedback for a support team wallboard displayed on a TV.",
+		"Read the NPS comments below and produce 3–5 themes.",
+		"",
+		"IMPORTANT: Write ALL output (headline, summary, and quote) in English.",
+		"The NPS comments may be in Danish, Swedish, Norwegian, German, or other languages.",
+		"Translate them to English for the headline and summary. For the quote, provide",
+		"an English translation (keep it natural — do not include the original text).",
+		"",
+		"For each theme, produce an object with:",
+		'- headline: short English phrase (max 60 chars), e.g. "Fast support responses"',
+		"- summary: one English sentence (max 200 chars) describing what customers are saying",
+		'- sentiment: one of "positive", "mixed", "negative"',
+		"- quote: an English translation of one representative comment, max 120 chars",
+		"- mentionCount: number of comments that mentioned this theme",
+		"",
+		"Rules:",
+		"- Office-safe: no customer names or company names (emails and URLs are already stripped).",
+		"- Stay faithful to what customers actually said. Do not invent details.",
+		"- Include both positive and negative themes when present.",
+		"- Return ONLY a JSON array of theme objects, no markdown or commentary.",
+		"- All text MUST be in English.",
+		"",
+		"Recent NPS comments (score / text):",
+		...commentLines,
+		"",
+		"Deterministic draft (improve on this):",
+		JSON.stringify(deterministic.themes, null, 2),
+	].join("\n");
+}
+
+export function buildNpsThemesInputHash(
+	deterministic: WallboardNpsThemes,
+	records: NpsRecord[],
+) {
+	const prompt = buildNpsThemesPrompt(deterministic, records);
+	if (!prompt) return null;
+	return hashWallboardLlmInput(prompt);
+}
+
 function extractJsonArray(text: string): unknown[] | null {
 	const trimmed = text.trim();
 	if (!trimmed) return null;
@@ -231,54 +296,8 @@ export async function rewriteNpsThemesWithLlm(
 	records: NpsRecord[],
 	config: TickerLlmConfig,
 ): Promise<WallboardNpsThemes | null> {
-	const eligibleComments = records
-		.filter((r) => r.comment && r.comment.trim().length > 0)
-		.sort((a, b) => {
-			const aTime = a.ratedAt?.getTime() ?? 0;
-			const bTime = b.ratedAt?.getTime() ?? 0;
-			return bTime - aTime;
-		})
-		.slice(0, 40);
-
-	if (eligibleComments.length === 0) return null;
-
-	const commentLines = eligibleComments.flatMap((r, idx) => {
-		const comment = r.comment;
-		if (!comment) return [];
-		return [
-			`${idx + 1}. [${r.score}/10] "${anonymizeComment(comment).slice(0, 200)}"`,
-		];
-	});
-
-	const prompt = [
-		"You are summarising NPS customer feedback for a support team wallboard displayed on a TV.",
-		"Read the NPS comments below and produce 3–5 themes.",
-		"",
-		"IMPORTANT: Write ALL output (headline, summary, and quote) in English.",
-		"The NPS comments may be in Danish, Swedish, Norwegian, German, or other languages.",
-		"Translate them to English for the headline and summary. For the quote, provide",
-		"an English translation (keep it natural — do not include the original text).",
-		"",
-		"For each theme, produce an object with:",
-		'- headline: short English phrase (max 60 chars), e.g. "Fast support responses"',
-		"- summary: one English sentence (max 200 chars) describing what customers are saying",
-		'- sentiment: one of "positive", "mixed", "negative"',
-		"- quote: an English translation of one representative comment, max 120 chars",
-		"- mentionCount: number of comments that mentioned this theme",
-		"",
-		"Rules:",
-		"- Office-safe: no customer names or company names (emails and URLs are already stripped).",
-		"- Stay faithful to what customers actually said. Do not invent details.",
-		"- Include both positive and negative themes when present.",
-		"- Return ONLY a JSON array of theme objects, no markdown or commentary.",
-		"- All text MUST be in English.",
-		"",
-		"Recent NPS comments (score / text):",
-		...commentLines,
-		"",
-		"Deterministic draft (improve on this):",
-		JSON.stringify(deterministic.themes, null, 2),
-	].join("\n");
+	const prompt = buildNpsThemesPrompt(deterministic, records);
+	if (!prompt) return null;
 
 	const result = await generateWallboardText({
 		config,
@@ -358,6 +377,7 @@ export async function readWallboardNpsThemes(): Promise<WallboardNpsThemes | nul
 				? value.source
 				: "deterministic",
 		model: typeof value.model === "string" ? value.model : null,
+		inputHash: typeof value.inputHash === "string" ? value.inputHash : null,
 		themes,
 	};
 }

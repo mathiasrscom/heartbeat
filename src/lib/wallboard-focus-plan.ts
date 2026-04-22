@@ -8,6 +8,7 @@ import type {
 	SupportHealthSnapshot,
 } from "@/lib/support-health/types";
 import { generateWallboardText, type TickerLlmConfig } from "./wallboard-llm";
+import { hashWallboardLlmInput } from "./wallboard-llm-cache";
 
 const WALLBOARD_LIVE_FOCUS_PLAN_KEY = "wallboard_live_focus_plan";
 const MAX_TOP_CASE_IDS = 4;
@@ -395,6 +396,17 @@ export function buildDeterministicLiveFocusPlan(
 	};
 }
 
+export function buildLiveFocusPlanInputHash(
+	deterministicPlan: LiveWallboardFocusPlan,
+	live: Pick<LiveWallboardData, "snapshot" | "mappedQueues" | "lookupCases">,
+) {
+	if (live.mappedQueues.length === 0 && live.lookupCases.length === 0) {
+		return null;
+	}
+
+	return hashWallboardLlmInput(buildOllamaPrompt(deterministicPlan, live));
+}
+
 export async function rewriteLiveFocusPlanWithLlm(
 	deterministicPlan: LiveWallboardFocusPlan,
 	live: Pick<LiveWallboardData, "snapshot" | "mappedQueues" | "lookupCases">,
@@ -491,6 +503,7 @@ export async function readLiveWallboardFocusPlan(input?: {
 				? value.source
 				: "deterministic",
 		model: typeof value.model === "string" ? value.model : null,
+		inputHash: typeof value.inputHash === "string" ? value.inputHash : null,
 		focusProductName: patch.focusProductName ?? null,
 		headline: patch.headline,
 		supportingText: patch.supportingText,
