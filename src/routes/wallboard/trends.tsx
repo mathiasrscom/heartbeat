@@ -1,9 +1,8 @@
 import {
 	createFileRoute,
-	useNavigate,
 	useRouter,
 } from "@tanstack/react-router";
-import { startTransition, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { CxNpsTrendChart } from "@/components/cx-nps-trend-chart";
 import { NpsDistributionBar } from "@/components/nps-distribution-bar";
@@ -35,14 +34,7 @@ const wbCell =
 	"rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 
 const WALLBOARD_REFRESH_INTERVAL_MS = 30_000;
-
-const PERIOD_ROTATION_PRESETS = [
-	"current-week",
-	"previous-week",
-	"current-month",
-	"previous-month",
-	"year-to-date",
-] as const;
+const TRENDS_PERIOD_PRESET = "rolling-30-days" as const;
 
 const PERIOD_ROTATION_INTERVAL_MS = 25_000;
 
@@ -57,15 +49,13 @@ export const Route = createFileRoute("/wallboard/trends")({
 	}),
 	validateSearch: (search: Record<string, unknown>) =>
 		normalizeSupportPeriodInput(search as SupportPeriodInput),
-	loaderDeps: ({ search }) => normalizeSupportPeriodInput(search),
+	loaderDeps: () => ({ period: TRENDS_PERIOD_PRESET }),
 	loader: async ({ deps }) => getTrendsWallboard({ data: deps }),
 	component: TrendsWallboardPage,
 });
 
 function TrendsWallboardPage() {
 	const data = Route.useLoaderData();
-	const search = Route.useSearch();
-	const navigate = useNavigate({ from: Route.fullPath });
 	const router = useRouter();
 
 	const autoplayProducts = resolveAutoplayProducts(
@@ -74,54 +64,30 @@ function TrendsWallboardPage() {
 		data.availableProducts,
 	);
 
-	const totalSteps =
-		Math.max(autoplayProducts.length, 1) * PERIOD_ROTATION_PRESETS.length;
+	const totalSteps = Math.max(autoplayProducts.length, 1);
 	const [rotationStep, setRotationStep] = useState(0);
 
-	// When period rotation is active the navigate() below refetches the loader
-	// on every 15s tick, so a separate refresh timer would just double-fire
-	// (every 30s two loader runs land back-to-back). Only run the plain refresh
-	// when there's nothing to rotate.
 	useEffect(() => {
-		if (totalSteps > 1) return;
 		const dataTimer = window.setInterval(() => {
 			void router.invalidate();
 		}, WALLBOARD_REFRESH_INTERVAL_MS);
 
 		return () => window.clearInterval(dataTimer);
-	}, [router, totalSteps]);
+	}, [router]);
 
 	useEffect(() => {
 		if (totalSteps <= 1) return;
 
 		const timer = window.setInterval(() => {
-			setRotationStep((current) => {
-				const next = (current + 1) % totalSteps;
-				const nextPeriod =
-					PERIOD_ROTATION_PRESETS[next % PERIOD_ROTATION_PRESETS.length];
-				if (nextPeriod !== search.period) {
-					startTransition(() => {
-						navigate({
-							search: {
-								period: nextPeriod,
-								from: undefined,
-								to: undefined,
-							},
-							replace: true,
-						});
-					});
-				}
-				return next;
-			});
+			setRotationStep((current) => (current + 1) % totalSteps);
 		}, PERIOD_ROTATION_INTERVAL_MS);
 
 		return () => window.clearInterval(timer);
-	}, [totalSteps, navigate, search.period]);
+	}, [totalSteps]);
 
 	const productIndex =
 		autoplayProducts.length > 0
-			? Math.floor(rotationStep / PERIOD_ROTATION_PRESETS.length) %
-				autoplayProducts.length
+			? rotationStep % autoplayProducts.length
 			: 0;
 	const focusedProductName =
 		autoplayProducts.length > 0 ? autoplayProducts[productIndex] : null;
@@ -328,6 +294,11 @@ function TrendsWallboardPage() {
 		totalPositive: 0,
 	};
 	const contributorList = contributorSummary.contributors;
+	const coachingInsights = focusedProductName
+		? data.insights.filter((insight) => insight.productName === focusedProductName)
+		: data.insights.filter((insight) =>
+				autoplayProducts.includes(insight.productName),
+			);
 
 	const tickerItems = buildFocusedTickerItems({
 		periodLabel: data.period.label,
@@ -362,6 +333,45 @@ function TrendsWallboardPage() {
 					))
 				)}
 			</PaginatedContent>
+		</WallboardSection>
+	);
+	const coachingPanel = (
+		<WallboardSection title="Team coaching" className="h-full">
+			<div className="space-y-3">
+				{coachingInsights.length === 0 ? (
+					<div
+						className={cn(
+							wbCell,
+							"px-4 py-8 text-center text-sm text-muted-foreground",
+						)}
+					>
+						{focusedProductName
+							? `No coaching notes for ${formatProductLabel(focusedProductName)} yet.`
+							: "No coaching notes yet."}
+					</div>
+				) : (
+					coachingInsights.map((insight) => (
+						<div key={insight.productName} className="space-y-3">
+							{coachingInsights.length > 1 ? (
+								<div className="flex items-center gap-2 text-base font-semibold text-foreground">
+									<ProductBrandLogo productName={insight.productName} size="sm" />
+									<span>{formatProductLabel(insight.productName)}</span>
+								</div>
+							) : null}
+							<CoachingInsightCard
+								label="What went well"
+								tone="good"
+								body={insight.wentWell}
+							/>
+							<CoachingInsightCard
+								label="To improve"
+								tone="watch"
+								body={insight.toImprove}
+							/>
+						</div>
+					))
+				)}
+			</div>
 		</WallboardSection>
 	);
 
@@ -426,6 +436,11 @@ function TrendsWallboardPage() {
 									content: contributorsPanel,
 								}
 							: null,
+						{
+							id: "trends-team-coaching",
+							label: "Team coaching",
+							content: coachingPanel,
+						},
 					].filter(
 						(p): p is { id: string; label: string; content: React.ReactNode } =>
 							p !== null,
@@ -436,6 +451,43 @@ function TrendsWallboardPage() {
 				/>
 			</div>
 		</WallboardShell>
+	);
+}
+
+function CoachingInsightCard({
+	label,
+	body,
+	tone,
+}: {
+	label: string;
+	body: string;
+	tone: "good" | "watch";
+}) {
+	return (
+		<div
+			className={cn(
+				wbCell,
+				"border-l-2 px-4 py-4",
+				tone === "good"
+					? "border-l-emerald-500 dark:border-l-emerald-400"
+					: "border-l-amber-500 dark:border-l-amber-400",
+			)}
+		>
+			<div
+				className={cn(
+					"flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide",
+					tone === "good"
+						? "text-emerald-600 dark:text-emerald-400"
+						: "text-amber-600 dark:text-amber-400",
+				)}
+			>
+				<span className="text-sm normal-case">
+					{tone === "good" ? "\u2713" : "\u25C6"}
+				</span>
+				{label}
+			</div>
+			<p className="mt-2 text-sm leading-relaxed text-foreground">{body}</p>
+		</div>
 	);
 }
 

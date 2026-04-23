@@ -6,8 +6,8 @@ import {
 	formatProductLabel,
 	ProductBrandLogo,
 } from "@/components/product-brand";
+import { VolumeSlaTrendChart } from "@/components/volume-sla-trend-chart";
 import { CaseLookupCard } from "@/components/wallboard/case-lookup-card";
-import { PaginatedContent } from "@/components/wallboard/paginated-content";
 import { RotatingPanels } from "@/components/wallboard/rotating-panels";
 import {
 	WallboardSection,
@@ -48,9 +48,6 @@ function LiveWallboardPage() {
 		live.availableProducts,
 	);
 	const visibleProducts = resolveVisibleProducts(live);
-	const visibleInsights = live.insights.filter((insight) =>
-		visibleProducts.includes(insight.productName),
-	);
 	const prioritizedLookupCases = prioritizeLookupCases(
 		live.lookupCases,
 		live.focusPlan?.topCaseExternalIds ?? [],
@@ -71,8 +68,8 @@ function LiveWallboardPage() {
 		<WallboardSection
 			title={
 				aggregateScope.isSubset
-					? "Immediate queue state • Selected products"
-					: "Immediate queue state"
+					? "Immediate queue states • Selected products"
+					: "Immediate queue states"
 			}
 			className="min-h-0"
 		>
@@ -188,14 +185,11 @@ function LiveWallboardPage() {
 	);
 
 	const topIdsPanel = (
-		<WallboardSection
-			title="Cases needing attention"
-			className="min-h-0"
-		>
+		<WallboardSection title="Cases due in 60m" className="min-h-0">
 			<div className="space-y-2">
 				{prioritizedLookupCases.length === 0 ? (
 					<div className="text-lg text-muted-foreground">
-						No open cases need support right now.
+						No cases are within 60 minutes of SLA breach right now.
 					</div>
 				) : (
 					prioritizedLookupCases.map((item) => (
@@ -210,53 +204,14 @@ function LiveWallboardPage() {
 		</WallboardSection>
 	);
 
-	const insightsPanel =
-		visibleInsights.length > 0 ? (
-			<WallboardSection title="Team coaching" className="min-h-0">
-				<PaginatedContent intervalMs={20_000}>
-					<div className="space-y-4">
-						{visibleInsights.map((insight) => (
-							<div key={insight.productName} className="space-y-3">
-								<div className="flex items-center gap-2 text-base font-semibold text-foreground">
-									<ProductBrandLogo productName={insight.productName} size="sm" />
-									<span>{formatProductLabel(insight.productName)}</span>
-								</div>
-								<div className="grid gap-3">
-									<div
-										className={cn(
-											wbCell,
-											"border-l-2 border-l-emerald-500 px-4 py-4 dark:border-l-emerald-400",
-										)}
-									>
-										<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-											<span className="text-sm normal-case">&#10003;</span>
-											What went well
-										</div>
-										<p className="mt-2 text-sm leading-relaxed text-foreground">
-											{insight.wentWell}
-										</p>
-									</div>
-									<div
-										className={cn(
-											wbCell,
-											"border-l-2 border-l-amber-500 px-4 py-4 dark:border-l-amber-400",
-										)}
-									>
-										<div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
-											<span className="text-sm normal-case">&#9672;</span>
-											To improve
-										</div>
-										<p className="mt-2 text-sm leading-relaxed text-foreground">
-											{insight.toImprove}
-										</p>
-									</div>
-								</div>
-							</div>
-						))}
-					</div>
-				</PaginatedContent>
-			</WallboardSection>
-		) : null;
+	const volumeSlaPanel = (
+		<WallboardSection title="30-day volume vs SLA" className="min-h-0">
+			<VolumeSlaTrendChart
+				points={live.volumeSlaSeries30d}
+				slaTargetPercent={live.selectedTargets.slaTargetPercent}
+			/>
+		</WallboardSection>
+	);
 
 	return (
 		<WallboardShell
@@ -279,7 +234,12 @@ function LiveWallboardPage() {
 			}
 		>
 			<div className="grid h-full min-h-0 grid-cols-[minmax(0,1.55fr)_minmax(340px,0.95fr)] gap-6">
-				<div className="min-h-0 overflow-auto pr-1">{queueStackPanel}</div>
+				<div className="min-h-0 overflow-auto pr-1">
+					<div className="space-y-6">
+						{queueStackPanel}
+						{volumeSlaPanel}
+					</div>
+				</div>
 				<RotatingPanels
 					panels={[
 						{
@@ -291,11 +251,6 @@ function LiveWallboardPage() {
 							id: "live-top-ids",
 							label: "Top IDs",
 							content: topIdsPanel,
-						},
-						{
-							id: "live-team-coaching",
-							label: "Team coaching",
-							content: insightsPanel,
 						},
 					]}
 					intervalMs={28_000}
@@ -400,7 +355,6 @@ function ProductQueueStateCard({
 	action: { text: string; tone: "red" | "amber" | "stone" | "emerald" } | null;
 }) {
 	const snapshot = metrics.snapshot;
-	const workflowCounts = metrics.workflowCounts;
 
 	return (
 		<div className="space-y-3">
@@ -440,16 +394,6 @@ function ProductQueueStateCard({
 					label="Waiting on customer"
 					tooltip={`Open cases paused while waiting on the customer or another external party in ${formatProductLabel(productName)}.`}
 					value={snapshot.currentAwaitingCustomerCount}
-				/>
-				<QueueInlineMetric
-					label="Ticket review"
-					tooltip={`Open developer tickets in Submitted or Waiting on support in ${formatProductLabel(productName)}.`}
-					value={workflowCounts.ticketReviewCount}
-				/>
-				<QueueInlineMetric
-					label="Dev team assigned"
-					tooltip={`Open developer tickets already assigned to the developer team in ${formatProductLabel(productName)}.`}
-					value={workflowCounts.developerTeamAssignedCount}
 				/>
 			</div>
 		</div>

@@ -27,6 +27,7 @@ import type {
 	CaseStatusBreakdown,
 	ClassificationHint,
 	CxPeriodSummary,
+	DailyVolumeSlaPoint,
 	LiveWallboardData,
 	NpsPeriodSummary,
 	NpsRecord,
@@ -980,11 +981,7 @@ export function buildLookupCases(
 	limit = 5,
 ): CaseLookupItem[] {
 	return [...cases]
-		.filter(
-			(item) =>
-				isActionableCase(item) &&
-				item.actionableState !== "awaiting-customer",
-		)
+		.filter((item) => isActionableCase(item) && item.isDueSoon)
 		.sort((left, right) => compareLookupCases(left, right, now))
 		.slice(0, limit)
 		.map((item) => {
@@ -1004,6 +1001,39 @@ export function buildLookupCases(
 				isHighRisk: item.isHighRisk,
 			};
 		});
+}
+
+export function buildDailyVolumeSlaSeries(
+	cases: SupportCaseRecord[],
+	now: Date,
+	days = 30,
+): DailyVolumeSlaPoint[] {
+	const rangeEnd = endOfDay(now);
+	const rangeStart = startOfDay(subDays(now, Math.max(days - 1, 0)));
+	const labelFormat = days > 14 ? "d MMM" : "EEE d";
+
+	return eachDayOfInterval({ start: rangeStart, end: rangeEnd }).map((day) => {
+		const dayEnd = endOfDay(day);
+		const dayCases = cases.filter((item) =>
+			isWithinInterval(item.createdAt, { start: day, end: dayEnd }),
+		);
+		const slaTracked = dayCases.filter((item) => item.hasSlaTracking);
+		const slaMissedCount = slaTracked.filter((item) =>
+			isSlaMissedForPeriod(item, now),
+		).length;
+
+		return {
+			label: format(day, labelFormat),
+			dateLabel: format(day, "EEE d MMM"),
+			volume: dayCases.length,
+			slaTrackedCount: slaTracked.length,
+			slaMissedCount,
+			slaAdherencePercent:
+				slaTracked.length === 0
+					? null
+					: round(((slaTracked.length - slaMissedCount) / slaTracked.length) * 100),
+		};
+	});
 }
 
 export function buildCxPeriodSummary(
@@ -1495,6 +1525,7 @@ export function buildLiveWallboardData(
 		unknownSignals: buildUnknownSignals(cases),
 		actionItems: buildCoverageActionItems(mappedQueues),
 		lookupCases: buildLookupCases(cases, now, actionableLookupPoolLimit),
+		volumeSlaSeries30d: buildDailyVolumeSlaSeries(cases, now, 30),
 		refreshedAt: now.toISOString(),
 	};
 }

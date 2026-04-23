@@ -220,16 +220,6 @@ function SupportDashboardPage() {
 									tooltip="Open cases without an owner assigned."
 									value={String(live.snapshot.currentUnassignedCount)}
 								/>
-								<MetricCard
-									label="Ticket review"
-									tooltip="Open developer tickets in Submitted or Waiting on support. This follows the global Intercom Ticket review view."
-									value={String(live.workflowCounts.ticketReviewCount)}
-								/>
-								<MetricCard
-									label="Dev team assigned"
-									tooltip="Open developer tickets already assigned to the developer team. This is tracked globally, not by the selected product filter."
-									value={String(live.workflowCounts.developerTeamAssignedCount)}
-								/>
 							</div>
 						</CardContent>
 					</Card>

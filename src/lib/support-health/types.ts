@@ -17,6 +17,7 @@ export type SupportServiceBucket = "headline" | "exception" | "unknown";
 export type SupportPeriodPreset =
 	| "current-week"
 	| "previous-week"
+	| "rolling-30-days"
 	| "current-month"
 	| "previous-month"
 	| "year-to-date"
@@ -166,6 +167,15 @@ export interface TrendPoint {
 	value: number | null;
 }
 
+export interface DailyVolumeSlaPoint {
+	label: string;
+	dateLabel: string;
+	volume: number;
+	slaTrackedCount: number;
+	slaMissedCount: number;
+	slaAdherencePercent: number | null;
+}
+
 export interface CaseStatusBreakdown {
 	open: number;
 	pending: number;
@@ -283,6 +293,7 @@ export interface LiveWallboardData {
 	unknownSignals: ClassificationHint[];
 	actionItems: ActionItem[];
 	lookupCases: CaseLookupItem[];
+	volumeSlaSeries30d: DailyVolumeSlaPoint[];
 	refreshedAt: string;
 	wallboardTheme: "light" | "dark";
 	insights: import("@/lib/wallboard-insights").ProductInsight[];

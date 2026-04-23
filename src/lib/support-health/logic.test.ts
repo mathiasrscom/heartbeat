@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildCxSeries,
+	buildDailyVolumeSlaSeries,
 	buildLiveWallboardData,
 	buildLookupCases,
 	buildTrendsWallboardData,
@@ -216,6 +217,20 @@ describe("support health logic", () => {
 				now,
 			}),
 		).toBe(false);
+	});
+
+	it("resolves the rolling 30 day period relative to now", () => {
+		const period = resolveSupportPeriod({ period: "rolling-30-days" }, now);
+
+		expect(period.range).toMatchObject({
+			preset: "rolling-30-days",
+			label: "Last 30 days",
+			from: "2026-03-02",
+			to: "2026-03-31",
+		});
+		expect(period.from.getHours()).toBe(0);
+		expect(period.from.getMinutes()).toBe(0);
+		expect(period.to).toBe(now);
 	});
 
 	it("builds workflow counts for ticket review and developer team assignment", () => {
@@ -897,46 +912,104 @@ describe("support health logic", () => {
 		expect(values).toContain(4);
 	});
 
-	it("shows only five lookup IDs and ranks longest-overdue breaches first", () => {
+	it("builds a 30-day volume and SLA series from cases opened each day", () => {
+		const series = buildDailyVolumeSlaSeries(
+			[
+				makeCase({
+					id: "mar-30-hit",
+					createdAt: new Date("2026-03-30T08:00:00.000Z"),
+					status: "closed",
+					actionableState: "resolved",
+					rawSlaStatus: "hit",
+					updatedAt: new Date("2026-03-30T12:00:00.000Z"),
+					resolvedAt: new Date("2026-03-30T12:00:00.000Z"),
+				}),
+				makeCase({
+					id: "mar-30-missed",
+					createdAt: new Date("2026-03-30T09:00:00.000Z"),
+					actionableState: "breached",
+					isBreached: true,
+					nextDueAt: new Date("2026-03-30T10:00:00.000Z"),
+				}),
+				makeCase({
+					id: "mar-31-no-sla",
+					createdAt: new Date("2026-03-31T09:00:00.000Z"),
+					hasSlaTracking: false,
+				}),
+			],
+			now,
+		);
+
+		expect(series).toHaveLength(30);
+		expect(series.find((point) => point.label === "30 Mar")).toMatchObject({
+			volume: 2,
+			slaTrackedCount: 2,
+			slaMissedCount: 1,
+			slaAdherencePercent: 50,
+		});
+		expect(series.find((point) => point.label === "31 Mar")).toMatchObject({
+			volume: 1,
+			slaTrackedCount: 0,
+			slaMissedCount: 0,
+			slaAdherencePercent: null,
+		});
+	});
+
+	it("shows only five lookup IDs that are due within 60 minutes", () => {
 		const lookupCases = buildLookupCases(
 			[
 				makeCase({
-					externalId: "breach-long",
+					externalId: "breached",
 					nextDueAt: new Date("2026-03-31T09:00:00.000Z"),
 					actionableState: "breached",
 					isBreached: true,
 					waitingSinceAt: new Date("2026-03-31T08:00:00.000Z"),
 				}),
 				makeCase({
-					id: "2",
-					externalId: "breach-short",
-					nextDueAt: new Date("2026-03-31T11:00:00.000Z"),
-					actionableState: "breached",
-					isBreached: true,
-					waitingSinceAt: new Date("2026-03-31T10:00:00.000Z"),
+					id: "due-50",
+					externalId: "due-50",
+					nextDueAt: new Date("2026-03-31T12:50:00.000Z"),
+					actionableState: "due-soon",
+					isDueSoon: true,
 				}),
 				makeCase({
-					id: "3",
-					externalId: "due-soon",
+					id: "due-20",
+					externalId: "due-20",
 					nextDueAt: new Date("2026-03-31T12:20:00.000Z"),
 					actionableState: "due-soon",
 					isDueSoon: true,
 				}),
 				makeCase({
-					id: "4",
-					externalId: "waiting-one",
-					nextDueAt: new Date("2026-03-31T15:00:00.000Z"),
-					actionableState: "awaiting-team",
+					id: "due-10",
+					externalId: "due-10",
+					nextDueAt: new Date("2026-03-31T12:10:00.000Z"),
+					actionableState: "due-soon",
+					isDueSoon: true,
 				}),
 				makeCase({
-					id: "5",
-					externalId: "waiting-two",
-					nextDueAt: new Date("2026-03-31T15:10:00.000Z"),
-					actionableState: "awaiting-team",
+					id: "due-40",
+					externalId: "due-40",
+					nextDueAt: new Date("2026-03-31T12:40:00.000Z"),
+					actionableState: "due-soon",
+					isDueSoon: true,
 				}),
 				makeCase({
-					id: "6",
-					externalId: "waiting-three",
+					id: "due-5",
+					externalId: "due-5",
+					nextDueAt: new Date("2026-03-31T12:05:00.000Z"),
+					actionableState: "due-soon",
+					isDueSoon: true,
+				}),
+				makeCase({
+					id: "due-55",
+					externalId: "due-55",
+					nextDueAt: new Date("2026-03-31T12:55:00.000Z"),
+					actionableState: "due-soon",
+					isDueSoon: true,
+				}),
+				makeCase({
+					id: "waiting",
+					externalId: "waiting",
 					nextDueAt: new Date("2026-03-31T15:20:00.000Z"),
 					actionableState: "awaiting-team",
 				}),
@@ -945,13 +1018,17 @@ describe("support health logic", () => {
 		);
 
 		expect(lookupCases).toHaveLength(5);
-		expect(lookupCases[0]?.externalId).toBe("breach-long");
-		expect(lookupCases[1]?.externalId).toBe("breach-short");
-		expect(lookupCases[0]?.ageLabel).toBe("3h overdue");
-		expect(lookupCases[2]?.ageLabel).toBe("Due in 20m");
+		expect(lookupCases.map((item) => item.externalId)).toEqual([
+			"due-5",
+			"due-10",
+			"due-20",
+			"due-40",
+			"due-50",
+		]);
+		expect(lookupCases[0]?.ageLabel).toBe("Due in 5m");
 	});
 
-	it("excludes waiting-on-customer cases from lookup attention IDs", () => {
+	it("excludes non-due-soon cases from lookup attention IDs", () => {
 		const lookupCases = buildLookupCases(
 			[
 				makeCase({
@@ -964,11 +1041,24 @@ describe("support health logic", () => {
 					externalId: "team-wait",
 					actionableState: "awaiting-team",
 				}),
+				makeCase({
+					id: "breached",
+					externalId: "breached",
+					actionableState: "breached",
+					isBreached: true,
+				}),
+				makeCase({
+					id: "due-soon",
+					externalId: "due-soon",
+					actionableState: "due-soon",
+					isDueSoon: true,
+					nextDueAt: new Date("2026-03-31T12:30:00.000Z"),
+				}),
 			],
 			now,
 		);
 
-		expect(lookupCases.map((item) => item.externalId)).toEqual(["team-wait"]);
+		expect(lookupCases.map((item) => item.externalId)).toEqual(["due-soon"]);
 	});
 
 	it("includes contact names in lookup attention items when available", () => {
@@ -978,7 +1068,9 @@ describe("support health logic", () => {
 					id: "contact-case",
 					externalId: "contact-case",
 					contactName: "Jane Customer",
-					actionableState: "awaiting-team",
+					actionableState: "due-soon",
+					isDueSoon: true,
+					nextDueAt: new Date("2026-03-31T12:15:00.000Z"),
 				}),
 			],
 			now,
@@ -994,10 +1086,9 @@ describe("support health logic", () => {
 				externalId: `addo-${index}`,
 				productName: "Addo Sign",
 				teamName: "Addo Sign",
-				nextDueAt: new Date(`2026-03-31T1${index}:00:00.000Z`),
-				actionableState: "breached",
-				isBreached: true,
-				waitingSinceAt: new Date(`2026-03-31T0${index}:00:00.000Z`),
+				nextDueAt: new Date(`2026-03-31T12:0${index}:00.000Z`),
+				actionableState: "due-soon",
+				isDueSoon: true,
 			}),
 		);
 		const pensionBrokerCase = makeCase({
@@ -1005,11 +1096,9 @@ describe("support health logic", () => {
 			externalId: "pension-broker-focus",
 			productName: "Pension Broker",
 			teamName: "Pension Broker",
-			nextDueAt: new Date("2026-03-31T14:30:00.000Z"),
-			actionableState: "awaiting-team",
-			isBreached: false,
-			isDueSoon: false,
-			waitingSinceAt: new Date("2026-03-31T10:45:00.000Z"),
+			nextDueAt: new Date("2026-03-31T12:45:00.000Z"),
+			actionableState: "due-soon",
+			isDueSoon: true,
 		});
 
 		const live = buildLiveWallboardData(

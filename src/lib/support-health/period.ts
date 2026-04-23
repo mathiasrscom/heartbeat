@@ -9,6 +9,7 @@ import {
 	startOfMonth,
 	startOfWeek,
 	startOfYear,
+	subDays,
 	subMonths,
 	subWeeks,
 } from "date-fns";
@@ -41,6 +42,7 @@ export function normalizeSupportPeriodInput(
 ) {
 	const validPresets = [
 		"previous-week",
+		"rolling-30-days",
 		"current-month",
 		"previous-month",
 		"year-to-date",
@@ -90,6 +92,21 @@ export function resolveSupportPeriod(
 			range: {
 				preset: "current-month",
 				label: "Current month",
+				from: toDateInput(from),
+				to: toDateInput(now),
+			},
+			from,
+			to: now,
+		};
+	}
+
+	if (normalized.period === "rolling-30-days") {
+		const from = startOfDay(subDays(now, 29));
+
+		return {
+			range: {
+				preset: "rolling-30-days",
+				label: "Last 30 days",
 				from: toDateInput(from),
 				to: toDateInput(now),
 			},
