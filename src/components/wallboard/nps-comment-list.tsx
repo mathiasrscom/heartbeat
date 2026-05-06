@@ -20,7 +20,7 @@ export function NpsCommentList({
 	if (comments.length === 0) return null;
 
 	return (
-		<div className={cn("space-y-3", className)}>
+		<div className={cn("flex flex-col gap-3", className)}>
 			{comments.map((entry, index) => (
 				<NpsCommentRow
 					key={`${entry.ratedAt ?? "unknown"}-${index}`}
