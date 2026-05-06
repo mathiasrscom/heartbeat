@@ -216,7 +216,7 @@ function LiveWallboardPage() {
 	);
 
 	const directorPanel = (
-		<WallboardSection title="Nova director" className="min-h-0">
+		<WallboardSection title="Nova" className="min-h-0">
 			<DirectorPanel
 				focusPlan={live.focusPlan ?? null}
 				queue={directorQueue}
@@ -266,7 +266,7 @@ function LiveWallboardPage() {
 						live.focusPlan
 							? {
 									id: "live-director",
-									label: "Nova director",
+									label: "Nova",
 									content: directorPanel,
 								}
 							: null,
@@ -392,116 +392,128 @@ function DirectorPanel({
 		(queue
 			? `${queue.teamName}: ${queue.activeCaseCount} open • ${queue.awaitingTeamCount} waiting • ${queue.breachedCount} over SLA`
 			: "No urgent queue pressure right now.");
+	const messages = [
+		{
+			id: "headline",
+			text: headline,
+			tone: getMessageToneFromQueue(queue),
+			meta: focusPlan?.focusProductName
+				? formatProductLabel(focusPlan.focusProductName)
+				: "Current focus",
+			priority: true,
+		},
+		{
+			id: "supporting",
+			text: supportingText,
+			tone: "muted" as const,
+			meta: "Context",
+			priority: false,
+		},
+		...(queue
+			? [
+					{
+						id: "queue",
+						text: `${queue.breachedCount} over SLA • ${queue.dueSoonCount} due in 60m • ${queue.unassignedCount} unassigned`,
+						tone: getMessageToneFromQueue(queue),
+						meta: queue.teamName,
+						priority: false,
+					},
+				]
+			: []),
+		...cases.map((item) => ({
+			id: item.id,
+			text: `#${item.externalId} · ${formatProductLabel(item.productName)} · ${item.stateLabel}`,
+			tone: item.isBreached
+				? ("red" as const)
+				: item.isDueSoon
+					? ("amber" as const)
+					: ("muted" as const),
+			meta: item.ageLabel,
+			priority: false,
+		})),
+	];
 
 	return (
-		<div className="space-y-3">
-			<div className={cn(wbCell, "px-4 py-4")}>
-				<div className="flex items-start justify-between gap-3">
-					<div className="min-w-0">
-						{focusPlan?.focusProductName ? (
-							<div className="mb-3 flex items-center gap-2 text-base font-semibold text-foreground">
-								<ProductBrandLogo
-									productName={focusPlan.focusProductName}
-									size="sm"
-								/>
-								<span className="truncate">
-									{formatProductLabel(focusPlan.focusProductName)}
-								</span>
-							</div>
-						) : null}
-						<p className="text-[1.45rem] font-semibold leading-tight text-foreground">
-							{headline}
-						</p>
-					</div>
-					<div className="shrink-0 rounded-md border border-border/50 bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
-						{getDirectorSourceLabel(focusPlan)}
-					</div>
+		<div className="flex h-full min-h-0 flex-col">
+			<div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-border/40 pb-2">
+				<div className="flex min-w-0 items-center gap-2 text-sm font-medium text-muted-foreground">
+					{focusPlan?.focusProductName ? (
+						<ProductBrandLogo productName={focusPlan.focusProductName} size="sm" />
+					) : null}
+					<span className="truncate">
+						{focusPlan?.focusProductName
+							? formatProductLabel(focusPlan.focusProductName)
+							: "Current focus"}
+					</span>
 				</div>
-				<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-					{supportingText}
-				</p>
+				<div className="shrink-0 text-xs text-muted-foreground">
+					{getDirectorSourceLabel(focusPlan)}
+				</div>
 			</div>
-
-			{queue ? (
-				<div className="grid grid-cols-3 gap-2">
-					<DirectorMetric
-						label="Over SLA"
-						value={queue.breachedCount}
-						tone="red"
-					/>
-					<DirectorMetric
-						label="Due 60m"
-						value={queue.dueSoonCount}
-						tone="amber"
-					/>
-					<DirectorMetric
-						label="Unassigned"
-						value={queue.unassignedCount}
-						tone="stone"
-					/>
-				</div>
-			) : null}
-
-			{cases.length > 0 ? (
-				<div className="space-y-2">
-					{cases.map((item) => (
-						<div
-							key={item.id}
-							className={cn(wbCell, "flex items-center gap-3 px-3 py-2.5")}
-						>
-							<div
-								className={cn(
-									"h-2.5 w-2.5 shrink-0 rounded-full",
-									item.isBreached
-										? "bg-red-500"
-										: item.isDueSoon
-											? "bg-amber-500"
-											: "bg-muted-foreground/50",
-								)}
-							/>
-							<div className="min-w-0 flex-1">
-								<div className="truncate text-sm font-medium text-foreground">
-									#{item.externalId} · {formatProductLabel(item.productName)}
-								</div>
-								<div className="truncate text-xs text-muted-foreground">
-									{item.stateLabel} · {item.ageLabel}
-								</div>
-							</div>
-						</div>
+			<div className="min-h-0 flex-1 overflow-hidden">
+				<div className="divide-y divide-border/40">
+					{messages.map((message) => (
+						<NovaMessage key={message.id} message={message} />
 					))}
 				</div>
-			) : null}
+			</div>
 		</div>
 	);
 }
 
-function DirectorMetric({
-	label,
-	value,
-	tone,
+function NovaMessage({
+	message,
 }: {
-	label: string;
-	value: number;
-	tone: "red" | "amber" | "stone";
+	message: {
+		text: string;
+		tone: "red" | "amber" | "muted";
+		meta: string;
+		priority: boolean;
+	};
 }) {
 	return (
-		<div className={cn(wbCell, "px-3 py-2.5")}>
-			<div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-				{label}
-			</div>
-			<div
-				className={cn(
-					"mt-2 text-3xl font-semibold tabular-nums leading-none text-foreground",
-					tone === "red" && value > 0 && "text-red-600 dark:text-red-300",
-					tone === "amber" &&
-						value > 0 &&
-						"text-amber-600 dark:text-amber-300",
-				)}
-			>
-				{value}
+		<div className="flex gap-3 py-3">
+			<Avatar className="mt-0.5 h-7 w-7 border border-border/60 bg-background">
+				<AvatarFallback
+					className={cn(
+						"text-[11px] font-semibold",
+						message.tone === "red" &&
+							"bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-200",
+						message.tone === "amber" &&
+							"bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-200",
+						message.tone === "muted" && "bg-muted text-muted-foreground",
+					)}
+				>
+					N
+				</AvatarFallback>
+			</Avatar>
+			<div className="min-w-0 flex-1">
+				<div className="flex min-w-0 items-baseline gap-2">
+					<span className="shrink-0 text-sm font-medium text-foreground">
+						Nova
+					</span>
+					<span className="truncate text-xs text-muted-foreground">
+						{message.meta}
+					</span>
+				</div>
+				<div
+					className={cn(
+						"mt-1 text-sm leading-relaxed text-foreground",
+						message.priority && "text-[1.25rem] font-semibold leading-tight",
+					)}
+				>
+					{message.text}
+				</div>
 			</div>
 		</div>
 	);
+}
+
+function getMessageToneFromQueue(queue: QueueHealth | null) {
+	if (!queue) return "muted" as const;
+	if (queue.breachedCount > 0) return "red" as const;
+	if (queue.dueSoonCount > 0 || queue.unassignedCount > 0) return "amber" as const;
+	return "muted" as const;
 }
 
 function getDirectorSourceLabel(focusPlan: LiveWallboardFocusPlan | null) {

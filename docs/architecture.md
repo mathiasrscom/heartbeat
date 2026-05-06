@@ -59,11 +59,10 @@ heartbeat/
 │   │   │   ├── card.tsx
 │   │   │   ├── input.tsx
 │   │   │   ├── badge.tsx
-│   │   │   ├── sidebar.tsx
 │   │   │   └── ...
 │   │   ├── widgets/
 │   │   │   └── widget-card.tsx      # Dynamic widget renderer
-│   │   ├── app-sidebar.tsx          # Main navigation sidebar
+│   │   ├── app-top-nav.tsx          # Main top navigation
 │   │   ├── focus-card.tsx           # Focus item card component
 │   │   ├── date-range-picker.tsx    # Date selection components
 │   │   └── period-selector.tsx      # Period dropdown

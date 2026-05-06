@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { createIntercomClient } from "./intercom";
 import {
 	getDefaultIntercomAppUrl,
@@ -17,6 +17,7 @@ import {
 } from "./support-health/targets";
 import type { WallboardTeammateOption } from "./support-health/types";
 import {
+	DEFAULT_CODEX_MODEL,
 	DEFAULT_OLLAMA_BASE_URL,
 	type TickerLlmConfig,
 	type WallboardLlmProvider,
@@ -54,9 +55,23 @@ interface SaveWallboardDisplayInput {
 	trackedTeammates: string[];
 }
 
+interface ResetIntercomDataInput {
+	confirmation: string;
+}
+
 interface ListIntercomTickerOllamaModelsInput {
 	baseUrl: string;
 }
+
+const INTERCOM_RESET_CONFIRMATION = "RESET INTERCOM";
+const WALLBOARD_CACHE_SETTING_KEYS = [
+	"intercom_sync_runtime",
+	"wallboard_live_focus_plan",
+	"wallboard_product_insights",
+	"wallboard_nps_themes",
+	"wallboard_nps_comment_translations",
+	"wallboard_ticker_messages",
+];
 
 interface SyncRunPayload {
 	success: boolean;
@@ -161,7 +176,7 @@ function getTickerLlmConfig(settings: JsonRecord) {
 		(normalizeTickerLlmModel(settings.tickerLlmModel) ? "ollama" : null);
 	const model =
 		provider === "codex"
-			? null
+			? normalizeTickerLlmModel(settings.tickerLlmModel) ?? DEFAULT_CODEX_MODEL
 			: normalizeTickerLlmModel(settings.tickerLlmModel);
 	const configuredBaseUrl = normalizeTickerLlmBaseUrl(
 		settings.tickerLlmBaseUrl,
@@ -659,6 +674,60 @@ export const triggerIntercomSync = createServerFn({ method: "POST" }).handler(
 	},
 );
 
+export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
+	.inputValidator((data: ResetIntercomDataInput) => data)
+	.handler(async ({ data }): Promise<IntercomMutationResult> => {
+		if (data.confirmation !== INTERCOM_RESET_CONFIRMATION) {
+			throw new Error(`Type ${INTERCOM_RESET_CONFIRMATION} to reset Intercom data.`);
+		}
+
+		const accessToken = await getConfiguredAccessToken();
+		if (!accessToken) {
+			throw new Error("Add an Intercom access token before resetting data.");
+		}
+
+		const runtime = await readIntercomSyncRuntime();
+		if (runtime.isRunning) {
+			throw new Error("Wait for the current Intercom sync to finish before reset.");
+		}
+
+		const [{ db }, schema] = await Promise.all([
+			import("@/db"),
+			import("@/db/schema"),
+		]);
+		const { entities, nodes, settings, syncState, teamMembers } = schema;
+
+		const deletedNodes = await db
+			.delete(nodes)
+			.where(eq(nodes.source, "intercom"))
+			.returning({ id: nodes.id });
+		const deletedEntities = await db
+			.delete(entities)
+			.where(eq(entities.source, "intercom"))
+			.returning({ id: entities.id });
+		const deletedTeamMembers = await db
+			.delete(teamMembers)
+			.where(eq(teamMembers.source, "intercom"))
+			.returning({ id: teamMembers.id });
+
+		await db
+			.delete(syncState)
+			.where(eq(syncState.adapterId, "intercom"));
+		await db
+			.delete(settings)
+			.where(inArray(settings.key, WALLBOARD_CACHE_SETTING_KEYS));
+
+		const { startIntercomSyncInBackground } = await import("./intercom-sync");
+		const started = await startIntercomSyncInBackground(accessToken);
+
+		return {
+			message: started
+				? `Intercom data reset: ${deletedNodes.length} cases, ${deletedEntities.length} contacts, and ${deletedTeamMembers.length} teammates removed. Fresh sync started.`
+				: "Intercom data reset, but a sync was already running before the fresh sync could start.",
+			state: await readIntercomState(),
+		};
+	});
+
 export const saveIntercomWorkspaceLink = createServerFn({ method: "POST" })
 	.inputValidator((data: SaveIntercomWorkspaceUrlInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
@@ -742,7 +811,7 @@ export const saveIntercomTickerLlmSettings = createServerFn({ method: "POST" })
 		return {
 			message: enabled
 				? provider === "codex"
-					? "Codex CLI enabled using the signed-in CLI default model for generated wallboard messages."
+					? `Codex CLI enabled with ${DEFAULT_CODEX_MODEL} for generated wallboard messages.`
 					: `Ollama enabled with model ${model} for generated wallboard messages.`
 				: provider === "ollama" && (hasBaseUrlInput || model)
 					? "Ollama disabled. Add both base URL and model to enable."

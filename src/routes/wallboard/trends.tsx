@@ -104,14 +104,23 @@ function TrendsWallboardPage() {
 	const productNps = focusedProductName
 		? (data.npsByProduct[focusedProductName] ?? null)
 		: null;
-	const npsSummary = productNps?.summary ?? data.npsSummary;
-	const npsSeries = productNps?.series ?? data.npsSeries;
-	const npsDistribution = productNps?.distribution ?? data.npsDistribution;
-	const npsThemes = productNps?.themes ?? data.npsThemes;
-	const npsComments = productNps?.comments ?? data.npsComments;
-	const npsHasData = focusedProductName
-		? (productNps?.summary.responseCount ?? 0) > 0
-		: data.npsSummary.responseCount > 0;
+	const emptyNpsSummary = buildEmptyNpsSummary(data.period.label);
+	const npsSummary = focusedProductName
+		? (productNps?.summary ?? emptyNpsSummary)
+		: data.npsSummary;
+	const npsSeries = focusedProductName
+		? (productNps?.series ?? [])
+		: data.npsSeries;
+	const npsDistribution = focusedProductName
+		? (productNps?.distribution ?? { promoter: 0, passive: 0, detractor: 0 })
+		: data.npsDistribution;
+	const npsThemes = focusedProductName
+		? (productNps?.themes ?? [])
+		: data.npsThemes;
+	const npsComments = focusedProductName
+		? (productNps?.comments ?? [])
+		: data.npsComments;
+	const npsHasData = npsSummary.responseCount > 0;
 	const npsScopeName = focusedProductName ?? null;
 	const periodText = periodPhrase(data.period.label);
 
@@ -492,6 +501,20 @@ function selectCustomerVoiceMoment(comments: NpsComment[], npsScore: number) {
 		comments.find((comment) => comment.bucket === "promoter") ??
 		comments[0]
 	);
+}
+
+function buildEmptyNpsSummary(periodLabel: string): NpsPeriodSummary {
+	return {
+		periodLabel,
+		score: 0,
+		previousScore: null,
+		delta: null,
+		promoterCount: 0,
+		passiveCount: 0,
+		detractorCount: 0,
+		responseCount: 0,
+		averageScore: null,
+	};
 }
 
 function CustomerVoiceMomentCard({

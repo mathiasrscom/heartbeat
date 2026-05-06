@@ -1,19 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { Monitor, Settings2, TriangleAlert } from "lucide-react";
-import { startTransition } from "react";
+import { type ReactNode, startTransition } from "react";
 import { InfoTooltip } from "@/components/info-tooltip";
 import { SupportCxSummary } from "@/components/support-cx-summary";
 import { SupportPeriodFilter } from "@/components/support-period-filter";
 import { SupportProductFilter } from "@/components/support-product-filter";
 import { Button } from "@/components/ui/button";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-	panelSurfaceClassName,
-} from "@/components/ui/card";
 import { CaseLookupCard } from "@/components/wallboard/case-lookup-card";
 import { normalizeSupportProductFilterInput } from "@/lib/support-health/filter";
 import {
@@ -27,10 +19,9 @@ import {
 import type { SupportHealthSnapshot } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
 
-const dashboardInsetClassName = cn(
-	panelSurfaceClassName,
-	"rounded-lg border-border/60 p-4 shadow-none",
-);
+const dashboardSectionClassName = "border-t border-border/40 pt-5";
+const dashboardBlockClassName = "py-2";
+const dashboardRowClassName = "py-3";
 
 export const Route = createFileRoute("/")({
 	head: () => ({
@@ -69,6 +60,19 @@ function SupportDashboardPage() {
 		products: search.products,
 	};
 	const selectedPeriodLabel = trends.period.label.toLowerCase();
+	const hasCurrentCustomerHappiness = trends.periodSummary.ratedCount > 0;
+	const hasAnyCustomerHappiness =
+		hasCurrentCustomerHappiness ||
+		trends.periods.some((period) => period.ratedCount > 0);
+	const customerHappinessScope = formatProductScope(live.selectedProducts);
+	const noCustomerHappinessText =
+		live.selectedProducts.length === 1
+			? `${customerHappinessScope} does not have customer happiness yet.`
+			: live.selectedProducts.length > 1
+				? `${customerHappinessScope} do not have customer happiness yet.`
+				: "Customer happiness is not available yet.";
+	const customerHappinessDataScope =
+		live.selectedProducts.length === 1 ? "this product" : "these products";
 
 	function handlePeriodChange(next: {
 		period: "current-week" | "previous-week" | "custom";
@@ -101,8 +105,8 @@ function SupportDashboardPage() {
 	}
 
 	return (
-		<div className="p-4 lg:p-6 max-w-7xl">
-			<div className="mb-6 flex items-start justify-between gap-4">
+		<div className="mx-auto max-w-7xl p-4 lg:p-6">
+			<div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				<div>
 					<h1 className="text-2xl font-semibold tracking-tight">
 						Support dashboard
@@ -112,7 +116,7 @@ function SupportDashboardPage() {
 						when needed.
 					</p>
 				</div>
-				<div className="flex items-center gap-2">
+				<div className="flex flex-wrap items-center gap-2">
 					<Link
 						to="/wallboard/live"
 						search={{ products: search.products ?? [] }}
@@ -132,13 +136,13 @@ function SupportDashboardPage() {
 			</div>
 
 			{live.snapshot.stale ? (
-				<Card className="mb-6 border-amber-500/40 bg-amber-500/5">
-					<CardContent className="flex items-center gap-3 p-4 text-sm">
-						<TriangleAlert className="h-4 w-4 text-amber-600" />
+				<div className="mb-6 flex items-center gap-3 border-l-2 border-amber-400 py-2 pl-3 text-sm text-amber-900 dark:text-amber-200">
+					<TriangleAlert className="h-4 w-4 shrink-0" />
+					<div>
 						The last sync is older than 10 minutes. Treat the board as stale
 						until the next Intercom refresh succeeds.
-					</CardContent>
-				</Card>
+					</div>
+				</div>
 			) : null}
 
 			<div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -158,19 +162,14 @@ function SupportDashboardPage() {
 			</div>
 
 			<div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.8fr)]">
-				<div className="space-y-6">
-					<Card>
-						<CardHeader className="pb-4">
-							<div>
-								<CardTitle>Current state</CardTitle>
-								<CardDescription>
-									This is the live queue from the last Intercom sync. It shows
-									what support needs to reply to now.
-								</CardDescription>
-							</div>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<div className={dashboardInsetClassName}>
+				<div className="space-y-8">
+					<section className={dashboardSectionClassName}>
+						<SectionHeader
+							title="Current state"
+							description="This is the live queue from the last Intercom sync. It shows what support needs to reply to now."
+						/>
+						<div className="space-y-4">
+							<div className={dashboardBlockClassName}>
 								<div className="text-lg font-semibold tracking-tight">
 									{buildQueueHeadline(live.snapshot)}
 								</div>
@@ -179,63 +178,72 @@ function SupportDashboardPage() {
 								</div>
 							</div>
 							<div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-								<MetricCard
+								<MetricItem
 									label={`Satisfaction in ${selectedPeriodLabel}`}
 									tooltip={`Percent of rated conversations in ${selectedPeriodLabel} with a 4 or 5 score.`}
 									value={
+										!hasCurrentCustomerHappiness ||
 										trends.periodSummary.satisfactionScorePercent === null
 											? "—"
 											: `${trends.periodSummary.satisfactionScorePercent}%`
 									}
 									warning={
+										hasCurrentCustomerHappiness &&
 										trends.periodSummary.satisfactionScorePercent !== null &&
 										trends.periodSummary.satisfactionScorePercent <
 											trends.selectedTargets.satisfactionTargetPercent
 									}
+									detail={
+										hasCurrentCustomerHappiness ? undefined : "No ratings yet"
+									}
 								/>
-								<MetricCard
+								<MetricItem
 									label={`Rated in ${selectedPeriodLabel}`}
 									tooltip={`Share of eligible conversations resolved in ${selectedPeriodLabel} that received a customer rating.`}
-									value={`${trends.periodSummary.responseRatePercent}%`}
+									value={
+										trends.periodSummary.eligibleCount === 0
+											? "—"
+											: `${trends.periodSummary.responseRatePercent}%`
+									}
+									detail={
+										trends.periodSummary.eligibleCount === 0
+											? "No resolved conversations"
+											: trends.periodSummary.ratedCount === 0
+												? "No ratings yet"
+												: `${trends.periodSummary.ratedCount}/${trends.periodSummary.eligibleCount} rated`
+									}
 								/>
-								<MetricCard
+								<MetricItem
 									label="Waiting on us"
 									tooltip="Open cases where support owes the next reply. Includes due soon and over-SLA cases."
 									value={String(live.snapshot.currentAwaitingTeamCount)}
 								/>
-								<MetricCard
+								<MetricItem
 									label="Over SLA now"
 									tooltip="Open cases that are currently past their SLA due time."
 									value={String(live.snapshot.currentBreachedCount)}
 									danger
 								/>
-								<MetricCard
+								<MetricItem
 									label="Due in 60m"
 									tooltip="Open SLA-tracked cases due within 60 minutes, excluding already breached cases."
 									value={String(live.snapshot.currentDueSoonCount)}
 									warning
 								/>
-								<MetricCard
+								<MetricItem
 									label="Unassigned"
 									tooltip="Open cases without an owner assigned."
 									value={String(live.snapshot.currentUnassignedCount)}
 								/>
 							</div>
-						</CardContent>
-					</Card>
+						</div>
+					</section>
 
-					<Card>
-						<CardHeader className="pb-4">
-							<div className="flex items-center justify-between gap-4">
-								<div>
-									<CardTitle>Open by product now</CardTitle>
-									<CardDescription>
-										These are the products with open work right now, ordered by
-										where support pressure is highest. `Over SLA` is already
-										missed. `Due in 60m` is the next risk and does not include
-										breached cases.
-									</CardDescription>
-								</div>
+					<section className={dashboardSectionClassName}>
+						<SectionHeader
+							title="Open by product now"
+							description="These are the products with open work right now, ordered by where support pressure is highest. `Over SLA` is already missed. `Due in 60m` is the next risk and does not include breached cases."
+							action={
 								<Link
 									to="/wallboard/live"
 									search={{ products: search.products ?? [] }}
@@ -244,12 +252,12 @@ function SupportDashboardPage() {
 										Open monitor
 									</Button>
 								</Link>
-							</div>
-						</CardHeader>
-						<CardContent className="space-y-3">
+							}
+						/>
+						<div className="space-y-3">
 							{live.mappedQueues.length === 0 ? (
 								live.unknownSignals.length > 0 ? (
-									<div className={dashboardInsetClassName}>
+									<div className={dashboardBlockClassName}>
 										<div className="font-medium">
 											Open work is in the database, but product mapping is
 											incomplete.
@@ -262,7 +270,7 @@ function SupportDashboardPage() {
 											{live.unknownSignals.map((signal) => (
 												<div
 													key={`${signal.kind}-${signal.label}`}
-													className="flex items-center justify-between rounded-md border px-3 py-3 text-sm"
+													className="flex items-center justify-between py-2 text-sm"
 												>
 													<div className="min-w-0">
 														<div className="truncate font-medium">
@@ -284,7 +292,7 @@ function SupportDashboardPage() {
 								) : (
 									<div
 										className={cn(
-											dashboardInsetClassName,
+											dashboardBlockClassName,
 											"text-sm text-muted-foreground",
 										)}
 									>
@@ -293,7 +301,10 @@ function SupportDashboardPage() {
 								)
 							) : (
 								live.mappedQueues.slice(0, 6).map((queue) => (
-									<div key={queue.teamName} className={dashboardInsetClassName}>
+									<div
+										key={queue.teamName}
+										className={cn(dashboardRowClassName, "first:pt-0")}
+									>
 										<div className="min-w-0">
 											<div className="truncate font-medium">
 												{queue.teamName}
@@ -326,47 +337,54 @@ function SupportDashboardPage() {
 									</div>
 								))
 							)}
-						</CardContent>
-					</Card>
+						</div>
+					</section>
 
-					<Card>
-						<CardHeader className="pb-4">
-							<div className="flex flex-wrap items-start justify-between gap-4">
-								<div>
-									<CardTitle>Product health</CardTitle>
-									<CardDescription>
-										Open work is current. SLA uses{" "}
-										{trends.period.label.toLowerCase()}. CX uses all eligible
-										rated cases in {trends.period.label.toLowerCase()}. Current
-										targets: SLA {trends.selectedTargets.slaTargetPercent}% • CX{" "}
-										{trends.selectedTargets.satisfactionTargetPercent}%.
-									</CardDescription>
-								</div>
+					<section className={dashboardSectionClassName}>
+						<SectionHeader
+							title="Product health"
+							description={`Open work is current. SLA uses ${trends.period.label.toLowerCase()}. CX uses all eligible rated cases in ${trends.period.label.toLowerCase()}. Current targets: SLA ${trends.selectedTargets.slaTargetPercent}% • CX ${trends.selectedTargets.satisfactionTargetPercent}%.`}
+							action={
 								<SupportPeriodFilter
 									period={search.period}
 									from={trends.period.from}
 									to={trends.period.to}
 									onChange={handlePeriodChange}
 								/>
-							</div>
-						</CardHeader>
-						<CardContent className="space-y-3">
+							}
+						/>
+						<div className="space-y-3">
 							<div className="grid gap-3 sm:grid-cols-5">
-								<CoverageBlock
+								<CoverageItem
 									label="Satisfaction score"
 									tooltip={`Percent of rated conversations in ${trends.period.label.toLowerCase()} with a 4 or 5 score.`}
 									value={
+										!hasCurrentCustomerHappiness ||
 										trends.periodSummary.satisfactionScorePercent === null
 											? "—"
 											: `${trends.periodSummary.satisfactionScorePercent}%`
 									}
+									detail={
+										hasCurrentCustomerHappiness ? undefined : "No ratings yet"
+									}
 								/>
-								<CoverageBlock
+								<CoverageItem
 									label="Rated"
 									tooltip={`Share of eligible conversations resolved in ${trends.period.label.toLowerCase()} that received a rating.`}
-									value={`${trends.periodSummary.responseRatePercent}%`}
+									value={
+										trends.periodSummary.eligibleCount === 0
+											? "—"
+											: `${trends.periodSummary.responseRatePercent}%`
+									}
+									detail={
+										trends.periodSummary.eligibleCount === 0
+											? "No resolved conversations"
+											: trends.periodSummary.ratedCount === 0
+												? "No ratings yet"
+												: `${trends.periodSummary.ratedCount}/${trends.periodSummary.eligibleCount} rated`
+									}
 								/>
-								<CoverageBlock
+								<CoverageItem
 									label="SLA met"
 									tooltip={`SLA adherence for the ${trends.period.label.toLowerCase()} period.`}
 									value={
@@ -380,12 +398,12 @@ function SupportDashboardPage() {
 											trends.selectedTargets.slaTargetPercent
 									}
 								/>
-								<CoverageBlock
+								<CoverageItem
 									label="Open now"
 									tooltip="Count of currently open cases in the selected products."
 									value={trends.periodSummary.openNowCount}
 								/>
-								<CoverageBlock
+								<CoverageItem
 									label="Over SLA now"
 									tooltip="Open cases currently beyond SLA due time in the selected products."
 									value={trends.periodSummary.breachedNowCount}
@@ -395,7 +413,7 @@ function SupportDashboardPage() {
 								{trends.productHealth.length === 0 ? (
 									<div
 										className={cn(
-											dashboardInsetClassName,
+											dashboardBlockClassName,
 											"text-sm text-muted-foreground",
 										)}
 									>
@@ -405,7 +423,7 @@ function SupportDashboardPage() {
 									trends.productHealth.map((row) => (
 										<div
 											key={`${row.serviceBucket}-${row.productName}`}
-											className={dashboardInsetClassName}
+											className={cn(dashboardRowClassName, "first:pt-0")}
 										>
 											<div className="min-w-0">
 												<div className="truncate font-medium">
@@ -448,20 +466,38 @@ function SupportDashboardPage() {
 												<QueueMetric
 													label="Satisfaction"
 													value={
+														row.ratedCount === 0 ||
 														row.satisfactionScorePercent === null
 															? "—"
 															: `${row.satisfactionScorePercent}%`
 													}
 													danger={
+														row.ratedCount > 0 &&
 														row.satisfactionScorePercent !== null &&
 														row.satisfactionScorePercent <
 															row.targets.satisfactionTargetPercent
 													}
+													detail={
+														row.ratedCount === 0 ? "No ratings yet" : undefined
+													}
 												/>
 												<QueueMetric
 													label="Rated"
-													value={`${row.responseRatePercent}%`}
-													warning={row.responseRatePercent < 20}
+													value={
+														row.eligibleCount === 0
+															? "—"
+															: `${row.responseRatePercent}%`
+													}
+													warning={
+														row.ratedCount > 0 && row.responseRatePercent < 20
+													}
+													detail={
+														row.eligibleCount === 0
+															? "No resolved conversations"
+															: row.ratedCount === 0
+																? "No ratings yet"
+																: `${row.ratedCount}/${row.eligibleCount} rated`
+													}
 												/>
 											</div>
 										</div>
@@ -469,97 +505,138 @@ function SupportDashboardPage() {
 								)}
 							</div>
 							{live.snapshot.unknownCaseCount > 0 ? (
-								<div className="rounded-md border border-dashed px-4 py-3 text-sm text-muted-foreground">
+								<div className="py-2 text-sm text-muted-foreground">
 									{live.snapshot.unknownCaseCount} open cases are still unmapped
 									and are excluded from the product table above.
 								</div>
 							) : null}
-						</CardContent>
-					</Card>
+						</div>
+					</section>
 				</div>
 
-				<div className="space-y-6">
-					<Card>
-						<CardHeader className="pb-4">
-							<CardTitle>IDs to check now</CardTitle>
-							<CardDescription>
-								Use these Intercom IDs to open the cases that are currently
-								driving the queue.
-							</CardDescription>
-						</CardHeader>
-						<CardContent className="space-y-3">
+				<div className="space-y-8">
+					<section className={dashboardSectionClassName}>
+						<SectionHeader
+							title="IDs to check now"
+							description="Use these Intercom IDs to open the cases that are currently driving the queue."
+						/>
+						<div className="space-y-3">
 							{live.lookupCases.length === 0 ? (
 								<div
 									className={cn(
-										dashboardInsetClassName,
+										dashboardBlockClassName,
 										"text-sm text-muted-foreground",
 									)}
 								>
 									No open cases need support right now.
 								</div>
 							) : (
-								live.lookupCases.map((item) => (
-									<CaseLookupCard
-										key={item.id}
-										item={item}
-										appUrl={live.intercomAppUrl}
-									/>
-								))
-							)}
-						</CardContent>
-					</Card>
-
-					<Card>
-						<CardHeader className="pb-4">
-							<div className="flex items-center justify-between gap-4">
-								<div>
-									<CardTitle>Customer happiness</CardTitle>
-									<CardDescription>
-										The selected period leads. Month, quarter, and year stay
-										visible as context.
-									</CardDescription>
+								<div className="space-y-1">
+									{live.lookupCases.map((item) => (
+										<CaseLookupCard
+											key={item.id}
+											item={item}
+											appUrl={live.intercomAppUrl}
+											variant="row"
+										/>
+									))}
 								</div>
+							)}
+						</div>
+					</section>
+
+					<section className={dashboardSectionClassName}>
+						<SectionHeader
+							title="Customer happiness"
+							description="The selected period leads. Month, quarter, and year stay visible as context."
+							action={
 								<Link to="/wallboard/trends" search={periodSearch}>
 									<Button variant="ghost" size="sm">
 										Open trends
 									</Button>
 								</Link>
-							</div>
-						</CardHeader>
-						<CardContent className="space-y-4">
-							<div className={dashboardInsetClassName}>
-								<SupportCxSummary
-									label={trends.period.label}
-									satisfactionScorePercent={
-										trends.periodSummary.satisfactionScorePercent
-									}
-									ratedCount={trends.periodSummary.ratedCount}
-									positiveCount={trends.periodSummary.positiveCount}
-									responseRatePercent={trends.periodSummary.responseRatePercent}
-									ratingMix={trends.periodSummary.ratingMix}
-								/>
-							</div>
-							<div className="grid gap-3 sm:grid-cols-2">
-								{trends.periods.map((period) => (
-									<div key={period.label} className={dashboardInsetClassName}>
-										<div className="text-sm text-muted-foreground">
-											{period.label}
-										</div>
-										<div className="mt-1 text-3xl font-semibold tracking-tight">
-											{period.satisfactionScorePercent === null
-												? "—"
-												: `${period.satisfactionScorePercent}%`}
-										</div>
-										<div className="mt-1 text-xs text-muted-foreground">
-											Rated {period.responseRatePercent}%
-										</div>
+							}
+						/>
+						<div className="space-y-4">
+							{hasAnyCustomerHappiness ? (
+								<>
+									<div className={dashboardBlockClassName}>
+										<SupportCxSummary
+											label={trends.period.label}
+											satisfactionScorePercent={
+												trends.periodSummary.satisfactionScorePercent
+											}
+											ratedCount={trends.periodSummary.ratedCount}
+											positiveCount={trends.periodSummary.positiveCount}
+											responseRatePercent={
+												trends.periodSummary.responseRatePercent
+											}
+											ratingMix={trends.periodSummary.ratingMix}
+										/>
 									</div>
-								))}
-							</div>
-						</CardContent>
-					</Card>
+									<div className="grid gap-3 sm:grid-cols-2">
+										{trends.periods.map((period) => (
+											<div
+												key={period.label}
+												className={dashboardBlockClassName}
+											>
+												<div className="text-sm text-muted-foreground">
+													{period.label}
+												</div>
+												<div className="mt-1 text-3xl font-semibold tracking-tight">
+													{period.satisfactionScorePercent === null
+														? "—"
+														: `${period.satisfactionScorePercent}%`}
+												</div>
+												<div className="mt-1 text-xs text-muted-foreground">
+													{period.eligibleCount === 0
+														? "No resolved conversations"
+														: period.ratedCount === 0
+															? "No ratings yet"
+															: `${period.ratedCount}/${period.eligibleCount} rated`}
+												</div>
+											</div>
+										))}
+									</div>
+								</>
+							) : (
+								<div className={dashboardBlockClassName}>
+									<div className="text-sm font-medium text-foreground">
+										{noCustomerHappinessText}
+									</div>
+									<div className="mt-1 text-sm text-muted-foreground">
+										Heartbeat will show satisfaction and rated coverage once
+										Intercom has rated resolved conversations for{" "}
+										{customerHappinessDataScope}.
+									</div>
+								</div>
+							)}
+						</div>
+					</section>
 				</div>
 			</div>
+		</div>
+	);
+}
+
+function SectionHeader({
+	title,
+	description,
+	action,
+}: {
+	title: string;
+	description: string;
+	action?: ReactNode;
+}) {
+	return (
+		<div className="mb-4 flex flex-wrap items-start justify-between gap-4">
+			<div className="min-w-0">
+				<h2 className="text-base font-semibold leading-tight">{title}</h2>
+				<p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+					{description}
+				</p>
+			</div>
+			{action ? <div className="shrink-0">{action}</div> : null}
 		</div>
 	);
 }
@@ -597,21 +674,29 @@ function buildQueueSupportingText(snapshot: SupportHealthSnapshot) {
 	return parts.join(" • ");
 }
 
-function MetricCard({
+function formatProductScope(selectedProducts: string[]) {
+	if (selectedProducts.length === 1) return selectedProducts[0];
+	if (selectedProducts.length > 1) return "The selected products";
+	return "All products";
+}
+
+function MetricItem({
 	label,
 	tooltip,
 	value,
 	warning,
 	danger,
+	detail,
 }: {
 	label: string;
 	tooltip?: string;
 	value: string;
 	warning?: boolean;
 	danger?: boolean;
+	detail?: string;
 }) {
 	return (
-		<div className={dashboardInsetClassName}>
+		<div className={dashboardBlockClassName}>
 			<div className="text-sm text-muted-foreground">
 				<InfoTooltip label={label} tooltip={tooltip} />
 			</div>
@@ -624,6 +709,9 @@ function MetricCard({
 			>
 				{value}
 			</div>
+			{detail ? (
+				<div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+			) : null}
 		</div>
 	);
 }
@@ -634,12 +722,14 @@ function QueueMetric({
 	value,
 	warning,
 	danger,
+	detail,
 }: {
 	label: string;
 	tooltip?: string;
 	value: string | number;
 	warning?: boolean;
 	danger?: boolean;
+	detail?: string;
 }) {
 	return (
 		<div className="min-w-0">
@@ -655,23 +745,30 @@ function QueueMetric({
 			>
 				{value}
 			</div>
+			{detail ? (
+				<div className="mt-1 text-[11px] leading-snug text-muted-foreground">
+					{detail}
+				</div>
+			) : null}
 		</div>
 	);
 }
 
-function CoverageBlock({
+function CoverageItem({
 	label,
 	tooltip,
 	value,
 	danger,
+	detail,
 }: {
 	label: string;
 	tooltip?: string;
 	value: number | string;
 	danger?: boolean;
+	detail?: string;
 }) {
 	return (
-		<div className={dashboardInsetClassName}>
+		<div className={dashboardBlockClassName}>
 			<div className="text-xs text-muted-foreground">
 				<InfoTooltip label={label} tooltip={tooltip} />
 			</div>
@@ -683,6 +780,9 @@ function CoverageBlock({
 			>
 				{value}
 			</div>
+			{detail ? (
+				<div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+			) : null}
 		</div>
 	);
 }

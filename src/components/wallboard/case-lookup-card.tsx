@@ -1,16 +1,20 @@
 import type { ReactNode } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-const wbCell = "rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 import { buildIntercomCaseUrl } from "@/lib/intercom-links";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { CaseLookupItem } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
+
+const caseLookupCardClassName =
+	"rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";
 
 export function CaseLookupCard({
 	item,
 	appUrl,
+	variant = "card",
 }: {
 	item: CaseLookupItem;
 	appUrl: string | null;
+	variant?: "card" | "row";
 }) {
 	const href = buildIntercomCaseUrl(appUrl, {
 		externalId: item.externalId,
@@ -20,7 +24,12 @@ export function CaseLookupCard({
 	const contactName = item.contactName?.trim() || null;
 
 	return (
-		<article className={cn(wbCell, "flex items-center gap-3 px-3 py-2")}>
+		<article
+			className={cn(
+				"flex items-center gap-3",
+				variant === "card" ? cn(caseLookupCardClassName, "px-3 py-2") : "py-3",
+			)}
+		>
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-2">
 					{href ? (
@@ -57,7 +66,9 @@ export function CaseLookupCard({
 							</AvatarFallback>
 						</Avatar>
 					) : null}
-					<span>{assignee ?? "No owner"} · {item.ageLabel}</span>
+					<span>
+						{assignee ?? "No owner"} · {item.ageLabel}
+					</span>
 				</div>
 			</div>
 			<div
