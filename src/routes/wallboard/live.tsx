@@ -216,7 +216,7 @@ function LiveWallboardPage() {
 	);
 
 	const directorPanel = (
-		<WallboardSection title="Nova" className="min-h-0">
+		<WallboardSection title="Nova agent" className="min-h-0">
 			<DirectorPanel
 				focusPlan={live.focusPlan ?? null}
 				queue={directorQueue}
@@ -397,59 +397,31 @@ function DirectorPanel({
 			id: "headline",
 			text: headline,
 			tone: getMessageToneFromQueue(queue),
-			meta: focusPlan?.focusProductName
-				? formatProductLabel(focusPlan.focusProductName)
-				: "Current focus",
+			meta: "Next move",
 			priority: true,
 		},
 		{
 			id: "supporting",
 			text: supportingText,
 			tone: "muted" as const,
-			meta: "Context",
+			meta: "Follow-up",
 			priority: false,
 		},
-		...(queue
-			? [
-					{
-						id: "queue",
-						text: `${queue.breachedCount} over SLA • ${queue.dueSoonCount} due in 60m • ${queue.unassignedCount} unassigned`,
-						tone: getMessageToneFromQueue(queue),
-						meta: queue.teamName,
-						priority: false,
-					},
-				]
-			: []),
 		...cases.map((item) => ({
 			id: item.id,
-			text: `#${item.externalId} · ${formatProductLabel(item.productName)} · ${item.stateLabel}`,
+			text: `Open #${item.externalId} first in ${formatProductLabel(item.productName)}; it is ${item.stateLabel.toLowerCase()}.`,
 			tone: item.isBreached
 				? ("red" as const)
 				: item.isDueSoon
 					? ("amber" as const)
 					: ("muted" as const),
-			meta: item.ageLabel,
+			meta: item.isBreached ? "Over SLA" : item.isDueSoon ? "Due soon" : item.ageLabel,
 			priority: false,
 		})),
 	];
 
 	return (
 		<div className="flex h-full min-h-0 flex-col">
-			<div className="mb-2 flex shrink-0 items-center justify-between gap-3 border-b border-border/40 pb-2">
-				<div className="flex min-w-0 items-center gap-2 text-sm font-medium text-muted-foreground">
-					{focusPlan?.focusProductName ? (
-						<ProductBrandLogo productName={focusPlan.focusProductName} size="sm" />
-					) : null}
-					<span className="truncate">
-						{focusPlan?.focusProductName
-							? formatProductLabel(focusPlan.focusProductName)
-							: "Current focus"}
-					</span>
-				</div>
-				<div className="shrink-0 text-xs text-muted-foreground">
-					{getDirectorSourceLabel(focusPlan)}
-				</div>
-			</div>
 			<div className="min-h-0 flex-1 overflow-hidden">
 				<div className="divide-y divide-border/40">
 					{messages.map((message) => (
@@ -489,9 +461,6 @@ function NovaMessage({
 			</Avatar>
 			<div className="min-w-0 flex-1">
 				<div className="flex min-w-0 items-baseline gap-2">
-					<span className="shrink-0 text-sm font-medium text-foreground">
-						Nova
-					</span>
 					<span className="truncate text-xs text-muted-foreground">
 						{message.meta}
 					</span>
@@ -514,13 +483,6 @@ function getMessageToneFromQueue(queue: QueueHealth | null) {
 	if (queue.breachedCount > 0) return "red" as const;
 	if (queue.dueSoonCount > 0 || queue.unassignedCount > 0) return "amber" as const;
 	return "muted" as const;
-}
-
-function getDirectorSourceLabel(focusPlan: LiveWallboardFocusPlan | null) {
-	if (focusPlan?.source === "codex" || focusPlan?.source === "ollama") {
-		return "Nova";
-	}
-	return "Rules";
 }
 
 function ProductQueueStateCard({

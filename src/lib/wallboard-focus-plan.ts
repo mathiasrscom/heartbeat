@@ -217,37 +217,38 @@ function buildDeterministicHeadline(
 	focusQueue: QueueHealth | null,
 ) {
 	if (snapshot.currentBreachedCount > 0) {
-		return `${snapshot.currentBreachedCount} case${
-			snapshot.currentBreachedCount === 1 ? "" : "s"
-		} are over SLA. Start there now.`;
+		return `I’d pause new work and clear the over-SLA replies first. Send customers an update before picking up anything else.`;
 	}
 	if (snapshot.currentDueSoonCount > 0) {
-		return `${snapshot.currentDueSoonCount} case${
-			snapshot.currentDueSoonCount === 1 ? "" : "s"
-		} are due in 60 minutes. Prevent new breaches now.`;
+		return `I’d protect the next hour: clear the due-soon replies before they become SLA misses.`;
 	}
 	if (snapshot.currentUnassignedCount > 0) {
-		return `${snapshot.currentUnassignedCount} case${
-			snapshot.currentUnassignedCount === 1 ? "" : "s"
-		} are unassigned. Assign owners first.`;
+		return `I’d assign owners first, then start replies. No case should sit without a clear next person.`;
 	}
 	if (focusQueue && focusQueue.awaitingTeamCount > 0) {
-		return `${focusQueue.awaitingTeamCount} case${
-			focusQueue.awaitingTeamCount === 1 ? "" : "s"
-		} in ${focusQueue.teamName} are waiting on support.`;
+		return `I’d use this calm window to clear ${focusQueue.teamName} replies, starting with the oldest waiting customers.`;
 	}
-	return "No urgent lane pressure right now. Keep steady response pace.";
+	return "The queue is calm. Use the window to tidy handoffs and close the oldest open replies.";
 }
 
 function buildDeterministicSupportingText(
 	snapshot: SupportHealthSnapshot,
 	focusQueue: QueueHealth | null,
 ) {
-	if (focusQueue) {
-		return `${focusQueue.teamName}: ${focusQueue.activeCaseCount} open • ${focusQueue.awaitingTeamCount} waiting • ${focusQueue.breachedCount} over SLA • ${focusQueue.unassignedCount} unassigned`;
+	if (snapshot.currentBreachedCount > 0) {
+		return "Work the breached lane as a team: one person replies, one person checks ownership, then return to due-soon work.";
+	}
+	if (snapshot.currentDueSoonCount > 0) {
+		return "Start with the cases closest to breach. If an answer needs time, leave a holding reply so the customer knows it is moving.";
+	}
+	if (snapshot.currentUnassignedCount > 0) {
+		return "Assign by product ownership, then reply to waiting customers before opening fresh threads.";
+	}
+	if (focusQueue && focusQueue.awaitingTeamCount > 0) {
+		return `Have one person sweep ${focusQueue.teamName}, leave holding replies where answers need time, then move to the next product.`;
 	}
 
-	return `${snapshot.currentActiveCaseCount} open • ${snapshot.currentAwaitingTeamCount} waiting on support • ${snapshot.currentAwaitingCustomerCount} waiting on customer`;
+	return "Check the oldest active threads, close anything that is already solved, and keep capacity ready for the next SLA risk.";
 }
 
 function buildLaneOrder(snapshot: SupportHealthSnapshot): LiveFocusLane[] {
@@ -310,13 +311,19 @@ function buildOllamaPrompt(
 	});
 
 	return [
-		"You are selecting what a support wallboard should emphasize right now.",
+		"You are Nova, writing a short operator message for a support wallboard.",
 		"Return JSON object only, no markdown.",
 		"Required keys: focusProductName, headline, supportingText, topCaseExternalIds, laneOrder",
 		"Rules:",
 		"- Write ALL output in English. Do not use any other language.",
 		"- Keep facts true to provided data.",
 		"- Office-safe: no customer names or company names.",
+		"- Write like a teammate giving direction in the room: first person is okay, e.g. \"I’d focus...\".",
+		"- Tell the team what to do next and why it matters.",
+		"- Do not just repeat visible metrics from the wallboard.",
+		"- Avoid generic recap phrases like \"Queue is stable\", \"No SLA risk\", \"Context\", or \"0 over SLA\".",
+		"- If SLA and ownership are calm but customers are waiting, use that calm window to reduce waiting replies.",
+		"- Make headline the next move. Make supportingText the practical follow-up.",
 		"- focusProductName must be one of provided products or null.",
 		"- topCaseExternalIds must come from provided lookup IDs.",
 		'- laneOrder must contain exactly ["over-sla","due-soon","unassigned"] in chosen priority order.',
