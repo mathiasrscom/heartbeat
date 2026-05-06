@@ -682,7 +682,7 @@ function SettingsPage() {
 							<div className="mb-2 flex items-center justify-between gap-3">
 								<div>
 									<div className="text-xs font-medium text-foreground">
-										AI rewrite settings
+										Nova rewrite settings
 									</div>
 									<div className="text-[10px] text-muted-foreground">
 										Choose whether wallboard copy is rewritten through local

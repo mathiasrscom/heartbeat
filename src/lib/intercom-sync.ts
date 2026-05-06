@@ -39,6 +39,7 @@ interface SyncResult {
 }
 
 type JsonRecord = Record<string, unknown>;
+const CONTACT_INCREMENTAL_LOOKBACK_MS = 2 * 60 * 60 * 1000;
 
 function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -149,7 +150,13 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 			errors.push(`Assignee backfill failed: ${error}`);
 		}
 
-		if (!previousSync) {
+		if (previousSync) {
+			try {
+				entitiesSynced += await syncChangedContacts(client, previousSync);
+			} catch (error) {
+				errors.push(String(error));
+			}
+		} else {
 			try {
 				await updateIntercomSyncRuntime("contacts", "Syncing contacts");
 				entitiesSynced += await syncContacts(client);
@@ -704,6 +711,77 @@ async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
 			await sleep(100);
 		} catch (error) {
 			throw new Error(`Contacts sync failed: ${error}`);
+		}
+	}
+
+	return entitiesSynced;
+}
+
+export function getContactIncrementalCutoff(previousSync: Date) {
+	return new Date(previousSync.getTime() - CONTACT_INCREMENTAL_LOOKBACK_MS);
+}
+
+export function getContactSearchUpdatedSinceTimestamp(cutoff: Date) {
+	return Math.floor(
+		Date.UTC(
+			cutoff.getUTCFullYear(),
+			cutoff.getUTCMonth(),
+			cutoff.getUTCDate(),
+		) / 1000,
+	);
+}
+
+export function shouldSyncChangedContact(
+	contact: Pick<IntercomContact, "updated_at">,
+	cutoff: Date,
+) {
+	return contact.updated_at >= Math.floor(cutoff.getTime() / 1000);
+}
+
+async function syncChangedContacts(
+	client: ReturnType<typeof createIntercomClient>,
+	previousSync: Date,
+) {
+	let entitiesSynced = 0;
+	let hasMoreContacts = true;
+	let contactCursor: string | undefined;
+	let page = 1;
+	const cutoff = getContactIncrementalCutoff(previousSync);
+	const searchUpdatedSince = getContactSearchUpdatedSinceTimestamp(cutoff);
+
+	while (hasMoreContacts) {
+		try {
+			await updateIntercomSyncRuntime(
+				"contacts",
+				`Syncing changed contacts (page ${page}, ${entitiesSynced} synced)`,
+			);
+			const response = await client.searchContacts(
+				[
+					{
+						field: "updated_at",
+						operator: ">=",
+						value: searchUpdatedSince,
+					},
+				],
+				{
+					per_page: 50,
+					starting_after: contactCursor,
+				},
+			);
+			const contacts = response.data || [];
+
+			for (const contact of contacts) {
+				if (!shouldSyncChangedContact(contact, cutoff)) continue;
+				await upsertEntity(contact);
+				entitiesSynced++;
+			}
+
+			contactCursor = getNextCursor(response.pages?.next);
+			hasMoreContacts = Boolean(contactCursor);
+			page++;
+			await sleep(100);
+		} catch (error) {
+			throw new Error(`Changed contacts sync failed: ${error}`);
 		}
 	}
 

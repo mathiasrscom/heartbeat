@@ -23,6 +23,7 @@ import {
 } from "@/lib/support-health/period";
 import { getTrendsWallboard } from "@/lib/support-health/server";
 import type {
+	NpsComment,
 	NpsPeriodSummary,
 	NpsTheme,
 	ProductHealthRow,
@@ -299,6 +300,10 @@ function TrendsWallboardPage() {
 		: data.insights.filter((insight) =>
 				autoplayProducts.includes(insight.productName),
 			);
+	const customerVoiceMoment = selectCustomerVoiceMoment(
+		npsComments,
+		npsSummary.score,
+	);
 
 	const tickerItems = buildFocusedTickerItems({
 		periodLabel: data.period.label,
@@ -311,7 +316,7 @@ function TrendsWallboardPage() {
 		totalRated: contributorSummary.totalRated,
 	});
 	const contributorsPanel = (
-		<WallboardSection title="AI-assessed CX" className="h-full">
+		<WallboardSection title="Nova-assessed CX" className="h-full">
 			<PaginatedContent intervalMs={20_000}>
 				{contributorList.length === 0 ? (
 					<div
@@ -320,7 +325,7 @@ function TrendsWallboardPage() {
 							"px-4 py-8 text-center text-sm text-muted-foreground",
 						)}
 					>
-						{`No AI-scored conversations ${periodText}.`}
+						{`No Nova-scored conversations ${periodText}.`}
 					</div>
 				) : (
 					contributorList.map((contributor, index) => (
@@ -374,6 +379,16 @@ function TrendsWallboardPage() {
 			</div>
 		</WallboardSection>
 	);
+	const customerVoiceMomentPanel = customerVoiceMoment ? (
+		<WallboardSection title="Customer voice moment" className="h-full">
+			<CustomerVoiceMomentCard
+				comment={customerVoiceMoment}
+				responseCount={npsSummary.responseCount}
+				scopeLabel={npsScopeName}
+				periodText={periodText}
+			/>
+		</WallboardSection>
+	) : null;
 
 	return (
 		<WallboardShell
@@ -427,13 +442,20 @@ function TrendsWallboardPage() {
 							label: "Period highlights",
 							content: periodHighlightsPanel,
 						},
-						// Only rotate to AI-assessed CX when the focused scope
+						// Only rotate to Nova-assessed CX when the focused scope
 						// actually has scored conversations to show.
 						contributorList.length > 0
 							? {
 									id: "trends-contributors",
-									label: "AI-assessed CX",
+									label: "Nova-assessed CX",
 									content: contributorsPanel,
+								}
+							: null,
+						customerVoiceMomentPanel
+							? {
+									id: "trends-customer-voice-moment",
+									label: "Customer voice",
+									content: customerVoiceMomentPanel,
 								}
 							: null,
 						{
@@ -451,6 +473,98 @@ function TrendsWallboardPage() {
 				/>
 			</div>
 		</WallboardShell>
+	);
+}
+
+function selectCustomerVoiceMoment(comments: NpsComment[], npsScore: number) {
+	if (comments.length === 0) return null;
+
+	if (npsScore >= 0) {
+		return (
+			comments.find((comment) => comment.bucket === "promoter") ??
+			comments.find((comment) => comment.bucket === "detractor") ??
+			comments[0]
+		);
+	}
+
+	return (
+		comments.find((comment) => comment.bucket === "detractor") ??
+		comments.find((comment) => comment.bucket === "promoter") ??
+		comments[0]
+	);
+}
+
+function CustomerVoiceMomentCard({
+	comment,
+	responseCount,
+	scopeLabel,
+	periodText,
+}: {
+	comment: NpsComment;
+	responseCount: number;
+	scopeLabel: string | null;
+	periodText: string;
+}) {
+	const tone =
+		comment.bucket === "promoter"
+			? "text-emerald-600 dark:text-emerald-300"
+			: comment.bucket === "detractor"
+				? "text-red-600 dark:text-red-300"
+				: "text-amber-600 dark:text-amber-300";
+	const bucketLabel =
+		comment.bucket === "promoter"
+			? "Promoter"
+			: comment.bucket === "detractor"
+				? "Detractor"
+				: "Passive";
+	const translated =
+		comment.englishComment &&
+		comment.englishComment.trim().toLowerCase() !==
+			comment.comment.trim().toLowerCase()
+			? comment.englishComment.trim()
+			: null;
+
+	return (
+		<div className="flex h-full min-h-0 flex-col gap-3">
+			<div className={cn(wbCell, "px-4 py-4")}>
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<div className={cn("text-5xl font-semibold leading-none", tone)}>
+							{comment.score}
+						</div>
+						<div className="mt-1 text-xs text-muted-foreground">/ 10</div>
+					</div>
+					<div className="min-w-0 flex-1 text-right">
+						<div className={cn("text-sm font-medium", tone)}>{bucketLabel}</div>
+						<div className="mt-1 truncate text-xs text-muted-foreground">
+							{scopeLabel ? formatProductLabel(scopeLabel) : "All products"} ·{" "}
+							{responseCount} response{responseCount === 1 ? "" : "s"}{" "}
+							{periodText}
+						</div>
+					</div>
+				</div>
+				<p className="mt-5 max-h-[11rem] overflow-hidden text-[1.45rem] font-medium leading-snug text-foreground">
+					<span className="text-muted-foreground">“</span>
+					{comment.comment}
+					<span className="text-muted-foreground">”</span>
+				</p>
+				{comment.name ? (
+					<div className="mt-3 truncate text-sm text-muted-foreground">
+						{comment.name}
+					</div>
+				) : null}
+			</div>
+			{translated ? (
+				<div className={cn(wbCell, "px-4 py-3")}>
+					<div className="text-xs uppercase tracking-wide text-muted-foreground">
+						English
+					</div>
+					<p className="mt-2 max-h-[6rem] overflow-hidden text-sm leading-relaxed text-foreground">
+						{translated}
+					</p>
+				</div>
+			) : null}
+		</div>
 	);
 }
 
@@ -616,7 +730,7 @@ function ContributorRow({ contributor }: { contributor: TopContributor }) {
 					{contributor.positiveCount}
 				</div>
 				<div className="text-[11px] text-muted-foreground">
-					conversation{contributor.positiveCount === 1 ? "" : "s"} AI-scored 4–5
+					conversation{contributor.positiveCount === 1 ? "" : "s"} Nova-scored 4–5
 				</div>
 			</div>
 		</div>
@@ -802,7 +916,7 @@ function buildFocusedTickerItems(input: {
 		: 0;
 	if (positiveCount > 0) {
 		items.push(
-			`${scope}: ${positiveCount} conversation${positiveCount === 1 ? "" : "s"} AI-scored 4–5 ${withinPhrase}`,
+			`${scope}: ${positiveCount} conversation${positiveCount === 1 ? "" : "s"} Nova-scored 4–5 ${withinPhrase}`,
 		);
 	}
 

@@ -256,6 +256,12 @@ export interface IntercomListResponse<T> {
   }
 }
 
+type IntercomSearchFilter = {
+  field: string
+  operator: string
+  value: string | number | boolean
+}
+
 // Create the client
 export function createIntercomClient(config: IntercomConfig) {
   const { accessToken } = config
@@ -375,12 +381,32 @@ export function createIntercomClient(config: IntercomConfig) {
       return request(`/contacts/${id}`)
     },
 
+    async searchContacts(
+      query: IntercomSearchFilter[],
+      params?: {
+        per_page?: number
+        starting_after?: string
+      }
+    ): Promise<IntercomListResponse<IntercomContact>> {
+      return request("/contacts/search", {
+        method: "POST",
+        body: JSON.stringify({
+          query: {
+            operator: "AND",
+            value: query,
+          },
+          pagination: {
+            per_page: params?.per_page ?? 50,
+            ...(params?.starting_after
+              ? { starting_after: params.starting_after }
+              : {}),
+          },
+        }),
+      })
+    },
+
     async searchTickets(
-      query: {
-        field: string
-        operator: string
-        value: string | number | boolean
-      }[],
+      query: IntercomSearchFilter[],
       params?: {
         per_page?: number
         starting_after?: string

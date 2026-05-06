@@ -17,7 +17,9 @@ import { getLiveWallboard } from "@/lib/support-health/server";
 import type {
 	CaseLookupItem,
 	LiveWallboardData,
+	LiveWallboardFocusPlan,
 	ProductLiveMetrics,
+	QueueHealth,
 } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +54,15 @@ function LiveWallboardPage() {
 		live.lookupCases,
 		live.focusPlan?.topCaseExternalIds ?? [],
 	).slice(0, TOP_LOOKUP_LIMIT);
+	const directorCases = prioritizeLookupCases(
+		live.lookupCases,
+		live.focusPlan?.topCaseExternalIds ?? [],
+	).slice(0, 4);
+	const directorQueue = live.focusPlan?.focusProductName
+		? (live.mappedQueues.find(
+				(queue) => queue.teamName === live.focusPlan?.focusProductName,
+			) ?? null)
+		: null;
 	const liveTickerItems = buildLiveTickerItems(live, visibleProducts);
 
 	useEffect(() => {
@@ -204,6 +215,16 @@ function LiveWallboardPage() {
 		</WallboardSection>
 	);
 
+	const directorPanel = (
+		<WallboardSection title="Nova director" className="min-h-0">
+			<DirectorPanel
+				focusPlan={live.focusPlan ?? null}
+				queue={directorQueue}
+				cases={directorCases}
+			/>
+		</WallboardSection>
+	);
+
 	const volumeSlaPanel = (
 		<WallboardSection title="30-day volume vs SLA" className="min-h-0">
 			<VolumeSlaTrendChart
@@ -242,6 +263,13 @@ function LiveWallboardPage() {
 				</div>
 				<RotatingPanels
 					panels={[
+						live.focusPlan
+							? {
+									id: "live-director",
+									label: "Nova director",
+									content: directorPanel,
+								}
+							: null,
 						{
 							id: "live-tracked-teammates",
 							label: "Tracked teammates",
@@ -252,7 +280,10 @@ function LiveWallboardPage() {
 							label: "Top IDs",
 							content: topIdsPanel,
 						},
-					]}
+					].filter(
+						(p): p is { id: string; label: string; content: React.ReactNode } =>
+							p !== null,
+					)}
 					intervalMs={28_000}
 					className="min-h-0"
 				/>
@@ -343,6 +374,141 @@ function describeAggregateScope(
 		detail: null,
 		isSubset: false,
 	};
+}
+
+function DirectorPanel({
+	focusPlan,
+	queue,
+	cases,
+}: {
+	focusPlan: LiveWallboardFocusPlan | null;
+	queue: QueueHealth | null;
+	cases: CaseLookupItem[];
+}) {
+	const headline =
+		focusPlan?.headline ?? "Keep the queue moving at the current pace.";
+	const supportingText =
+		focusPlan?.supportingText ??
+		(queue
+			? `${queue.teamName}: ${queue.activeCaseCount} open • ${queue.awaitingTeamCount} waiting • ${queue.breachedCount} over SLA`
+			: "No urgent queue pressure right now.");
+
+	return (
+		<div className="space-y-3">
+			<div className={cn(wbCell, "px-4 py-4")}>
+				<div className="flex items-start justify-between gap-3">
+					<div className="min-w-0">
+						{focusPlan?.focusProductName ? (
+							<div className="mb-3 flex items-center gap-2 text-base font-semibold text-foreground">
+								<ProductBrandLogo
+									productName={focusPlan.focusProductName}
+									size="sm"
+								/>
+								<span className="truncate">
+									{formatProductLabel(focusPlan.focusProductName)}
+								</span>
+							</div>
+						) : null}
+						<p className="text-[1.45rem] font-semibold leading-tight text-foreground">
+							{headline}
+						</p>
+					</div>
+					<div className="shrink-0 rounded-md border border-border/50 bg-muted/60 px-2 py-1 text-xs font-medium text-muted-foreground">
+						{getDirectorSourceLabel(focusPlan)}
+					</div>
+				</div>
+				<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+					{supportingText}
+				</p>
+			</div>
+
+			{queue ? (
+				<div className="grid grid-cols-3 gap-2">
+					<DirectorMetric
+						label="Over SLA"
+						value={queue.breachedCount}
+						tone="red"
+					/>
+					<DirectorMetric
+						label="Due 60m"
+						value={queue.dueSoonCount}
+						tone="amber"
+					/>
+					<DirectorMetric
+						label="Unassigned"
+						value={queue.unassignedCount}
+						tone="stone"
+					/>
+				</div>
+			) : null}
+
+			{cases.length > 0 ? (
+				<div className="space-y-2">
+					{cases.map((item) => (
+						<div
+							key={item.id}
+							className={cn(wbCell, "flex items-center gap-3 px-3 py-2.5")}
+						>
+							<div
+								className={cn(
+									"h-2.5 w-2.5 shrink-0 rounded-full",
+									item.isBreached
+										? "bg-red-500"
+										: item.isDueSoon
+											? "bg-amber-500"
+											: "bg-muted-foreground/50",
+								)}
+							/>
+							<div className="min-w-0 flex-1">
+								<div className="truncate text-sm font-medium text-foreground">
+									#{item.externalId} · {formatProductLabel(item.productName)}
+								</div>
+								<div className="truncate text-xs text-muted-foreground">
+									{item.stateLabel} · {item.ageLabel}
+								</div>
+							</div>
+						</div>
+					))}
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+function DirectorMetric({
+	label,
+	value,
+	tone,
+}: {
+	label: string;
+	value: number;
+	tone: "red" | "amber" | "stone";
+}) {
+	return (
+		<div className={cn(wbCell, "px-3 py-2.5")}>
+			<div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+				{label}
+			</div>
+			<div
+				className={cn(
+					"mt-2 text-3xl font-semibold tabular-nums leading-none text-foreground",
+					tone === "red" && value > 0 && "text-red-600 dark:text-red-300",
+					tone === "amber" &&
+						value > 0 &&
+						"text-amber-600 dark:text-amber-300",
+				)}
+			>
+				{value}
+			</div>
+		</div>
+	);
+}
+
+function getDirectorSourceLabel(focusPlan: LiveWallboardFocusPlan | null) {
+	if (focusPlan?.source === "codex" || focusPlan?.source === "ollama") {
+		return "Nova";
+	}
+	return "Rules";
 }
 
 function ProductQueueStateCard({
