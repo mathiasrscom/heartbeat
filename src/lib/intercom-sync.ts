@@ -16,11 +16,11 @@ import {
 } from "@/db/schema";
 import {
 	createIntercomClient,
-	isIntercomApiError,
 	type IntercomAdmin,
 	type IntercomContact,
 	type IntercomConversation,
 	type IntercomTicket,
+	isIntercomApiError,
 } from "./intercom";
 import { extractIntercomCx } from "./intercom-cx";
 import {
@@ -36,6 +36,13 @@ interface SyncResult {
 	entitiesSynced: number;
 	teamMembersSynced: number;
 	errors: string[];
+}
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+function getCodexMinRefreshAgeMs(provider: string | null) {
+	return provider === "codex" ? DAY_MS : undefined;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -375,9 +382,7 @@ export async function startIntercomSyncInBackground(accessToken: string) {
 	return true;
 }
 
-export async function refreshWallboardContent(input?: {
-	logPrefix?: string;
-}) {
+export async function refreshWallboardContent(input?: { logPrefix?: string }) {
 	const logPrefix = input?.logPrefix ?? "[intercom-sync]";
 	const [
 		{ filterSupportCasesByProduct, getAvailableProducts, loadSupportCases },
@@ -431,13 +436,14 @@ export async function refreshWallboardContent(input?: {
 			model: llmSettings.model,
 			inputHash: focusPlanInputHash,
 			stored: storedFocusPlan,
+			minRefreshAgeMs: getCodexMinRefreshAgeMs(llmSettings.provider),
 		})
 	) {
 		console.info(`${logPrefix} Reusing stored AI focus plan.`);
 	} else {
 		let resolvedFocusPlan = {
 			...deterministicFocusPlan,
-			inputHash: null,
+			inputHash: null as string | null,
 		};
 		try {
 			const rewritten = await focusPlan.rewriteLiveFocusPlanWithLlm(
@@ -484,13 +490,14 @@ export async function refreshWallboardContent(input?: {
 				model: llmSettings.model,
 				inputHash: insightsInputHash,
 				stored: storedInsights,
+				minRefreshAgeMs: getCodexMinRefreshAgeMs(llmSettings.provider),
 			})
 		) {
 			console.info(`${logPrefix} Reusing stored AI wallboard insights.`);
 		} else {
 			let resolvedInsights = {
 				...deterministicInsights,
-				inputHash: null,
+				inputHash: null as string | null,
 			};
 			try {
 				const rewritten = await insights.rewriteInsightsWithLlm(
@@ -535,13 +542,14 @@ export async function refreshWallboardContent(input?: {
 				model: llmSettings.model,
 				inputHash: npsThemesInputHash,
 				stored: storedNpsThemes,
+				minRefreshAgeMs: getCodexMinRefreshAgeMs(llmSettings.provider),
 			})
 		) {
 			console.info(`${logPrefix} Reusing stored AI NPS themes.`);
 		} else {
 			let resolvedNpsThemes = {
 				...deterministicNpsThemes,
-				inputHash: null,
+				inputHash: null as string | null,
 			};
 			try {
 				const rewritten = await npsThemesModule.rewriteNpsThemesWithLlm(
@@ -581,6 +589,7 @@ export async function refreshWallboardContent(input?: {
 				model: llmSettings.model,
 				inputHash: npsCommentTranslationsInputHash,
 				stored: storedTranslations,
+				minRefreshAgeMs: getCodexMinRefreshAgeMs(llmSettings.provider),
 			})
 		) {
 			console.info(`${logPrefix} Reusing stored AI NPS comment translations.`);
@@ -625,6 +634,7 @@ export async function refreshWallboardContent(input?: {
 				model: llmSettings.model,
 				inputHash: tickerInputHash,
 				stored: storedTicker,
+				minRefreshAgeMs: getCodexMinRefreshAgeMs(llmSettings.provider),
 			})
 		) {
 			console.info(`${logPrefix} Reusing stored AI ticker messages.`);
@@ -657,7 +667,9 @@ export async function refreshWallboardContent(input?: {
 			console.info(`${logPrefix} Wallboard ticker refreshed (${source}).`);
 		}
 	} else {
-		console.info(`${logPrefix} No people moments available for ticker refresh.`);
+		console.info(
+			`${logPrefix} No people moments available for ticker refresh.`,
+		);
 	}
 
 	console.info(`${logPrefix} Post-sync wallboard content refreshed.`);
@@ -991,9 +1003,7 @@ async function upsertConversationNode(conversation: IntercomConversation) {
 	// a close time; the previous bumping behaviour is what we're eliminating.
 	const isClosed = mapConversationStatus(conversation.state) === "closed";
 	const previousRow = existing[0];
-	const previouslyClosed =
-		previousRow &&
-		mapConversationStatus(previousRow.status ?? "open") === "closed";
+	const previouslyClosed = previousRow?.status === "closed";
 	let resolvedAt: Date | null = null;
 	if (isClosed) {
 		if (previouslyClosed && previousRow?.resolvedAt) {
