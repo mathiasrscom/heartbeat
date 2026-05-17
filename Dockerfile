@@ -1,16 +1,16 @@
 # ── Stage 1: Install dependencies ──────────────────────────────────────
 FROM node:22-slim AS deps
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 
 WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 # ── Stage 2: Build the application ────────────────────────────────────
 FROM node:22-slim AS builder
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
@@ -21,7 +21,7 @@ RUN pnpm build
 # ── Stage 3: Production image ─────────────────────────────────────────
 FROM node:22-slim AS runner
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+RUN corepack enable && corepack prepare pnpm@10.33.4 --activate
 RUN npm install -g @openai/codex
 
 WORKDIR /app
