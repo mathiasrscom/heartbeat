@@ -9,6 +9,9 @@ import { hashWallboardLlmInput } from "./wallboard-llm-cache";
 
 const SETTINGS_KEY = "wallboard_product_insights";
 const MAX_TEXT_LENGTH = 300;
+const MAX_COMMENT_LENGTH = 180;
+const MAX_LOW_RATING_COMMENTS_PER_PRODUCT = 8;
+const MAX_POSITIVE_COMMENTS_PER_PRODUCT = 3;
 const INSIGHTS_OUTPUT_SCHEMA = {
 	type: "array",
 	items: {
@@ -45,6 +48,51 @@ function clampText(value: string) {
 	return value.slice(0, MAX_TEXT_LENGTH);
 }
 
+export function redactPII(text: string): string {
+	let out = text.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]");
+	out = out.replace(/https?:\/\/\S+/gi, "[link]");
+	return out.replace(/\s+/g, " ").trim();
+}
+
+interface FeedbackComment {
+	score: number;
+	comment: string;
+}
+
+export function pickFeedbackComments(
+	cases: SupportCaseRecord[],
+	options: { maxLength?: number; limit: number },
+): FeedbackComment[] {
+	const maxLength = options.maxLength ?? MAX_COMMENT_LENGTH;
+	const seenComments = new Set<string>();
+	const candidates: Array<{ score: number; comment: string; updatedAt: Date }> =
+		[];
+
+	for (const c of cases) {
+		if (c.cxScore === null) continue;
+		const raw = c.cxComment?.trim();
+		if (!raw) continue;
+		const redacted = redactPII(raw);
+		if (!redacted) continue;
+		const clamped =
+			redacted.length > maxLength
+				? `${redacted.slice(0, maxLength - 1)}…`
+				: redacted;
+		if (seenComments.has(clamped)) continue;
+		seenComments.add(clamped);
+		candidates.push({
+			score: c.cxScore,
+			comment: clamped,
+			updatedAt: c.updatedAt,
+		});
+	}
+
+	candidates.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+	return candidates
+		.slice(0, options.limit)
+		.map(({ score, comment }) => ({ score, comment }));
+}
+
 function toFivePointRating(score: number): number {
 	const normalized = Math.round(score / 2);
 	if (normalized <= 1) return 1;
@@ -70,6 +118,8 @@ interface ProductCaseAnalysis {
 	longRunningCases: SupportCaseRecord[];
 	slowResponseCases: SupportCaseRecord[];
 	highRiskOpenCases: SupportCaseRecord[];
+	lowRatingComments: FeedbackComment[];
+	positiveComments: FeedbackComment[];
 }
 
 function analyzeProduct(
@@ -104,6 +154,13 @@ function analyzeProduct(
 		}
 	}
 
+	const lowRatedCases = rated.filter(
+		(c) => c.cxScore !== null && toFivePointRating(c.cxScore) <= 2,
+	);
+	const positiveRatedCases = rated.filter(
+		(c) => c.cxScore !== null && toFivePointRating(c.cxScore) >= 4,
+	);
+
 	return {
 		productName,
 		productCases,
@@ -126,6 +183,12 @@ function analyzeProduct(
 			(c) => c.responseTimeMinutes !== null && c.responseTimeMinutes > 120,
 		),
 		highRiskOpenCases: actionable.filter((c) => c.isHighRisk),
+		lowRatingComments: pickFeedbackComments(lowRatedCases, {
+			limit: MAX_LOW_RATING_COMMENTS_PER_PRODUCT,
+		}),
+		positiveComments: pickFeedbackComments(positiveRatedCases, {
+			limit: MAX_POSITIVE_COMMENTS_PER_PRODUCT,
+		}),
 	};
 }
 
@@ -302,7 +365,7 @@ function buildOllamaPrompt(
 			.sort((x, y) => y[1] - x[1])
 			.slice(0, 3)
 			.map(([name]) => name);
-		return [
+		const lines = [
 			`Product: ${a.productName}`,
 			`  Resolved: ${a.resolved.length}, Open: ${a.actionable.length}, Waiting on us: ${a.awaitingTeamCount}`,
 			`  Positive ratings: ${a.positiveCount}${topPositive.length > 0 ? ` (${topPositive.join(", ")})` : ""}`,
@@ -312,27 +375,36 @@ function buildOllamaPrompt(
 			`  Cases open 2+ days: ${a.longRunningCases.length}`,
 			`  Slow first reply (>2h): ${a.slowResponseCases.length}`,
 			`  High-risk open: ${a.highRiskOpenCases.length}`,
-		].join("\n");
+		];
+		if (a.lowRatingComments.length > 0) {
+			lines.push("  Recent low-rating customer comments (verbatim):");
+			for (const fc of a.lowRatingComments) {
+				lines.push(`    - [${fc.score}/10] "${fc.comment}"`);
+			}
+		}
+		if (a.positiveComments.length > 0) {
+			lines.push("  Recent positive customer comments (verbatim):");
+			for (const fc of a.positiveComments) {
+				lines.push(`    - [${fc.score}/10] "${fc.comment}"`);
+			}
+		}
+		return lines.join("\n");
 	});
 
 	return [
 		"You are writing coaching insight cards for a support team wallboard on a TV in the office.",
 		"For each product, write two short paragraphs (1-3 sentences each, max 280 chars each):",
 		"",
-		"1. wentWell: Celebrate wins warmly. Name specific people who delivered great CX. Mention specific good behaviors (fast replies, thorough resolutions, clean SLA).",
+		"1. wentWell: Celebrate wins warmly. Name specific people who delivered great CX when known. Reflect what customers themselves said in positive verbatim comments when present.",
 		"",
-		"2. toImprove: Give ACTIONABLE coaching advice the team can act on today. Examples of good advice:",
-		'   - "Take ownership early — assign yourself when you start working on a case so others don\'t jump in."',
-		'   - "Consider calling the customer when a thread has too many back-and-forth messages."',
-		'   - "Leave a holding reply if you need more time, so the customer knows you\'re on it."',
-		'   - "Review reopened cases together — they often reveal gaps in how we confirm resolution."',
-		"   Do NOT just restate numbers (bad: '31 low ratings received'). Instead, suggest what to do about it.",
-		"   Never blame individuals for problems — frame improvements as team-level process changes.",
+		"2. toImprove: Drive the coaching from the verbatim low-rating customer comments when present. Identify 1–2 recurring behavioural patterns customers are actually describing, and recommend the concrete behaviour change that responds to it. Use the customer's framing when it sharpens the insight (e.g. 'customers say they have to repeat themselves — slow down and re-read the thread before replying').",
+		"   Only fall back to generic process advice (assign early, holding reply, etc.) when there are no meaningful verbatim signals.",
+		"   Never blame individuals — frame improvements as team-level behaviour changes.",
 		"",
 		"Rules:",
-		"- Write ALL output in English. Do not use any other language.",
-		"- Office-safe: no customer names or company names.",
-		"- Keep facts true to provided data.",
+		"- Write ALL output in English. Verbatim comments may be in Danish, Swedish, Norwegian, German or other languages — translate and paraphrase into English in your output.",
+		"- Office-safe: no customer names or company names. Emails and links have already been redacted.",
+		"- Stay faithful to what customers actually said. Do not invent quotes or signals not in the input.",
 		"- Be concise — TV wallboard, not a report.",
 		"- Return a JSON array with keys: productName, wentWell, toImprove.",
 		"- Return ONLY the JSON array, no markdown.",
@@ -340,7 +412,7 @@ function buildOllamaPrompt(
 		"Product data:",
 		...productFacts,
 		"",
-		"Deterministic draft (improve on this, make it more human and actionable):",
+		"Deterministic draft (improve on this, make it more human and grounded in customer voice):",
 		JSON.stringify(deterministic.products, null, 2),
 	].join("\n");
 }
