@@ -114,14 +114,63 @@ function sanitizeTranslations(
 		}
 
 		if (typeof item.englishComment !== "string") continue;
-		const englishComment = clampText(item.englishComment, MAX_TRANSLATION_LENGTH);
+		const englishComment = clampText(
+			item.englishComment,
+			MAX_TRANSLATION_LENGTH,
+		);
 		translations[key] = englishComment.length > 0 ? englishComment : null;
 	}
 
 	return translations;
 }
 
-function buildKeyedComments(records: NpsRecord[]) {
+const ENGLISH_STOPWORDS =
+	/\b(the|and|is|are|was|were|very|good|bad|thanks|thank|nice|great|fast|slow|help|helped|quick|easy|hard|nothing|yes)\b/i;
+
+function isAsciiOnly(text: string): boolean {
+	for (let i = 0; i < text.length; i++) {
+		if (text.charCodeAt(i) > 127) return false;
+	}
+	return true;
+}
+
+export function isLikelyEnglish(text: string): boolean {
+	if (!isAsciiOnly(text)) return false;
+	return ENGLISH_STOPWORDS.test(text);
+}
+
+export interface KeyedComment {
+	key: string;
+	score: number;
+	comment: string;
+	ratedAtMs: number;
+}
+
+export function partitionCommentsForTranslation(input: {
+	keyedComments: KeyedComment[];
+	existingTranslations: Record<string, string | null>;
+}): {
+	toTranslate: KeyedComment[];
+	locallyResolved: Record<string, string | null>;
+} {
+	const toTranslate: KeyedComment[] = [];
+	const locallyResolved: Record<string, string | null> = {};
+
+	for (const candidate of input.keyedComments) {
+		if (candidate.key in input.existingTranslations) {
+			continue;
+		}
+		if (isLikelyEnglish(candidate.comment)) {
+			locallyResolved[candidate.key] = null;
+			continue;
+		}
+		toTranslate.push(candidate);
+	}
+
+	return { toTranslate, locallyResolved };
+}
+
+function buildKeyedComments(records: NpsRecord[]): KeyedComment[] {
 	return records
 		.map((record) => {
 			const comment = getMeaningfulComment(record.comment);
@@ -133,31 +182,17 @@ function buildKeyedComments(records: NpsRecord[]) {
 				ratedAtMs: record.ratedAt?.getTime() ?? 0,
 			};
 		})
-		.filter(
-			(
-				record,
-			): record is {
-				key: string;
-				score: number;
-				comment: string;
-				ratedAtMs: number;
-			} => record !== null,
-		)
+		.filter((record): record is KeyedComment => record !== null)
 		.sort((left, right) => right.ratedAtMs - left.ratedAtMs)
 		.filter((record, index, list) => {
-			return list.findIndex((candidate) => candidate.key === record.key) === index;
+			return (
+				list.findIndex((candidate) => candidate.key === record.key) === index
+			);
 		})
 		.slice(0, MAX_COMMENTS);
 }
 
-function buildNpsCommentTranslationsPrompt(
-	keyedComments: Array<{
-		key: string;
-		score: number;
-		comment: string;
-		ratedAtMs: number;
-	}>,
-) {
+function buildNpsCommentTranslationsPrompt(keyedComments: KeyedComment[]) {
 	if (keyedComments.length === 0) return null;
 
 	return [
@@ -191,31 +226,55 @@ export async function rewriteNpsCommentTranslationsWithLlm(
 	config: TickerLlmConfig,
 ): Promise<WallboardNpsCommentTranslations | null> {
 	const keyedComments = buildKeyedComments(records);
-	const prompt = buildNpsCommentTranslationsPrompt(keyedComments);
-	if (!prompt) return null;
+	if (keyedComments.length === 0) return null;
 
-	const result = await generateWallboardText({
-		config,
-		prompt,
-		temperature: 0.1,
-		outputSchema: NPS_COMMENT_TRANSLATIONS_OUTPUT_SCHEMA,
+	const stored = await readWallboardNpsCommentTranslations();
+	const existingTranslations = stored?.translations ?? {};
+
+	const { toTranslate, locallyResolved } = partitionCommentsForTranslation({
+		keyedComments,
+		existingTranslations,
 	});
-	if (!result) return null;
 
-	const parsed = extractJsonArray(result.content);
-	if (!parsed) return null;
+	if (toTranslate.length === 0 && Object.keys(locallyResolved).length === 0) {
+		return null;
+	}
 
-	const translations = sanitizeTranslations(
-		parsed,
-		new Set(keyedComments.map((record) => record.key)),
-	);
-	if (Object.keys(translations).length === 0) return null;
+	let codexTranslations: Record<string, string | null> = {};
+	let source: WallboardLlmSource = stored?.source ?? "deterministic";
+	let model: string | null = stored?.model ?? null;
+
+	if (toTranslate.length > 0) {
+		const prompt = buildNpsCommentTranslationsPrompt(toTranslate);
+		if (prompt) {
+			const result = await generateWallboardText({
+				config,
+				prompt,
+				temperature: 0.1,
+				outputSchema: NPS_COMMENT_TRANSLATIONS_OUTPUT_SCHEMA,
+			});
+			if (result) {
+				const parsed = extractJsonArray(result.content);
+				if (parsed) {
+					codexTranslations = sanitizeTranslations(
+						parsed,
+						new Set(toTranslate.map((record) => record.key)),
+					);
+					source = result.provider;
+					model = result.model;
+				}
+			}
+		}
+	}
+
+	const newTranslations = { ...locallyResolved, ...codexTranslations };
+	if (Object.keys(newTranslations).length === 0) return null;
 
 	return {
 		generatedAt: new Date().toISOString(),
-		source: result.provider,
-		model: result.model,
-		translations,
+		source,
+		model,
+		translations: newTranslations,
 	};
 }
 
@@ -293,9 +352,7 @@ export async function readWallboardNpsCommentTranslations(): Promise<WallboardNp
 				return [key, clampText(translation, MAX_TRANSLATION_LENGTH)] as const;
 			})
 			.filter(
-				(
-					entry,
-				): entry is readonly [string, string | null] => entry !== null,
+				(entry): entry is readonly [string, string | null] => entry !== null,
 			),
 	);
 
