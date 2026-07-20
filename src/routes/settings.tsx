@@ -1,13 +1,18 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
 	CheckCircle2,
 	Clock3,
+	Cpu,
+	Gauge,
 	LoaderCircle,
 	Monitor,
 	Plug,
 	RefreshCcw,
 	ShieldAlert,
+	SlidersHorizontal,
+	Target,
+	X,
 	XCircle,
 } from "lucide-react";
 import { type FormEvent, useEffect, useId, useRef, useState } from "react";
@@ -75,6 +80,9 @@ function SettingsPage() {
 	const [tickerLlmBaseUrl, setTickerLlmBaseUrl] = useState(
 		initialState.tickerLlmBaseUrl ?? "",
 	);
+	const [tickerLlmAuthToken, setTickerLlmAuthToken] = useState("");
+	const [removeTickerLlmAuthToken, setRemoveTickerLlmAuthToken] =
+		useState(false);
 	const [supportTargets, setSupportTargets] = useState(
 		initialState.supportTargets,
 	);
@@ -115,6 +123,18 @@ function SettingsPage() {
 	const tickerLookupRequestRef = useRef(0);
 	const supportTargetFieldId = useId();
 	const resetConfirmationId = useId();
+	const intercomSectionId = useId();
+	const aiSectionId = useId();
+	const targetsSectionId = useId();
+	const syncSectionId = useId();
+	const displaySectionId = useId();
+	const settingsNavItems = [
+		{ href: `#${intercomSectionId}`, label: "Intercom", icon: Plug },
+		{ href: `#${aiSectionId}`, label: "AI provider", icon: Cpu },
+		{ href: `#${targetsSectionId}`, label: "Targets", icon: Target },
+		{ href: `#${syncSectionId}`, label: "Sync", icon: Gauge },
+		{ href: `#${displaySectionId}`, label: "Display", icon: SlidersHorizontal },
+	] as const;
 	const isOllamaProvider = tickerLlmProvider === "ollama";
 	const showTickerModelSelect =
 		isOllamaProvider &&
@@ -190,7 +210,9 @@ function SettingsPage() {
 			setIsLoadingTickerModels(true);
 			setTickerModelsError(null);
 
-			void listTickerModels({ data: { baseUrl: rawBaseUrl } })
+			void listTickerModels({
+				data: { baseUrl: rawBaseUrl, authToken: tickerLlmAuthToken },
+			})
 				.then((result) => {
 					if (tickerLookupRequestRef.current !== requestId) return;
 
@@ -230,6 +252,7 @@ function SettingsPage() {
 		isCustomTickerModelMode,
 		isOllamaProvider,
 		listTickerModels,
+		tickerLlmAuthToken,
 		tickerLlmBaseUrl,
 	]);
 
@@ -298,6 +321,8 @@ function SettingsPage() {
 					provider: tickerLlmProvider,
 					model: isOllamaProvider ? tickerLlmModel : "",
 					baseUrl: tickerLlmBaseUrl,
+					authToken: isOllamaProvider ? tickerLlmAuthToken : "",
+					removeAuthToken: removeTickerLlmAuthToken,
 				},
 			});
 
@@ -308,6 +333,8 @@ function SettingsPage() {
 			setTickerLlmModel(result.state.tickerLlmModel ?? "");
 			setTickerLlmBaseUrl(result.state.tickerLlmBaseUrl ?? "");
 			setResolvedTickerBaseUrl(result.state.tickerLlmBaseUrl ?? null);
+			setTickerLlmAuthToken("");
+			setRemoveTickerLlmAuthToken(false);
 			setSupportTargets(result.state.supportTargets);
 			setFeedback({ tone: "success", text: result.message });
 		} catch (error) {
@@ -331,6 +358,8 @@ function SettingsPage() {
 					provider: null,
 					model: "",
 					baseUrl: "",
+					authToken: "",
+					removeAuthToken: true,
 				},
 			});
 			setState(result.state);
@@ -339,6 +368,8 @@ function SettingsPage() {
 			);
 			setTickerLlmModel("");
 			setTickerLlmBaseUrl("");
+			setTickerLlmAuthToken("");
+			setRemoveTickerLlmAuthToken(false);
 			setIsCustomTickerModelMode(false);
 			setAvailableTickerModels([]);
 			setTickerModelsError(null);
@@ -550,729 +581,874 @@ function SettingsPage() {
 	}
 
 	return (
-		<div className="mx-auto max-w-7xl p-4 lg:p-6">
-			<div className="mb-4">
-				<h1 className="text-xl font-semibold">Settings</h1>
-				<p className="text-xs text-muted-foreground">
-					Configure the Intercom connection and wallboard defaults
-				</p>
-			</div>
-
-			<div className="space-y-8">
-				<section className={settingsSectionClassName}>
-					<div className="flex items-center gap-2 mb-2">
-						<Plug className="h-4 w-4 text-muted-foreground" />
-						<div className="flex-1">
-							<span className="text-xs font-medium">Intercom</span>
-							<span className="text-[10px] text-muted-foreground ml-2">
-								Conversations, tickets, SLA, and CX data
-							</span>
+		<div className="min-h-screen bg-bg-app p-3 lg:p-6">
+			<div className="mx-auto flex h-[calc(100vh-1.5rem)] max-w-7xl overflow-hidden rounded-3xl border border-border/70 bg-background shadow-2xl shadow-black/10 lg:h-[calc(100vh-3rem)]">
+				<aside className="flex w-60 shrink-0 flex-col border-r border-border/60 bg-bg-surface/55 p-4">
+					<div className="flex items-center gap-3 px-2 py-2">
+						<span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-background">
+							<img
+								src="/product_support_logo.png"
+								alt=""
+								className="h-6 w-6 rounded object-contain"
+							/>
+						</span>
+						<div>
+							<div className="text-sm font-semibold">Heartbeat</div>
+							<div className="text-[11px] text-muted-foreground">Settings</div>
 						</div>
-						<StatusBadge state={state} />
 					</div>
-
-					<div className="grid gap-2 sm:grid-cols-3 text-xs mb-3">
-						<StatItem
-							label="Last sync"
-							value={formatTimestamp(state.lastSyncAt, "Never")}
-						/>
-						<StatItem
-							label="Connection"
-							value={
-								state.verifiedAdminEmail ||
-								state.tokenHint ||
-								"No token configured"
-							}
-						/>
-						<StatItem
-							label="Latest import"
-							value={
-								state.lastSyncAt
-									? `${state.nodesSynced} cases • ${state.entitiesSynced} contacts`
-									: "Run first sync"
-							}
-						/>
+					<nav className="mt-6 space-y-1" aria-label="Settings sections">
+						{settingsNavItems.map((item) => (
+							<a
+								key={item.href}
+								href={item.href}
+								className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+							>
+								<item.icon className="h-4 w-4" />
+								{item.label}
+							</a>
+						))}
+					</nav>
+					<div className="mt-auto space-y-1 border-t border-border/50 pt-4">
+						<Link
+							to="/wallboard/live"
+							className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-background hover:text-foreground"
+						>
+							<Monitor className="h-4 w-4" /> Attention now
+						</Link>
+						<Link
+							to="/wallboard/trends"
+							className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-background hover:text-foreground"
+						>
+							<Gauge className="h-4 w-4" /> Customer pulse
+						</Link>
 					</div>
+				</aside>
 
-					{state.isSyncRunning ? (
-						<div className="mb-4 border-l-2 border-amber-400 py-1 pl-3 text-xs text-amber-900">
-							<div className="flex items-center gap-2 font-medium">
-								<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-								{state.syncStageLabel || "Intercom sync is running"}
+				<main className="min-w-0 flex-1 overflow-y-auto scroll-smooth">
+					<div className="mx-auto max-w-4xl p-6 lg:p-9">
+						<div className="mb-8 flex items-start justify-between gap-4">
+							<div>
+								<h1 className="text-2xl font-semibold tracking-tight">
+									Settings
+								</h1>
+								<p className="mt-1 text-sm text-muted-foreground">
+									Connections, intelligence, targets, and monitor defaults
+								</p>
 							</div>
-							{state.syncStartedAt ? (
-								<div className="mt-1 text-[10px] text-amber-800/80">
-									Started {formatTimestamp(state.syncStartedAt, "Unknown")}
-								</div>
-							) : null}
+							<Link
+								to="/wallboard/live"
+								aria-label="Close settings"
+								className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+							>
+								<X className="h-4 w-4" />
+							</Link>
 						</div>
-					) : null}
 
-					<div className={cn("mb-4", settingsBlockClassName)}>
-						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-							<div className="space-y-1 text-xs">
-								<div className="font-medium text-foreground">Token storage</div>
-								<div className="text-muted-foreground">
-									{state.hasStoredToken
-										? `${state.storedTokenHint} is stored in the database for background sync.`
-										: "No Intercom token is stored in the database yet."}
-								</div>
-								{state.tokenSource === "environment" ? (
-									<div className="text-muted-foreground">
-										The active sync is using `INTERCOM_ACCESS_TOKEN` from the
-										environment.
+						<div className="space-y-10">
+							<section
+								id={intercomSectionId}
+								className={settingsSectionClassName}
+							>
+								<div className="flex items-center gap-2 mb-2">
+									<Plug className="h-4 w-4 text-muted-foreground" />
+									<div className="flex-1">
+										<span className="text-xs font-medium">Intercom</span>
+										<span className="text-[10px] text-muted-foreground ml-2">
+											Conversations, tickets, SLA, and CX data
+										</span>
 									</div>
-								) : state.hasStoredToken ? (
-									<div className="text-muted-foreground">
-										The active sync is using the stored database token.
+									<StatusBadge state={state} />
+								</div>
+
+								<div className="grid gap-2 sm:grid-cols-3 text-xs mb-3">
+									<StatItem
+										label="Last sync"
+										value={formatTimestamp(state.lastSyncAt, "Never")}
+									/>
+									<StatItem
+										label="Connection"
+										value={
+											state.verifiedAdminEmail ||
+											state.tokenHint ||
+											"No token configured"
+										}
+									/>
+									<StatItem
+										label="Latest import"
+										value={
+											state.lastSyncAt
+												? `${state.nodesSynced} cases • ${state.entitiesSynced} contacts`
+												: "Run first sync"
+										}
+									/>
+								</div>
+
+								{state.isSyncRunning ? (
+									<div className="mb-4 border-l-2 border-amber-400 py-1 pl-3 text-xs text-amber-900">
+										<div className="flex items-center gap-2 font-medium">
+											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+											{state.syncStageLabel || "Intercom sync is running"}
+										</div>
+										{state.syncStartedAt ? (
+											<div className="mt-1 text-[10px] text-amber-800/80">
+												Started{" "}
+												{formatTimestamp(state.syncStartedAt, "Unknown")}
+											</div>
+										) : null}
 									</div>
 								) : null}
-							</div>
 
-							{state.hasStoredToken ? (
-								<Button
-									size="sm"
-									type="button"
-									variant="outline"
-									className="h-8 text-xs px-3"
-									onClick={handleRemoveToken}
-									disabled={isRemoving}
-								>
-									{isRemoving ? (
-										<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-									) : null}
-									Remove stored token
-								</Button>
-							) : null}
-						</div>
-					</div>
+								<div className={cn("mb-4", settingsBlockClassName)}>
+									<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+										<div className="space-y-1 text-xs">
+											<div className="font-medium text-foreground">
+												Token storage
+											</div>
+											<div className="text-muted-foreground">
+												{state.hasStoredToken
+													? `${state.storedTokenHint} is stored in the database for background sync.`
+													: "No Intercom token is stored in the database yet."}
+											</div>
+											{state.tokenSource === "environment" ? (
+												<div className="text-muted-foreground">
+													The active sync is using `INTERCOM_ACCESS_TOKEN` from
+													the environment.
+												</div>
+											) : state.hasStoredToken ? (
+												<div className="text-muted-foreground">
+													The active sync is using the stored database token.
+												</div>
+											) : null}
+										</div>
 
-					<form
-						className="flex flex-col gap-2 sm:flex-row"
-						onSubmit={handleConnect}
-					>
-						<input
-							type="text"
-							name="intercom-token-context"
-							value="intercom"
-							autoComplete="username"
-							className="sr-only"
-							tabIndex={-1}
-							readOnly
-							aria-hidden="true"
-						/>
-						<Input
-							type="password"
-							name="intercom-access-token"
-							autoComplete="new-password"
-							placeholder={tokenPlaceholder}
-							className="flex-1 h-7 text-xs"
-							value={accessToken}
-							onChange={(event) => setAccessToken(event.target.value)}
-						/>
-						<Button
-							size="sm"
-							className="h-7 text-xs px-3"
-							type="submit"
-							disabled={isSaving || accessToken.trim().length === 0}
-						>
-							{isSaving ? (
-								<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-							) : null}
-							{saveLabel}
-						</Button>
-						<Button
-							size="sm"
-							type="button"
-							variant="outline"
-							className="h-7 text-xs px-3"
-							onClick={handleSync}
-							disabled={
-								isStartingSync || state.isSyncRunning || !state.hasAccessToken
-							}
-						>
-							{isStartingSync || state.isSyncRunning ? (
-								<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-							) : (
-								<RefreshCcw className="h-3.5 w-3.5" />
-							)}
-							{syncButtonLabel}
-						</Button>
-					</form>
-					<p className="text-[10px] text-muted-foreground mt-1">
-						Get from Intercom → Settings → Developers → Access Token
-					</p>
-
-					<form
-						className="mt-4 border-t border-red-200/70 pt-3"
-						onSubmit={handleResetIntercomData}
-					>
-						<div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(230px,280px)]">
-							<div className="flex gap-3">
-								<ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />
-								<div className="min-w-0 space-y-1 text-xs">
-									<div className="text-sm font-medium text-foreground">
-										Reset Intercom sync data
+										{state.hasStoredToken ? (
+											<Button
+												size="sm"
+												type="button"
+												variant="outline"
+												className="h-8 text-xs px-3"
+												onClick={handleRemoveToken}
+												disabled={isRemoving}
+											>
+												{isRemoving ? (
+													<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+												) : null}
+												Remove stored token
+											</Button>
+										) : null}
 									</div>
-									<p className="text-muted-foreground">
-										Deletes synced cases, contacts, teammates, sync state, and
-										generated wallboard caches.
-									</p>
-									<p className="text-muted-foreground">
-										Keeps token, workspace link, targets, Nova, and display
-										settings. A full sync starts immediately after reset.
-									</p>
 								</div>
-							</div>
-							<div className="space-y-2">
-								<label
-									htmlFor={resetConfirmationId}
-									className="block text-xs font-medium text-foreground"
+
+								<form
+									className="flex flex-col gap-2 sm:flex-row"
+									onSubmit={handleConnect}
 								>
-									Confirm reset
-								</label>
-								<Input
-									id={resetConfirmationId}
-									value={resetConfirmation}
-									onChange={(event) => setResetConfirmation(event.target.value)}
-									placeholder="Type RESET INTERCOM"
-									autoComplete="off"
-									spellCheck={false}
-									className="h-8 bg-background font-mono text-xs"
-								/>
-								<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-									<div
-										className={cn(
-											"text-[11px]",
-											canResetIntercomData
-												? "text-red-700"
-												: "text-muted-foreground",
-										)}
-									>
-										{resetIntercomHint}
-									</div>
+									<input
+										type="text"
+										name="intercom-token-context"
+										value="intercom"
+										autoComplete="username"
+										className="sr-only"
+										tabIndex={-1}
+										readOnly
+										aria-hidden="true"
+									/>
+									<Input
+										type="password"
+										name="intercom-access-token"
+										autoComplete="new-password"
+										placeholder={tokenPlaceholder}
+										className="flex-1 h-7 text-xs"
+										value={accessToken}
+										onChange={(event) => setAccessToken(event.target.value)}
+									/>
 									<Button
 										size="sm"
+										className="h-7 text-xs px-3"
 										type="submit"
-										variant={canResetIntercomData ? "destructive" : "outline"}
-										className="h-8 px-3 text-xs sm:w-32"
-										disabled={isResettingIntercomData || !canResetIntercomData}
+										disabled={isSaving || accessToken.trim().length === 0}
 									>
-										{isResettingIntercomData ? (
+										{isSaving ? (
+											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+										) : null}
+										{saveLabel}
+									</Button>
+									<Button
+										size="sm"
+										type="button"
+										variant="outline"
+										className="h-7 text-xs px-3"
+										onClick={handleSync}
+										disabled={
+											isStartingSync ||
+											state.isSyncRunning ||
+											!state.hasAccessToken
+										}
+									>
+										{isStartingSync || state.isSyncRunning ? (
 											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
 										) : (
 											<RefreshCcw className="h-3.5 w-3.5" />
 										)}
-										Reset and sync
+										{syncButtonLabel}
+									</Button>
+								</form>
+								<p className="text-[10px] text-muted-foreground mt-1">
+									Get from Intercom → Settings → Developers → Access Token
+								</p>
+
+								<form
+									className="mt-4 border-t border-red-200/70 pt-3"
+									onSubmit={handleResetIntercomData}
+								>
+									<div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_minmax(230px,280px)]">
+										<div className="flex gap-3">
+											<ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-red-700" />
+											<div className="min-w-0 space-y-1 text-xs">
+												<div className="text-sm font-medium text-foreground">
+													Reset Intercom sync data
+												</div>
+												<p className="text-muted-foreground">
+													Deletes synced cases, contacts, teammates, sync state,
+													and generated wallboard caches.
+												</p>
+												<p className="text-muted-foreground">
+													Keeps token, workspace link, targets, Nova, and
+													display settings. A full sync starts immediately after
+													reset.
+												</p>
+											</div>
+										</div>
+										<div className="space-y-2">
+											<label
+												htmlFor={resetConfirmationId}
+												className="block text-xs font-medium text-foreground"
+											>
+												Confirm reset
+											</label>
+											<Input
+												id={resetConfirmationId}
+												value={resetConfirmation}
+												onChange={(event) =>
+													setResetConfirmation(event.target.value)
+												}
+												placeholder="Type RESET INTERCOM"
+												autoComplete="off"
+												spellCheck={false}
+												className="h-8 bg-background font-mono text-xs"
+											/>
+											<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+												<div
+													className={cn(
+														"text-[11px]",
+														canResetIntercomData
+															? "text-red-700"
+															: "text-muted-foreground",
+													)}
+												>
+													{resetIntercomHint}
+												</div>
+												<Button
+													size="sm"
+													type="submit"
+													variant={
+														canResetIntercomData ? "destructive" : "outline"
+													}
+													className="h-8 px-3 text-xs sm:w-32"
+													disabled={
+														isResettingIntercomData || !canResetIntercomData
+													}
+												>
+													{isResettingIntercomData ? (
+														<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+													) : (
+														<RefreshCcw className="h-3.5 w-3.5" />
+													)}
+													Reset and sync
+												</Button>
+											</div>
+										</div>
+									</div>
+								</form>
+
+								<form
+									className="mt-3 flex flex-col gap-2 sm:flex-row"
+									onSubmit={handleSaveWorkspaceLink}
+								>
+									<Input
+										type="url"
+										placeholder="Intercom workspace link"
+										className="flex-1 h-7 text-xs"
+										value={appUrl}
+										onChange={(event) => setAppUrl(event.target.value)}
+									/>
+									<Button
+										size="sm"
+										className="h-7 text-xs px-3"
+										type="submit"
+										disabled={isSavingAppUrl || appUrl.trim().length === 0}
+									>
+										{isSavingAppUrl ? (
+											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+										) : null}
+										Save workspace link
+									</Button>
+								</form>
+								<p className="text-[10px] text-muted-foreground mt-1">
+									Example:
+									https://app.eu.intercom.com/a/inbox/zah460bv/inbox/conversation/215560824562362
+								</p>
+
+								<form
+									id={aiSectionId}
+									className={cn("mt-4", settingsSubsectionClassName)}
+									onSubmit={handleSaveTickerLlm}
+								>
+									<div className="mb-2 flex items-center justify-between gap-3">
+										<div>
+											<div className="text-xs font-medium text-foreground">
+												Nova rewrite settings
+											</div>
+											<div className="text-[10px] text-muted-foreground">
+												Choose whether wallboard copy is rewritten through local
+												Ollama HTTP or a direct local `codex` CLI process.
+											</div>
+										</div>
+									</div>
+
+									<div className="grid gap-2 sm:grid-cols-3">
+										<select
+											className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
+											value={tickerLlmProvider}
+											onChange={(event) => {
+												const nextProvider =
+													event.target.value === "codex" ? "codex" : "ollama";
+												setTickerLlmProvider(nextProvider);
+												setFeedback(null);
+												setTickerModelsError(null);
+												setIsCustomTickerModelMode(false);
+												if (nextProvider === "codex") {
+													setTickerLlmModel("");
+												}
+											}}
+										>
+											<option value="ollama">Ollama</option>
+											<option value="codex">Codex CLI</option>
+										</select>
+										{isOllamaProvider ? (
+											<Input
+												type="url"
+												placeholder="http://127.0.0.1:11434"
+												className="h-7 text-xs"
+												value={tickerLlmBaseUrl}
+												onChange={(event) =>
+													setTickerLlmBaseUrl(event.target.value)
+												}
+											/>
+										) : (
+											<div className="border-l border-border/40 py-1 pl-3 text-[10px] text-muted-foreground sm:col-span-2">
+												Codex CLI runs `codex exec` with {DEFAULT_CODEX_MODEL}.
+												There is no model setting here.
+											</div>
+										)}
+										{isOllamaProvider && showTickerModelSelect ? (
+											<select
+												className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
+												value={tickerLlmModel}
+												onChange={(event) => {
+													const value = event.target.value;
+													if (value === "__custom__") {
+														setIsCustomTickerModelMode(true);
+														setTickerLlmModel("");
+														return;
+													}
+													setTickerLlmModel(value);
+												}}
+											>
+												{availableTickerModels.map((model) => (
+													<option key={model} value={model}>
+														{model}
+													</option>
+												))}
+												<option value="__custom__">Custom model…</option>
+											</select>
+										) : isOllamaProvider ? (
+											<Input
+												type="text"
+												placeholder="llama3.1:8b"
+												className="h-7 text-xs"
+												value={tickerLlmModel}
+												onChange={(event) =>
+													setTickerLlmModel(event.target.value)
+												}
+											/>
+										) : null}
+									</div>
+									{isOllamaProvider ? (
+										<div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+											<Input
+												type="password"
+												autoComplete="new-password"
+												placeholder={
+													state.hasTickerLlmAuthToken
+														? `Optional auth token · stored ${state.tickerLlmAuthTokenHint}`
+														: "Optional bearer/API token"
+												}
+												className="h-8 text-xs"
+												value={tickerLlmAuthToken}
+												onChange={(event) => {
+													setTickerLlmAuthToken(event.target.value);
+													if (event.target.value.trim()) {
+														setRemoveTickerLlmAuthToken(false);
+													}
+												}}
+											/>
+											{state.hasTickerLlmAuthToken ? (
+												<Button
+													type="button"
+													size="sm"
+													variant={
+														removeTickerLlmAuthToken ? "destructive" : "outline"
+													}
+													className="h-8 text-xs"
+													onClick={() =>
+														setRemoveTickerLlmAuthToken((current) => !current)
+													}
+												>
+													{removeTickerLlmAuthToken
+														? "Token will be removed"
+														: "Remove token"}
+												</Button>
+											) : null}
+											<p className="text-[10px] text-muted-foreground sm:col-span-2">
+												Sent as an Authorization bearer token to authenticated
+												Ollama-compatible endpoints. Leave blank to keep the
+												stored token.
+											</p>
+										</div>
+									) : null}
+									<div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+										<div>
+											{isOllamaProvider
+												? isLoadingTickerModels
+													? "Querying Ollama models..."
+													: tickerModelsError
+														? tickerModelsError
+														: availableTickerModels.length > 0
+															? `${availableTickerModels.length} model${
+																	availableTickerModels.length === 1 ? "" : "s"
+																} found at ${
+																	resolvedTickerBaseUrl ?? tickerLlmBaseUrl
+																}`
+															: tickerLlmBaseUrl.trim()
+																? "No Ollama models found at this URL yet."
+																: "Fallback mode: deterministic ticker messages"
+												: `Codex CLI uses the local binary, ${DEFAULT_CODEX_MODEL}, and your existing \`codex login\` session.`}
+										</div>
+										{isOllamaProvider && availableTickerModels.length > 0 ? (
+											<Button
+												size="sm"
+												type="button"
+												variant="ghost"
+												className="h-6 px-2 text-[10px]"
+												onClick={() => {
+													if (isCustomTickerModelMode) {
+														setIsCustomTickerModelMode(false);
+														if (availableTickerModels.length > 0) {
+															setTickerLlmModel(availableTickerModels[0]);
+														}
+													} else {
+														setIsCustomTickerModelMode(true);
+													}
+												}}
+											>
+												{isCustomTickerModelMode
+													? "Use discovered models"
+													: "Use custom model"}
+											</Button>
+										) : null}
+									</div>
+									{!isOllamaProvider ? (
+										<p className="mt-2 text-[10px] text-muted-foreground">
+											If you run Heartbeat in Docker, the worker container needs
+											the `codex` binary and auth in that same container. A
+											host-only `codex login` will not be visible inside the
+											container.
+										</p>
+									) : null}
+									<div className="mt-2 flex items-center justify-between gap-2">
+										<div className="text-[10px] text-muted-foreground">
+											{tickerStatusText}
+										</div>
+										<div className="flex items-center gap-2">
+											<Button
+												size="sm"
+												type="button"
+												variant="outline"
+												className="h-7 text-xs px-3"
+												disabled={
+													isSavingTickerLlm ||
+													(!state.tickerLlmEnabled &&
+														!hasDraftTickerLlmSettings)
+												}
+												onClick={handleClearTickerLlm}
+											>
+												Clear settings
+											</Button>
+											<Button
+												size="sm"
+												className="h-7 text-xs px-3"
+												type="submit"
+												disabled={isSavingTickerLlm || !canSaveTickerLlm}
+											>
+												{isSavingTickerLlm ? (
+													<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+												) : null}
+												{isOllamaProvider
+													? "Save Ollama settings"
+													: "Use Codex CLI default"}
+											</Button>
+										</div>
+									</div>
+								</form>
+
+								<div className="mt-4 border-t border-border/40 pt-3 text-xs">
+									<div className="font-medium text-foreground">CX source</div>
+									<div className="mt-1 text-muted-foreground">
+										Primary: <code>conversation_rating.rating</code>. Fallbacks:{" "}
+										<code>custom_attributes[&quot;CX Score rating&quot;]</code>{" "}
+										and <code>ai_agent.rating</code>.
+									</div>
+									<div className="mt-1 text-muted-foreground">
+										CX period metrics use resolved conversations only.
+									</div>
+									<div className="mt-1 text-muted-foreground">
+										Satisfaction score = percent of rated conversations with a 4
+										or 5 rating.
+									</div>
+								</div>
+
+								<form
+									id={targetsSectionId}
+									className={cn("mt-4", settingsSubsectionClassName)}
+									onSubmit={handleSaveSupportTargets}
+								>
+									<div className="mb-3">
+										<div className="text-xs font-medium text-foreground">
+											Support targets
+										</div>
+										<div className="text-[10px] text-muted-foreground">
+											Set the SLA and satisfaction thresholds per product. The
+											default target is used when all products are shown
+											together.
+										</div>
+									</div>
+
+									<div className="space-y-3">
+										<div className={settingsBlockClassName}>
+											<div className="mb-2 text-[11px] font-medium text-foreground">
+												Default target
+											</div>
+											<div className="grid gap-2 sm:grid-cols-2">
+												<TargetNumberField
+													id={`${supportTargetFieldId}-default-sla`}
+													label="SLA target %"
+													value={supportTargets.defaultTargets.slaTargetPercent}
+													onChange={(value) =>
+														updateDefaultSupportTarget(
+															"slaTargetPercent",
+															value,
+														)
+													}
+												/>
+												<TargetNumberField
+													id={`${supportTargetFieldId}-default-cx`}
+													label="CX target %"
+													value={
+														supportTargets.defaultTargets
+															.satisfactionTargetPercent
+													}
+													onChange={(value) =>
+														updateDefaultSupportTarget(
+															"satisfactionTargetPercent",
+															value,
+														)
+													}
+												/>
+											</div>
+										</div>
+
+										<div className="space-y-2">
+											{state.supportTargetProducts.map((productName) => {
+												const targets =
+													supportTargets.productTargets[productName] ??
+													supportTargets.defaultTargets;
+
+												return (
+													<div
+														key={productName}
+														className={cn(
+															"grid gap-3 sm:grid-cols-[minmax(0,1fr)_112px_112px]",
+															settingsRowClassName,
+														)}
+													>
+														<div className="min-w-0">
+															<div className="truncate text-sm font-medium text-foreground">
+																{productName}
+															</div>
+															<div className="mt-1 text-[10px] text-muted-foreground">
+																Used when this product is filtered or
+																spotlighted on the wallboards.
+															</div>
+														</div>
+														<TargetNumberField
+															id={`support-target-${toTargetId(productName)}-sla`}
+															label="SLA target %"
+															value={targets.slaTargetPercent}
+															onChange={(value) =>
+																updateProductSupportTarget(
+																	productName,
+																	"slaTargetPercent",
+																	value,
+																)
+															}
+														/>
+														<TargetNumberField
+															id={`support-target-${toTargetId(productName)}-cx`}
+															label="CX target %"
+															value={targets.satisfactionTargetPercent}
+															onChange={(value) =>
+																updateProductSupportTarget(
+																	productName,
+																	"satisfactionTargetPercent",
+																	value,
+																)
+															}
+														/>
+													</div>
+												);
+											})}
+										</div>
+									</div>
+
+									<div className="mt-3 flex justify-end">
+										<Button
+											size="sm"
+											className="h-7 px-3 text-xs"
+											type="submit"
+											disabled={isSavingSupportTargets}
+										>
+											{isSavingSupportTargets ? (
+												<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+											) : null}
+											Save support targets
+										</Button>
+									</div>
+								</form>
+
+								{feedback ? (
+									<div
+										className={cn(
+											"mt-4 border-l-2 py-1 pl-3 text-xs",
+											feedback.tone === "success"
+												? "border-emerald-400 text-emerald-800"
+												: "border-red-400 text-red-800",
+										)}
+									>
+										{feedback.text}
+									</div>
+								) : null}
+
+								{state.lastError ? (
+									<div className="mt-4 border-l-2 border-red-400 py-1 pl-3 text-xs text-red-800">
+										<div className="flex items-center gap-2 font-medium">
+											<ShieldAlert className="h-3.5 w-3.5" />
+											Latest sync issue
+										</div>
+										<div className="mt-1">{state.lastError}</div>
+										{state.lastErrorAt ? (
+											<div className="mt-1 text-[10px] text-red-700/80">
+												{formatTimestamp(state.lastErrorAt, "Unknown")}
+											</div>
+										) : null}
+									</div>
+								) : null}
+							</section>
+
+							<section id={syncSectionId} className={settingsSectionClassName}>
+								<div className="flex items-center gap-2 mb-3">
+									<Clock3 className="h-4 w-4 text-muted-foreground" />
+									<span className="text-xs font-medium">Sync cadence</span>
+								</div>
+								<div className="grid grid-cols-2 gap-2 text-xs">
+									<div className={settingsBlockClassName}>
+										<div className="text-muted-foreground mb-1">
+											Refresh interval
+										</div>
+										<div className="font-medium">
+											Every {state.syncIntervalMinutes} minutes
+										</div>
+									</div>
+									<div className={settingsBlockClassName}>
+										<div className="text-muted-foreground mb-1">
+											Stale warning
+										</div>
+										<div className="font-medium">
+											After {state.staleAfterMinutes} minutes
+										</div>
+									</div>
+								</div>
+							</section>
+
+							<section
+								id={displaySectionId}
+								className={cn("space-y-4", settingsSectionClassName)}
+							>
+								<div className="flex items-center gap-2">
+									<Monitor className="h-4 w-4 text-muted-foreground" />
+									<div className="flex-1">
+										<span className="text-xs font-medium">
+											Wallboard display
+										</span>
+										<span className="text-[10px] text-muted-foreground ml-2">
+											Theme for TV monitors
+										</span>
+									</div>
+								</div>
+
+								<div className="py-2">
+									<div className="text-xs font-medium text-foreground mb-1">
+										Theme
+									</div>
+									<div className="text-[10px] text-muted-foreground mb-3">
+										Choose light or dark mode for wallboard screens.
+									</div>
+									<div className="flex items-center gap-2">
+										<Button
+											size="sm"
+											type="button"
+											variant={
+												wallboardTheme === "light" ? "default" : "outline"
+											}
+											className="h-7 text-xs px-3"
+											onClick={() => setWallboardTheme("light")}
+										>
+											Light
+										</Button>
+										<Button
+											size="sm"
+											type="button"
+											variant={
+												wallboardTheme === "dark" ? "default" : "outline"
+											}
+											className="h-7 text-xs px-3"
+											onClick={() => setWallboardTheme("dark")}
+										>
+											Dark
+										</Button>
+									</div>
+								</div>
+
+								{state.supportTargetProducts.length > 0 ? (
+									<div className={settingsSubsectionClassName}>
+										<div className="text-xs font-medium text-foreground mb-1">
+											Focus products
+										</div>
+										<div className="text-[10px] text-muted-foreground mb-3">
+											Select which products to show on wallboards. Leave empty
+											for all products.
+										</div>
+										<div className="flex flex-wrap gap-2">
+											{state.supportTargetProducts.map((product) => {
+												const isSelected = wallboardProducts.includes(product);
+												return (
+													<Button
+														key={product}
+														size="sm"
+														type="button"
+														variant={isSelected ? "default" : "outline"}
+														className="h-7 text-xs px-3"
+														onClick={() => {
+															setWallboardProducts((current) =>
+																isSelected
+																	? current.filter((p) => p !== product)
+																	: [...current, product],
+															);
+														}}
+													>
+														{product}
+													</Button>
+												);
+											})}
+										</div>
+									</div>
+								) : null}
+
+								{state.availableWallboardTeammates.length > 0 ? (
+									<div className={settingsSubsectionClassName}>
+										<div className="text-xs font-medium text-foreground mb-1">
+											Tracked teammates
+										</div>
+										<div className="text-[10px] text-muted-foreground mb-3">
+											Select who should appear in the live assignment load view.
+										</div>
+										<div className="flex flex-wrap gap-2">
+											{state.availableWallboardTeammates.map((teammate) => {
+												const isSelected = wallboardTrackedTeammates.includes(
+													teammate.externalId,
+												);
+												return (
+													<Button
+														key={teammate.externalId}
+														size="sm"
+														type="button"
+														variant={isSelected ? "default" : "outline"}
+														className="h-7 gap-2 px-3 text-xs"
+														onClick={() => {
+															setWallboardTrackedTeammates((current) =>
+																isSelected
+																	? current.filter(
+																			(id) => id !== teammate.externalId,
+																		)
+																	: [...current, teammate.externalId],
+															);
+														}}
+													>
+														<span
+															className={cn(
+																"h-1.5 w-1.5 rounded-full",
+																teammate.isAvailable
+																	? "bg-emerald-500"
+																	: "bg-amber-500",
+															)}
+														/>
+														{teammate.name}
+													</Button>
+												);
+											})}
+										</div>
+									</div>
+								) : null}
+
+								<div className="flex justify-end pt-1">
+									<Button
+										size="sm"
+										className="h-7 px-3 text-xs"
+										type="button"
+										disabled={isSavingWallboard}
+										onClick={handleSaveWallboardDisplay}
+									>
+										{isSavingWallboard ? (
+											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+										) : null}
+										Save display settings
 									</Button>
 								</div>
-							</div>
-						</div>
-					</form>
-
-					<form
-						className="mt-3 flex flex-col gap-2 sm:flex-row"
-						onSubmit={handleSaveWorkspaceLink}
-					>
-						<Input
-							type="url"
-							placeholder="Intercom workspace link"
-							className="flex-1 h-7 text-xs"
-							value={appUrl}
-							onChange={(event) => setAppUrl(event.target.value)}
-						/>
-						<Button
-							size="sm"
-							className="h-7 text-xs px-3"
-							type="submit"
-							disabled={isSavingAppUrl || appUrl.trim().length === 0}
-						>
-							{isSavingAppUrl ? (
-								<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-							) : null}
-							Save workspace link
-						</Button>
-					</form>
-					<p className="text-[10px] text-muted-foreground mt-1">
-						Example:
-						https://app.eu.intercom.com/a/inbox/zah460bv/inbox/conversation/215560824562362
-					</p>
-
-					<form
-						className={cn("mt-4", settingsSubsectionClassName)}
-						onSubmit={handleSaveTickerLlm}
-					>
-						<div className="mb-2 flex items-center justify-between gap-3">
-							<div>
-								<div className="text-xs font-medium text-foreground">
-									Nova rewrite settings
-								</div>
-								<div className="text-[10px] text-muted-foreground">
-									Choose whether wallboard copy is rewritten through local
-									Ollama HTTP or a direct local `codex` CLI process.
-								</div>
-							</div>
-						</div>
-
-						<div className="grid gap-2 sm:grid-cols-3">
-							<select
-								className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
-								value={tickerLlmProvider}
-								onChange={(event) => {
-									const nextProvider =
-										event.target.value === "codex" ? "codex" : "ollama";
-									setTickerLlmProvider(nextProvider);
-									setFeedback(null);
-									setTickerModelsError(null);
-									setIsCustomTickerModelMode(false);
-									if (nextProvider === "codex") {
-										setTickerLlmModel("");
-									}
-								}}
-							>
-								<option value="ollama">Ollama</option>
-								<option value="codex">Codex CLI</option>
-							</select>
-							{isOllamaProvider ? (
-								<Input
-									type="url"
-									placeholder="http://127.0.0.1:11434"
-									className="h-7 text-xs"
-									value={tickerLlmBaseUrl}
-									onChange={(event) => setTickerLlmBaseUrl(event.target.value)}
-								/>
-							) : (
-								<div className="border-l border-border/40 py-1 pl-3 text-[10px] text-muted-foreground sm:col-span-2">
-									Codex CLI runs `codex exec` with {DEFAULT_CODEX_MODEL}.
-									There is no model setting here.
-								</div>
-							)}
-							{isOllamaProvider && showTickerModelSelect ? (
-								<select
-									className="h-7 w-full rounded-md border border-input bg-background px-3 text-xs"
-									value={tickerLlmModel}
-									onChange={(event) => {
-										const value = event.target.value;
-										if (value === "__custom__") {
-											setIsCustomTickerModelMode(true);
-											setTickerLlmModel("");
-											return;
-										}
-										setTickerLlmModel(value);
-									}}
-								>
-									{availableTickerModels.map((model) => (
-										<option key={model} value={model}>
-											{model}
-										</option>
-									))}
-									<option value="__custom__">Custom model…</option>
-								</select>
-							) : isOllamaProvider ? (
-								<Input
-									type="text"
-									placeholder="llama3.1:8b"
-									className="h-7 text-xs"
-									value={tickerLlmModel}
-									onChange={(event) => setTickerLlmModel(event.target.value)}
-								/>
-							) : null}
-						</div>
-						<div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-							<div>
-								{isOllamaProvider
-									? isLoadingTickerModels
-										? "Querying Ollama models..."
-										: tickerModelsError
-											? tickerModelsError
-											: availableTickerModels.length > 0
-												? `${availableTickerModels.length} model${
-														availableTickerModels.length === 1 ? "" : "s"
-													} found at ${
-														resolvedTickerBaseUrl ?? tickerLlmBaseUrl
-													}`
-												: tickerLlmBaseUrl.trim()
-													? "No Ollama models found at this URL yet."
-													: "Fallback mode: deterministic ticker messages"
-									: `Codex CLI uses the local binary, ${DEFAULT_CODEX_MODEL}, and your existing \`codex login\` session.`}
-							</div>
-							{isOllamaProvider && availableTickerModels.length > 0 ? (
-								<Button
-									size="sm"
-									type="button"
-									variant="ghost"
-									className="h-6 px-2 text-[10px]"
-									onClick={() => {
-										if (isCustomTickerModelMode) {
-											setIsCustomTickerModelMode(false);
-											if (availableTickerModels.length > 0) {
-												setTickerLlmModel(availableTickerModels[0]);
-											}
-										} else {
-											setIsCustomTickerModelMode(true);
-										}
-									}}
-								>
-									{isCustomTickerModelMode
-										? "Use discovered models"
-										: "Use custom model"}
-								</Button>
-							) : null}
-						</div>
-						{!isOllamaProvider ? (
-							<p className="mt-2 text-[10px] text-muted-foreground">
-								If you run Heartbeat in Docker, the worker container needs the
-								`codex` binary and auth in that same container. A host-only
-								`codex login` will not be visible inside the container.
-							</p>
-						) : null}
-						<div className="mt-2 flex items-center justify-between gap-2">
-							<div className="text-[10px] text-muted-foreground">
-								{tickerStatusText}
-							</div>
-							<div className="flex items-center gap-2">
-								<Button
-									size="sm"
-									type="button"
-									variant="outline"
-									className="h-7 text-xs px-3"
-									disabled={
-										isSavingTickerLlm ||
-										(!state.tickerLlmEnabled && !hasDraftTickerLlmSettings)
-									}
-									onClick={handleClearTickerLlm}
-								>
-									Clear settings
-								</Button>
-								<Button
-									size="sm"
-									className="h-7 text-xs px-3"
-									type="submit"
-									disabled={isSavingTickerLlm || !canSaveTickerLlm}
-								>
-									{isSavingTickerLlm ? (
-										<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-									) : null}
-									{isOllamaProvider
-										? "Save Ollama settings"
-										: "Use Codex CLI default"}
-								</Button>
-							</div>
-						</div>
-					</form>
-
-					<div className="mt-4 border-t border-border/40 pt-3 text-xs">
-						<div className="font-medium text-foreground">CX source</div>
-						<div className="mt-1 text-muted-foreground">
-							Primary: <code>conversation_rating.rating</code>. Fallbacks:{" "}
-							<code>custom_attributes[&quot;CX Score rating&quot;]</code> and{" "}
-							<code>ai_agent.rating</code>.
-						</div>
-						<div className="mt-1 text-muted-foreground">
-							CX period metrics use resolved conversations only.
-						</div>
-						<div className="mt-1 text-muted-foreground">
-							Satisfaction score = percent of rated conversations with a 4 or 5
-							rating.
+							</section>
 						</div>
 					</div>
-
-					<form
-						className={cn("mt-4", settingsSubsectionClassName)}
-						onSubmit={handleSaveSupportTargets}
-					>
-						<div className="mb-3">
-							<div className="text-xs font-medium text-foreground">
-								Support targets
-							</div>
-							<div className="text-[10px] text-muted-foreground">
-								Set the SLA and satisfaction thresholds per product. The default
-								target is used when all products are shown together.
-							</div>
-						</div>
-
-						<div className="space-y-3">
-							<div className={settingsBlockClassName}>
-								<div className="mb-2 text-[11px] font-medium text-foreground">
-									Default target
-								</div>
-								<div className="grid gap-2 sm:grid-cols-2">
-									<TargetNumberField
-										id={`${supportTargetFieldId}-default-sla`}
-										label="SLA target %"
-										value={supportTargets.defaultTargets.slaTargetPercent}
-										onChange={(value) =>
-											updateDefaultSupportTarget("slaTargetPercent", value)
-										}
-									/>
-									<TargetNumberField
-										id={`${supportTargetFieldId}-default-cx`}
-										label="CX target %"
-										value={
-											supportTargets.defaultTargets.satisfactionTargetPercent
-										}
-										onChange={(value) =>
-											updateDefaultSupportTarget(
-												"satisfactionTargetPercent",
-												value,
-											)
-										}
-									/>
-								</div>
-							</div>
-
-							<div className="space-y-2">
-								{state.supportTargetProducts.map((productName) => {
-									const targets =
-										supportTargets.productTargets[productName] ??
-										supportTargets.defaultTargets;
-
-									return (
-										<div
-											key={productName}
-											className={cn(
-												"grid gap-3 sm:grid-cols-[minmax(0,1fr)_112px_112px]",
-												settingsRowClassName,
-											)}
-										>
-											<div className="min-w-0">
-												<div className="truncate text-sm font-medium text-foreground">
-													{productName}
-												</div>
-												<div className="mt-1 text-[10px] text-muted-foreground">
-													Used when this product is filtered or spotlighted on
-													the wallboards.
-												</div>
-											</div>
-											<TargetNumberField
-												id={`support-target-${toTargetId(productName)}-sla`}
-												label="SLA target %"
-												value={targets.slaTargetPercent}
-												onChange={(value) =>
-													updateProductSupportTarget(
-														productName,
-														"slaTargetPercent",
-														value,
-													)
-												}
-											/>
-											<TargetNumberField
-												id={`support-target-${toTargetId(productName)}-cx`}
-												label="CX target %"
-												value={targets.satisfactionTargetPercent}
-												onChange={(value) =>
-													updateProductSupportTarget(
-														productName,
-														"satisfactionTargetPercent",
-														value,
-													)
-												}
-											/>
-										</div>
-									);
-								})}
-							</div>
-						</div>
-
-						<div className="mt-3 flex justify-end">
-							<Button
-								size="sm"
-								className="h-7 px-3 text-xs"
-								type="submit"
-								disabled={isSavingSupportTargets}
-							>
-								{isSavingSupportTargets ? (
-									<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-								) : null}
-								Save support targets
-							</Button>
-						</div>
-					</form>
-
-					{feedback ? (
-						<div
-							className={cn(
-								"mt-4 border-l-2 py-1 pl-3 text-xs",
-								feedback.tone === "success"
-									? "border-emerald-400 text-emerald-800"
-									: "border-red-400 text-red-800",
-							)}
-						>
-							{feedback.text}
-						</div>
-					) : null}
-
-					{state.lastError ? (
-						<div className="mt-4 border-l-2 border-red-400 py-1 pl-3 text-xs text-red-800">
-							<div className="flex items-center gap-2 font-medium">
-								<ShieldAlert className="h-3.5 w-3.5" />
-								Latest sync issue
-							</div>
-							<div className="mt-1">{state.lastError}</div>
-							{state.lastErrorAt ? (
-								<div className="mt-1 text-[10px] text-red-700/80">
-									{formatTimestamp(state.lastErrorAt, "Unknown")}
-								</div>
-							) : null}
-						</div>
-					) : null}
-				</section>
-
-				<section className={settingsSectionClassName}>
-					<div className="flex items-center gap-2 mb-3">
-						<Clock3 className="h-4 w-4 text-muted-foreground" />
-						<span className="text-xs font-medium">Sync cadence</span>
-					</div>
-					<div className="grid grid-cols-2 gap-2 text-xs">
-						<div className={settingsBlockClassName}>
-							<div className="text-muted-foreground mb-1">Refresh interval</div>
-							<div className="font-medium">
-								Every {state.syncIntervalMinutes} minutes
-							</div>
-						</div>
-						<div className={settingsBlockClassName}>
-							<div className="text-muted-foreground mb-1">Stale warning</div>
-							<div className="font-medium">
-								After {state.staleAfterMinutes} minutes
-							</div>
-						</div>
-					</div>
-				</section>
-
-				<section className={cn("space-y-4", settingsSectionClassName)}>
-					<div className="flex items-center gap-2">
-						<Monitor className="h-4 w-4 text-muted-foreground" />
-						<div className="flex-1">
-							<span className="text-xs font-medium">Wallboard display</span>
-							<span className="text-[10px] text-muted-foreground ml-2">
-								Theme for TV monitors
-							</span>
-						</div>
-					</div>
-
-					<div className="py-2">
-						<div className="text-xs font-medium text-foreground mb-1">
-							Theme
-						</div>
-						<div className="text-[10px] text-muted-foreground mb-3">
-							Choose light or dark mode for wallboard screens.
-						</div>
-						<div className="flex items-center gap-2">
-							<Button
-								size="sm"
-								type="button"
-								variant={wallboardTheme === "light" ? "default" : "outline"}
-								className="h-7 text-xs px-3"
-								onClick={() => setWallboardTheme("light")}
-							>
-								Light
-							</Button>
-							<Button
-								size="sm"
-								type="button"
-								variant={wallboardTheme === "dark" ? "default" : "outline"}
-								className="h-7 text-xs px-3"
-								onClick={() => setWallboardTheme("dark")}
-							>
-								Dark
-							</Button>
-						</div>
-					</div>
-
-					{state.supportTargetProducts.length > 0 ? (
-						<div className={settingsSubsectionClassName}>
-							<div className="text-xs font-medium text-foreground mb-1">
-								Focus products
-							</div>
-							<div className="text-[10px] text-muted-foreground mb-3">
-								Select which products to show on wallboards. Leave empty for all
-								products.
-							</div>
-							<div className="flex flex-wrap gap-2">
-								{state.supportTargetProducts.map((product) => {
-									const isSelected = wallboardProducts.includes(product);
-									return (
-										<Button
-											key={product}
-											size="sm"
-											type="button"
-											variant={isSelected ? "default" : "outline"}
-											className="h-7 text-xs px-3"
-											onClick={() => {
-												setWallboardProducts((current) =>
-													isSelected
-														? current.filter((p) => p !== product)
-														: [...current, product],
-												);
-											}}
-										>
-											{product}
-										</Button>
-									);
-								})}
-							</div>
-						</div>
-					) : null}
-
-					{state.availableWallboardTeammates.length > 0 ? (
-						<div className={settingsSubsectionClassName}>
-							<div className="text-xs font-medium text-foreground mb-1">
-								Tracked teammates
-							</div>
-							<div className="text-[10px] text-muted-foreground mb-3">
-								Select who should appear in the live assignment load view.
-							</div>
-							<div className="flex flex-wrap gap-2">
-								{state.availableWallboardTeammates.map((teammate) => {
-									const isSelected = wallboardTrackedTeammates.includes(
-										teammate.externalId,
-									);
-									return (
-										<Button
-											key={teammate.externalId}
-											size="sm"
-											type="button"
-											variant={isSelected ? "default" : "outline"}
-											className="h-7 gap-2 px-3 text-xs"
-											onClick={() => {
-												setWallboardTrackedTeammates((current) =>
-													isSelected
-														? current.filter((id) => id !== teammate.externalId)
-														: [...current, teammate.externalId],
-												);
-											}}
-										>
-											<span
-												className={cn(
-													"h-1.5 w-1.5 rounded-full",
-													teammate.isAvailable
-														? "bg-emerald-500"
-														: "bg-amber-500",
-												)}
-											/>
-											{teammate.name}
-										</Button>
-									);
-								})}
-							</div>
-						</div>
-					) : null}
-
-					<div className="flex justify-end pt-1">
-						<Button
-							size="sm"
-							className="h-7 px-3 text-xs"
-							type="button"
-							disabled={isSavingWallboard}
-							onClick={handleSaveWallboardDisplay}
-						>
-							{isSavingWallboard ? (
-								<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-							) : null}
-							Save display settings
-						</Button>
-					</div>
-				</section>
+				</main>
 			</div>
 		</div>
 	);

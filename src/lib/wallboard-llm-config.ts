@@ -6,6 +6,8 @@ export interface TickerLlmConfig {
 	enabled: boolean;
 	model: string | null;
 	baseUrl: string;
+	/** Optional bearer token for authenticated Ollama-compatible endpoints. */
+	authToken?: string | null;
 }
 
 export const DEFAULT_CODEX_MODEL = "gpt-5.3-codex";

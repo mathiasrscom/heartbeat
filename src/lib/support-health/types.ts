@@ -150,6 +150,40 @@ export interface CaseLookupItem {
 	isHighRisk: boolean;
 }
 
+export type AttentionOwner =
+	| "support"
+	| "development"
+	| "leadership"
+	| "shared";
+export type AttentionSeverity = "critical" | "important" | "watch";
+
+export interface CustomerAttentionSignal {
+	id: string;
+	kind: "customer" | "product";
+	severity: AttentionSeverity;
+	owner: AttentionOwner;
+	headline: string;
+	summary: string;
+	suggestedAction: string;
+	reasons: string[];
+	productNames: string[];
+	conversationExternalIds: string[];
+	affectedCustomerCount: number;
+	contactName: string | null;
+	assigneeName: string | null;
+	updatedAt: string;
+}
+
+export interface CustomerAttentionSummary {
+	status: "calm" | "watch" | "needs-attention";
+	statusLabel: string;
+	summary: string;
+	atRiskCustomerCount: number;
+	recurringThemeCount: number;
+	customerSignals: CustomerAttentionSignal[];
+	productSignals: CustomerAttentionSignal[];
+}
+
 export interface CxPeriodSummary {
 	label: string;
 	score: number | null;
@@ -297,6 +331,7 @@ export interface LiveWallboardData {
 	refreshedAt: string;
 	wallboardTheme: "light" | "dark";
 	insights: import("@/lib/wallboard-insights").ProductInsight[];
+	attention: CustomerAttentionSummary;
 }
 
 export interface NpsRecord {
@@ -404,4 +439,5 @@ export interface TrendsWallboardData {
 	topContributors: TopContributorsSummary;
 	topContributorsByProduct: Record<string, TopContributorsSummary>;
 	tickerItems: string[];
+	attention: CustomerAttentionSummary;
 }

@@ -15,6 +15,7 @@ import {
 	subQuarters,
 	subYears,
 } from "date-fns";
+import { averageNpsRating, calculateNps } from "@/lib/nps";
 import type { ResolvedSupportPeriod } from "./period";
 import {
 	DEFAULT_SUPPORT_TARGETS,
@@ -45,7 +46,6 @@ import type {
 	TrendPoint,
 	TrendsWallboardData,
 } from "./types";
-import { averageNpsRating, calculateNps } from "@/lib/nps";
 
 interface ActionableStateInput {
 	status: string;
@@ -70,9 +70,11 @@ type LiveWallboardPayload = Omit<
 	| "intercomAppUrl"
 	| "availableProducts"
 	| "selectedProducts"
+	| "trackedTeammates"
 	| "focusPlan"
 	| "wallboardTheme"
 	| "insights"
+	| "attention"
 >;
 
 type TrendsWallboardPayload = Omit<
@@ -91,8 +93,11 @@ type TrendsWallboardPayload = Omit<
 	| "npsDistribution"
 	| "npsComments"
 	| "npsThemes"
+	| "npsByProduct"
 	| "topContributors"
+	| "topContributorsByProduct"
 	| "tickerItems"
+	| "attention"
 >;
 
 const GENERIC_QUEUE_NAMES = new Set([
@@ -1031,7 +1036,9 @@ export function buildDailyVolumeSlaSeries(
 			slaAdherencePercent:
 				slaTracked.length === 0
 					? null
-					: round(((slaTracked.length - slaMissedCount) / slaTracked.length) * 100),
+					: round(
+							((slaTracked.length - slaMissedCount) / slaTracked.length) * 100,
+						),
 		};
 	});
 }
@@ -1498,10 +1505,7 @@ export function buildLiveWallboardData(
 ): LiveWallboardPayload {
 	const actionableLookupPoolLimit = Math.min(
 		100,
-		Math.max(
-			20,
-			cases.filter((item) => isActionableCase(item)).length,
-		),
+		Math.max(20, cases.filter((item) => isActionableCase(item)).length),
 	);
 	const snapshot = buildSupportHealthSnapshot(cases, lastSyncAt, now);
 	const queues = buildQueueHealth(cases, now, "headline");
