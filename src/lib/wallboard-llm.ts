@@ -12,12 +12,12 @@ import {
 	unwrapCodexOutputContent,
 } from "./wallboard-llm-schema";
 
-export { DEFAULT_OLLAMA_BASE_URL } from "./wallboard-llm-config";
 export type {
 	TickerLlmConfig,
 	WallboardLlmProvider,
 	WallboardLlmSource,
 } from "./wallboard-llm-config";
+export { DEFAULT_OLLAMA_BASE_URL } from "./wallboard-llm-config";
 
 interface GenerateWallboardTextInput {
 	config: TickerLlmConfig;
@@ -138,6 +138,9 @@ async function generateWithOllama(input: GenerateWallboardTextInput) {
 		method: "POST",
 		headers: {
 			"content-type": "application/json",
+			...(input.config.authToken
+				? { authorization: `Bearer ${input.config.authToken}` }
+				: {}),
 		},
 		body: JSON.stringify({
 			model,

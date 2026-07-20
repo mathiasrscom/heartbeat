@@ -1,4 +1,6 @@
+import { Link, useLocation } from "@tanstack/react-router";
 import { format, formatDistanceToNowStrict } from "date-fns";
+import { HeartPulse, Radar, Settings2 } from "lucide-react";
 import {
 	createContext,
 	type RefObject,
@@ -38,6 +40,7 @@ export function WallboardShell({
 	children,
 }: WallboardShellProps) {
 	const refreshedDate = refreshedAt ? new Date(refreshedAt) : null;
+	const location = useLocation();
 
 	return (
 		<div
@@ -63,6 +66,30 @@ export function WallboardShell({
 							) : null}
 						</div>
 						<div className="flex items-center gap-5 text-right">
+							<nav
+								aria-label="Wallboard navigation"
+								className="flex items-center rounded-xl border border-border/50 bg-bg-surface/70 p-1"
+							>
+								<WallboardNavLink
+									to="/wallboard/live"
+									label="Attention"
+									active={location.pathname === "/wallboard/live"}
+									icon={HeartPulse}
+								/>
+								<WallboardNavLink
+									to="/wallboard/trends"
+									label="Pulse"
+									active={location.pathname === "/wallboard/trends"}
+									icon={Radar}
+								/>
+								<Link
+									to="/settings"
+									aria-label="Settings"
+									className="ml-1 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+								>
+									<Settings2 className="h-4 w-4" />
+								</Link>
+							</nav>
 							<div>
 								<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
 									Now
@@ -96,6 +123,34 @@ export function WallboardShell({
 				<TickerTape items={tickerItems ?? []} />
 			</div>
 		</div>
+	);
+}
+
+function WallboardNavLink({
+	to,
+	label,
+	active,
+	icon: Icon,
+}: {
+	to: "/wallboard/live" | "/wallboard/trends";
+	label: string;
+	active: boolean;
+	icon: typeof HeartPulse;
+}) {
+	return (
+		<Link
+			to={to}
+			aria-current={active ? "page" : undefined}
+			className={cn(
+				"inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors",
+				active
+					? "bg-background text-foreground shadow-sm"
+					: "text-muted-foreground hover:text-foreground",
+			)}
+		>
+			<Icon className="h-4 w-4" />
+			{label}
+		</Link>
 	);
 }
 

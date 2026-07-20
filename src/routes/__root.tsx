@@ -1,14 +1,14 @@
+import { TanStackDevtools } from "@tanstack/react-devtools";
 import {
+	createRootRoute,
 	HeadContent,
 	Link,
 	Outlet,
 	Scripts,
-	createRootRoute,
 	useLocation,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
-import { TanStackDevtools } from "@tanstack/react-devtools";
-import { AppTopNav } from "@/components/app-top-nav";
+import { Monitor, SearchX, Settings2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -17,7 +17,6 @@ import {
 	CardHeader,
 	CardTitle,
 } from "@/components/ui/card";
-import { Monitor, SearchX, Settings2 } from "lucide-react";
 
 import appCss from "../styles.css?url";
 
@@ -83,20 +82,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 }
 
 function RootLayout() {
-	const location = useLocation();
-
-	if (location.pathname.startsWith("/wallboard/")) {
-		return <Outlet />;
-	}
-
-	return (
-		<div className="min-h-screen bg-background">
-			<AppTopNav />
-			<main className="min-h-[calc(100vh-3.5rem)]">
-				<Outlet />
-			</main>
-		</div>
-	);
+	return <Outlet />;
 }
 
 function RootNotFound() {
@@ -117,16 +103,16 @@ function RootNotFound() {
 				</div>
 			</CardHeader>
 			<CardContent className="flex flex-wrap gap-2">
-				<Link to="/">
+				<Link to="/wallboard/live">
 					<Button>
-						<SearchX className="h-4 w-4" />
-						Dashboard
+						<Monitor className="h-4 w-4" />
+						Attention now
 					</Button>
 				</Link>
-				<Link to="/wallboard/live">
+				<Link to="/wallboard/trends">
 					<Button variant="outline">
 						<Monitor className="h-4 w-4" />
-						Live wallboard
+						Customer pulse
 					</Button>
 				</Link>
 				<Link to="/settings">

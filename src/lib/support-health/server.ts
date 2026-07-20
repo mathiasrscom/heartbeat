@@ -1,17 +1,18 @@
 import { createServerFn } from "@tanstack/react-start";
 import { eq } from "drizzle-orm";
-import { extractIntercomCx } from "@/lib/intercom-cx";
 import { createIntercomClient } from "@/lib/intercom";
+import { extractIntercomCx } from "@/lib/intercom-cx";
 import {
 	getDefaultIntercomAppUrl,
 	normalizeIntercomAppUrl,
 } from "@/lib/intercom-links";
-import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
+import { buildCustomerAttentionSummary } from "@/lib/wallboard-attention";
 import { readLiveWallboardFocusPlan } from "@/lib/wallboard-focus-plan";
 import {
 	buildDeterministicInsights,
 	readWallboardInsights,
 } from "@/lib/wallboard-insights";
+import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
 import { readWallboardTickerMessages } from "@/lib/wallboard-ticker-messages";
 import {
 	buildCxSeries,
@@ -43,8 +44,8 @@ import {
 	resolveSupportTargets,
 } from "./targets";
 import type {
-	LiveWallboardTeammate,
 	LiveWallboardData,
+	LiveWallboardTeammate,
 	NpsRecord,
 	SupportCasePriority,
 	SupportCaseRecord,
@@ -58,13 +59,11 @@ export type SupportViewInput = SupportPeriodInput;
 type JsonRecord = Record<string, unknown>;
 const LIVE_ADMIN_AVAILABILITY_CACHE_MS = 60_000;
 
-let liveAdminAvailabilityCache:
-	| {
-			expiresAt: number;
-			appUrl: string | null;
-			statuses: Map<string, boolean>;
-	  }
-	| null = null;
+let liveAdminAvailabilityCache: {
+	expiresAt: number;
+	appUrl: string | null;
+	statuses: Map<string, boolean>;
+} | null = null;
 
 function isRecord(value: unknown): value is JsonRecord {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -223,9 +222,7 @@ async function readLiveAdminAvailability(input: {
 
 		const next = response.pages?.next;
 		cursor =
-			typeof next === "string"
-				? next
-				: next?.starting_after || undefined;
+			typeof next === "string" ? next : next?.starting_after || undefined;
 		hasMore = Boolean(cursor);
 	}
 
@@ -740,7 +737,10 @@ export async function loadSupportCases() {
 				appUrl: typeof settings.appUrl === "string" ? settings.appUrl : null,
 			});
 		} catch (error) {
-			console.error("Failed to refresh live Intercom admin availability", error);
+			console.error(
+				"Failed to refresh live Intercom admin availability",
+				error,
+			);
 		}
 
 		const { extractNps, classifyNps } = await import("@/lib/nps");
@@ -810,7 +810,7 @@ export async function loadSupportCases() {
 					avatarUrl: row.avatarUrl ?? null,
 					isAvailable:
 						liveAdminAvailability?.get(row.externalId) ??
-						(row.isAvailable !== false),
+						row.isAvailable !== false,
 				}))
 				.sort((left, right) => left.name.localeCompare(right.name)),
 			cases,
@@ -878,7 +878,8 @@ export function filterSupportCasesByProduct(
 	if (selectedProducts.length === 0) {
 		return includeUnknownWhenAll
 			? cases.filter(
-					(item) => item.serviceBucket === "unknown" || hasVisibleProductView(item),
+					(item) =>
+						item.serviceBucket === "unknown" || hasVisibleProductView(item),
 				)
 			: cases.filter(hasVisibleProductView);
 	}
@@ -945,15 +946,15 @@ export function buildTrackedTeammateInboxAssignments(
 
 	return trackedTeammateIds
 		.flatMap((externalId) => {
-		const teammate = availableById.get(externalId);
-		if (!teammate) return [];
+			const teammate = availableById.get(externalId);
+			if (!teammate) return [];
 
-		return [
-			{
-				...teammate,
-				openCaseCount: openCountsByExternalId.get(externalId) ?? 0,
-			},
-		];
+			return [
+				{
+					...teammate,
+					openCaseCount: openCountsByExternalId.get(externalId) ?? 0,
+				},
+			];
 		})
 		.sort((left, right) => {
 			if (right.openCaseCount !== left.openCaseCount) {
@@ -1018,11 +1019,7 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				return [
 					productName,
 					{
-						snapshot: buildSupportHealthSnapshot(
-							productCases,
-							lastSyncAt,
-							now,
-						),
+						snapshot: buildSupportHealthSnapshot(productCases, lastSyncAt, now),
 						workflowCounts: buildWorkflowCounts(productCases),
 					},
 				];
@@ -1030,6 +1027,7 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 		);
 		const payload = buildLiveWallboardData(filteredCases, lastSyncAt, now);
 		const workflowCounts = buildWorkflowCounts(filteredCases);
+		const attention = buildCustomerAttentionSummary(filteredCases, now);
 		const focusPlan = await readLiveWallboardFocusPlan({
 			availableProducts,
 			lookupCases: payload.lookupCases,
@@ -1058,6 +1056,7 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 			insights:
 				storedInsights?.products ??
 				buildDeterministicInsights(cases, availableProducts).products,
+			attention,
 		};
 	},
 );
@@ -1238,6 +1237,7 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			topContributors,
 			productHealth: payload.productHealth,
 		});
+		const attention = buildCustomerAttentionSummary(filteredCases, now);
 
 		return {
 			...payload,
@@ -1265,5 +1265,6 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			topContributors,
 			topContributorsByProduct,
 			tickerItems,
+			attention,
 		};
 	});

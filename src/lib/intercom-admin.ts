@@ -41,6 +41,8 @@ interface SaveIntercomTickerLlmSettingsInput {
 	provider: TickerLlmProvider;
 	model: string;
 	baseUrl: string;
+	authToken: string;
+	removeAuthToken?: boolean;
 }
 
 interface SaveIntercomSupportTargetsInput {
@@ -61,6 +63,7 @@ interface ResetIntercomDataInput {
 
 interface ListIntercomTickerOllamaModelsInput {
 	baseUrl: string;
+	authToken?: string;
 }
 
 const INTERCOM_RESET_CONFIRMATION = "RESET INTERCOM";
@@ -110,6 +113,8 @@ export interface IntercomConnectionState {
 	tickerLlmEnabled: boolean;
 	tickerLlmModel: string | null;
 	tickerLlmBaseUrl: string | null;
+	hasTickerLlmAuthToken: boolean;
+	tickerLlmAuthTokenHint: string | null;
 	supportTargets: SupportTargetsConfig;
 	supportTargetProducts: string[];
 	wallboardTheme: WallboardTheme;
@@ -170,13 +175,17 @@ function normalizeTickerLlmProvider(value: unknown): TickerLlmProvider {
 	return value === "ollama" || value === "codex" ? value : null;
 }
 
-function getTickerLlmConfig(settings: JsonRecord) {
+function getTickerLlmConfig(
+	settings: JsonRecord,
+	credentials: JsonRecord = {},
+) {
 	const provider =
 		normalizeTickerLlmProvider(settings.tickerLlmProvider) ??
 		(normalizeTickerLlmModel(settings.tickerLlmModel) ? "ollama" : null);
 	const model =
 		provider === "codex"
-			? normalizeTickerLlmModel(settings.tickerLlmModel) ?? DEFAULT_CODEX_MODEL
+			? (normalizeTickerLlmModel(settings.tickerLlmModel) ??
+				DEFAULT_CODEX_MODEL)
 			: normalizeTickerLlmModel(settings.tickerLlmModel);
 	const configuredBaseUrl = normalizeTickerLlmBaseUrl(
 		settings.tickerLlmBaseUrl,
@@ -190,6 +199,7 @@ function getTickerLlmConfig(settings: JsonRecord) {
 		enabled,
 		model,
 		baseUrl: configuredBaseUrl ?? DEFAULT_OLLAMA_BASE_URL,
+		authToken: normalizeToken(credentials.tickerLlmAuthToken),
 	};
 }
 
@@ -244,14 +254,15 @@ function emptyState(
 		tickerLlmEnabled: overrides.tickerLlmEnabled ?? false,
 		tickerLlmModel: overrides.tickerLlmModel ?? null,
 		tickerLlmBaseUrl: overrides.tickerLlmBaseUrl ?? null,
+		hasTickerLlmAuthToken: overrides.hasTickerLlmAuthToken ?? false,
+		tickerLlmAuthTokenHint: overrides.tickerLlmAuthTokenHint ?? null,
 		supportTargets:
 			overrides.supportTargets ?? normalizeSupportTargetsConfig(null),
 		supportTargetProducts: overrides.supportTargetProducts ?? [],
 		wallboardTheme: overrides.wallboardTheme ?? "dark",
 		wallboardProducts: overrides.wallboardProducts ?? [],
 		wallboardTrackedTeammates: overrides.wallboardTrackedTeammates ?? [],
-		availableWallboardTeammates:
-			overrides.availableWallboardTeammates ?? [],
+		availableWallboardTeammates: overrides.availableWallboardTeammates ?? [],
 	};
 }
 
@@ -352,7 +363,10 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		? configRow.credentials
 		: {};
 	const settings = isRecord(configRow?.settings) ? configRow.settings : {};
-	const tickerLlm = getTickerLlmConfig(settings);
+	const tickerLlmCredentials = isRecord(configRow?.credentials)
+		? configRow.credentials
+		: {};
+	const tickerLlm = getTickerLlmConfig(settings, tickerLlmCredentials);
 	const tickerLlmModel = tickerLlm.model;
 	const tickerLlmBaseUrl =
 		tickerLlm.provider === "ollama"
@@ -422,6 +436,10 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		tickerLlmEnabled,
 		tickerLlmModel,
 		tickerLlmBaseUrl,
+		hasTickerLlmAuthToken: Boolean(tickerLlm.authToken),
+		tickerLlmAuthTokenHint: tickerLlm.authToken
+			? maskToken(tickerLlm.authToken)
+			: null,
 		supportTargets,
 		supportTargetProducts: listSupportTargetProducts(supportTargets),
 		wallboardTheme: normalizeWallboardTheme(settings.wallboardTheme),
@@ -453,7 +471,10 @@ async function getConfiguredAccessToken() {
 export async function readIntercomTickerLlmSettings(): Promise<IntercomTickerLlmSettings> {
 	const { configRow } = await getIntercomRows();
 	const settings = isRecord(configRow?.settings) ? configRow.settings : {};
-	return getTickerLlmConfig(settings);
+	const credentials = isRecord(configRow?.credentials)
+		? configRow.credentials
+		: {};
+	return getTickerLlmConfig(settings, credentials);
 }
 
 export async function readIntercomSupportTargets(): Promise<SupportTargetsConfig> {
@@ -678,7 +699,9 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 	.inputValidator((data: ResetIntercomDataInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
 		if (data.confirmation !== INTERCOM_RESET_CONFIRMATION) {
-			throw new Error(`Type ${INTERCOM_RESET_CONFIRMATION} to reset Intercom data.`);
+			throw new Error(
+				`Type ${INTERCOM_RESET_CONFIRMATION} to reset Intercom data.`,
+			);
 		}
 
 		const accessToken = await getConfiguredAccessToken();
@@ -688,7 +711,9 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 
 		const runtime = await readIntercomSyncRuntime();
 		if (runtime.isRunning) {
-			throw new Error("Wait for the current Intercom sync to finish before reset.");
+			throw new Error(
+				"Wait for the current Intercom sync to finish before reset.",
+			);
 		}
 
 		const [{ db }, schema] = await Promise.all([
@@ -710,9 +735,7 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 			.where(eq(teamMembers.source, "intercom"))
 			.returning({ id: teamMembers.id });
 
-		await db
-			.delete(syncState)
-			.where(eq(syncState.adapterId, "intercom"));
+		await db.delete(syncState).where(eq(syncState.adapterId, "intercom"));
 		await db
 			.delete(settings)
 			.where(inArray(settings.key, WALLBOARD_CACHE_SETTING_KEYS));
@@ -764,6 +787,13 @@ export const saveIntercomTickerLlmSettings = createServerFn({ method: "POST" })
 		const credentials = isRecord(configRow?.credentials)
 			? configRow.credentials
 			: {};
+		const submittedAuthToken = normalizeToken(data.authToken);
+		const nextCredentials = { ...credentials };
+		if (data.removeAuthToken) {
+			delete nextCredentials.tickerLlmAuthToken;
+		} else if (submittedAuthToken) {
+			nextCredentials.tickerLlmAuthToken = submittedAuthToken;
+		}
 		const existingSettings = isRecord(configRow?.settings)
 			? configRow.settings
 			: {};
@@ -774,7 +804,7 @@ export const saveIntercomTickerLlmSettings = createServerFn({ method: "POST" })
 			enabled:
 				configRow?.enabled ??
 				Boolean(normalizeToken(process.env.INTERCOM_ACCESS_TOKEN)),
-			credentials,
+			credentials: nextCredentials,
 			settings: {
 				...existingSettings,
 				tickerLlmProvider: provider,
@@ -884,10 +914,13 @@ export const listIntercomTickerOllamaModels = createServerFn({ method: "POST" })
 				"Set a valid Ollama base URL, for example http://127.0.0.1:11434.",
 			);
 		}
+		const storedConfig = await readIntercomTickerLlmSettings();
+		const authToken = normalizeToken(data.authToken) ?? storedConfig.authToken;
 
 		const response = await fetch(`${baseUrl}/api/tags`, {
 			headers: {
 				"content-type": "application/json",
+				...(authToken ? { authorization: `Bearer ${authToken}` } : {}),
 			},
 		});
 
