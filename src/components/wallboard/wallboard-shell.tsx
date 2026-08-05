@@ -42,7 +42,16 @@ export function WallboardShell({
 }: WallboardShellProps) {
 	const refreshedDate = refreshedAt ? new Date(refreshedAt) : null;
 	const location = useLocation();
-	const { openSettings } = useSettingsDialog();
+	const { isSettingsOpen, openSettings } = useSettingsDialog();
+
+	useEffect(() => {
+		if (import.meta.env.DEV || isSettingsOpen) return;
+		const timer = window.setTimeout(
+			() => window.location.reload(),
+			WALLBOARD_DEPLOYMENT_REFRESH_INTERVAL_MS,
+		);
+		return () => window.clearTimeout(timer);
+	}, [isSettingsOpen]);
 
 	return (
 		<div
@@ -190,6 +199,12 @@ export function WallboardSection({
 // ticker text visually moves at the exact same rate even though the content
 // length differs.
 const TICKER_SPEED_PX_PER_SEC = 80;
+
+// Watchtower replaces the production containers after a new image lands, but
+// an already-open kiosk tab would otherwise keep executing the old client
+// bundle. A periodic hard refresh makes deployed UI changes reach unattended
+// TV screens. Settings pauses the timer so an active edit is never interrupted.
+const WALLBOARD_DEPLOYMENT_REFRESH_INTERVAL_MS = 10 * 60_000;
 
 function TickerTape({ items }: { items: string[] }) {
 	const normalized = items

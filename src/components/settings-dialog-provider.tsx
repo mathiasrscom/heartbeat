@@ -22,6 +22,7 @@ const SettingsDialogContent = lazy(() =>
 
 const SettingsDialogContext = createContext<{
 	openSettings: () => void;
+	isSettingsOpen: boolean;
 } | null>(null);
 
 export function SettingsDialogProvider({ children }: { children: ReactNode }) {
@@ -62,7 +63,7 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
 	}, [closeSettings, isOpen]);
 
 	return (
-		<SettingsDialogContext.Provider value={{ openSettings }}>
+		<SettingsDialogContext.Provider value={{ openSettings, isSettingsOpen: isOpen }}>
 			{children}
 			{isOpen ? (
 				<Suspense fallback={<SettingsDialogLoading onClose={closeSettings} />}>

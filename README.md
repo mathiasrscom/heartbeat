@@ -88,6 +88,11 @@ pnpm build
 
 ### Raspberry Pi via Docker Desktop
 
+For the production Pi, the preferred update path is the ARM64 GitHub Actions
+build plus Watchtower. See [the Docker runbook](./docs/docker-runbook.md) for
+the one-time setup, automatic rollout timing, kiosk reload behavior, and
+database migration caveat.
+
 Build and push an ARM64 image from Docker Desktop or any machine with Buildx:
 
 ```bash

@@ -47,8 +47,9 @@ cp .env.example .env
 Set the values you need:
 
 ```bash
-IMAGE_NAME=<dockerhub-user>/heartbeat
-IMAGE_TAG=pi
+IMAGE_NAME=ghcr.io/<owner>/<repo>
+IMAGE_TAG=latest
+DOCKER_CONFIG_PATH=/home/support/.docker
 POSTGRES_DB=heartbeat
 POSTGRES_USER=heartbeat
 POSTGRES_PASSWORD=strong-password-here
@@ -58,6 +59,9 @@ OLLAMA_BASE_URL=http://<PI-IP>:11434
 Notes:
 
 - `IMAGE_NAME` and `IMAGE_TAG` tell Docker which prebuilt app image to pull.
+- `DOCKER_CONFIG_PATH` must point to the Pi user's `.docker` directory so
+  Watchtower can authenticate to GHCR. Change `/home/support` if the Pi uses a
+  different account.
 - `OLLAMA_BASE_URL` should point to the Pi host if Ollama is running there.
 - If you use Codex CLI in Docker, run `codex login` inside the worker container so the worker and CLI share the same runtime.
 
@@ -148,26 +152,27 @@ If the update includes database changes:
 docker compose -f docker-compose.production.yml exec web pnpm db:push
 ```
 
-## Automatic Deploys From GitHub
+## Automatic Updates From GitHub
 
 This repo now includes [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
 On every push to `main` it:
 
-1. builds the Docker image
-2. pushes it to GitHub Container Registry (`ghcr.io`)
-3. SSHes into the Pi
-4. runs `docker compose -f docker-compose.production.yml pull web worker`
-5. restarts `web` and `worker`
+1. builds the Docker image for `linux/arm64`
+2. publishes `latest` and a commit-specific tag to GitHub Container Registry
+   (`ghcr.io`)
+3. leaves deployment to Watchtower on the Pi
 
-### One-Time GitHub Setup
+Watchtower checks GHCR every five minutes. When `latest` changes, it pulls the
+new image, restarts the labelled `web` and `worker` services, and removes the
+old image. PostgreSQL and Redis are not replaced.
 
-Add these repository secrets in GitHub:
+The wallboard performs a production-only full-page reload every ten minutes,
+unless Settings is open. This ensures an unattended Chromium kiosk loads the
+new frontend bundle after Watchtower replaces the web container. Data still
+refreshes more frequently through the normal wallboard refresh cycle.
 
-- `DEPLOY_HOST`: hostname or IP of the Pi
-- `DEPLOY_USER`: SSH user on the Pi
-- `DEPLOY_SSH_KEY`: private key for that user
-- `DEPLOY_PORT`: optional SSH port, usually `22`
-- `DEPLOY_PATH`: absolute path to the checked-out project on the Pi
+The expected maximum rollout time is therefore about 15 minutes: up to five
+minutes for Watchtower plus up to ten minutes for the kiosk reload.
 
 ### One-Time Pi Setup
 
@@ -184,6 +189,7 @@ Set the image in `.env` on the Pi to your GitHub Container Registry path:
 ```bash
 IMAGE_NAME=ghcr.io/<owner>/<repo>
 IMAGE_TAG=latest
+DOCKER_CONFIG_PATH=/home/<pi-user>/.docker
 ```
 
 Example:
@@ -193,7 +199,24 @@ IMAGE_NAME=ghcr.io/mathiasrscom/heartbeat
 IMAGE_TAG=latest
 ```
 
-After that, any push to `main` will publish and deploy automatically.
+Make sure the Pi is using the current production Compose file, then start the
+complete stack once so Watchtower is running:
+
+```bash
+git pull origin main
+docker compose -f docker-compose.production.yml up -d
+docker compose -f docker-compose.production.yml ps
+```
+
+Healthy output includes `heartbeat-watchtower`. After this one-time setup, any
+push to `main` publishes and rolls out automatically.
+
+Database migrations are not currently automatic. If a release changes the
+schema, run:
+
+```bash
+docker compose -f docker-compose.production.yml exec web pnpm db:push
+```
 
 ## Common Problems
 
@@ -244,6 +267,7 @@ Healthy output should show these containers:
 - `heartbeat-redis`
 - `heartbeat-web`
 - `heartbeat-worker`
+- `heartbeat-watchtower`
 
 Check with:
 
