@@ -76,6 +76,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     deploy:
       resources:
         limits:
@@ -103,10 +105,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
     deploy:
       resources:
         limits:
           memory: 384M
+
+  # ── Watchtower for auto-deployment ────────────────────────────────────
+  watchtower:
+    image: containrrr/watchtower
+    container_name: heartbeat-watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/support/.docker:/config:ro
+    command: --interval 300 --cleanup --label-enable
+    deploy:
+      resources:
+        limits:
+          memory: 64M
 
 volumes:
   heartbeat_postgres_data:
