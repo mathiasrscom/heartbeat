@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldRefreshExistingCaseContact } from "./intercom-sync";
+import { shouldRefreshExistingCaseContact } from "./intercom-sync-policy";
 
 describe("intercom case contact refresh", () => {
 	it("refreshes existing contact entities during incremental case sync only", () => {

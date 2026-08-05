@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { extractNps } from "./nps";
 import { buildNpsSummary } from "./support-health/logic";
 import { resolveSupportPeriod } from "./support-health/period";
 import type { NpsRecord } from "./support-health/types";
-import { extractNps } from "./nps";
 
 describe("Intercom NPS data", () => {
 	it("does not treat a generic contact update as the NPS response date", () => {
@@ -32,7 +32,7 @@ describe("Intercom NPS data", () => {
 		expect(result.ratedAt?.toISOString()).toBe("2026-08-01T10:00:00.000Z");
 	});
 
-	it("summarizes undated scores as a latest-known snapshot", () => {
+	it("does not count undated scores inside a reporting period", () => {
 		const records: NpsRecord[] = [
 			makeRecord("promoter", 10, "Very easy"),
 			makeRecord("passive", 8, null),
@@ -44,17 +44,17 @@ describe("Intercom NPS data", () => {
 		);
 
 		expect(buildNpsSummary(records, period)).toMatchObject({
-			periodLabel: "Latest known",
-			isSnapshot: true,
+			periodLabel: "Current week",
+			isSnapshot: false,
 			score: 0,
 			previousScore: null,
 			delta: null,
-			promoterCount: 1,
-			passiveCount: 1,
-			detractorCount: 1,
-			responseCount: 3,
-			commentCount: 2,
-			averageScore: 7.3,
+			promoterCount: 0,
+			passiveCount: 0,
+			detractorCount: 0,
+			responseCount: 0,
+			commentCount: 0,
+			averageScore: null,
 		});
 	});
 });

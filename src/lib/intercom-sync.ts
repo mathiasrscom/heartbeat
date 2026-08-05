@@ -24,6 +24,15 @@ import {
 } from "./intercom";
 import { extractIntercomCx } from "./intercom-cx";
 import {
+	captureContactNps,
+	ensureNpsCaptureBaseline,
+} from "./intercom-nps-history";
+import {
+	resolveIntercomSyncCutoff,
+	resolveSuccessfulSyncTimestamp,
+	shouldRefreshExistingCaseContact,
+} from "./intercom-sync-policy";
+import {
 	claimIntercomSyncRuntime,
 	finishIntercomSyncRuntime,
 	updateIntercomSyncRuntime,
@@ -84,10 +93,9 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 	let teamMembersSynced = 0;
 
 	try {
+		await ensureNpsCaptureBaseline();
 		const previousSync = await getLatestSyncTimestamp();
-		const syncCutoff = previousSync
-			? Math.floor(previousSync.getTime() / 1000)
-			: null;
+		const syncCutoff = resolveIntercomSyncCutoff(previousSync);
 
 		try {
 			await updateIntercomSyncRuntime("teams", "Syncing teams");
@@ -156,18 +164,16 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 			errors.push(`Assignee backfill failed: ${error}`);
 		}
 
-		if (previousSync) {
+		let contactSyncSucceeded = false;
+		try {
 			await updateIntercomSyncRuntime(
 				"contacts",
-				"Refreshing contacts attached to changed cases",
+				previousSync ? "Syncing changed contacts" : "Syncing contacts",
 			);
-		} else {
-			try {
-				await updateIntercomSyncRuntime("contacts", "Syncing contacts");
-				entitiesSynced += await syncContacts(client);
-			} catch (error) {
-				errors.push(String(error));
-			}
+			entitiesSynced += await syncContacts(client, syncCutoff);
+			contactSyncSucceeded = true;
+		} catch (error) {
+			errors.push(String(error));
 		}
 
 		const conversationIds = new Set<string>();
@@ -212,7 +218,9 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 							contactId,
 							entityIdCache,
 							{
-								refreshExisting: shouldRefreshExistingCaseContact(previousSync),
+								refreshExisting:
+									shouldRefreshExistingCaseContact(previousSync) &&
+									!contactSyncSucceeded,
 							},
 						);
 					}
@@ -270,7 +278,9 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 							contactId,
 							entityIdCache,
 							{
-								refreshExisting: shouldRefreshExistingCaseContact(previousSync),
+								refreshExisting:
+									shouldRefreshExistingCaseContact(previousSync) &&
+									!contactSyncSucceeded,
 							},
 						);
 					}
@@ -406,15 +416,26 @@ export async function refreshWallboardContent(input?: { logPrefix?: string }) {
 		import("@/lib/wallboard-llm-cache"),
 	]);
 
-	const { cases, lastSyncAt, now, npsRecords, wallboardProducts } =
-		await loadSupportCases();
+	const {
+		cases,
+		lastSyncAt,
+		now,
+		npsRecords,
+		wallboardProducts,
+		staleAfterMinutes,
+	} = await loadSupportCases();
 	const selectedProducts = wallboardProducts.filter((product) =>
 		getAvailableProducts(cases).includes(product),
 	);
 	const scopedCases = filterSupportCasesByProduct(cases, selectedProducts, {
 		includeUnknownWhenAll: true,
 	});
-	const live = buildLiveWallboardData(scopedCases, lastSyncAt, now);
+	const live = buildLiveWallboardData(
+		scopedCases,
+		lastSyncAt,
+		now,
+		staleAfterMinutes,
+	);
 	const llmSettings = await readIntercomTickerLlmSettings();
 
 	// Focus plan
@@ -698,7 +719,10 @@ async function getLatestSyncTimestamp() {
 	return existing[0]?.lastSyncAt ?? null;
 }
 
-async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
+async function syncContacts(
+	client: ReturnType<typeof createIntercomClient>,
+	updatedAfter: number | null,
+) {
 	let entitiesSynced = 0;
 	let hasMoreContacts = true;
 	let contactCursor: string | undefined;
@@ -710,10 +734,25 @@ async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
 				"contacts",
 				`Syncing contacts (page ${page}, ${entitiesSynced} synced)`,
 			);
-			const response = await client.listContacts({
-				per_page: 50,
-				starting_after: contactCursor,
-			});
+			const response =
+				updatedAfter === null
+					? await client.listContacts({
+							per_page: 50,
+							starting_after: contactCursor,
+						})
+					: await client.searchContacts(
+							[
+								{
+									field: "updated_at",
+									operator: ">",
+									value: updatedAfter,
+								},
+							],
+							{
+								per_page: 50,
+								starting_after: contactCursor,
+							},
+						);
 			const contacts = response.data || [];
 
 			for (const contact of contacts) {
@@ -731,10 +770,6 @@ async function syncContacts(client: ReturnType<typeof createIntercomClient>) {
 	}
 
 	return entitiesSynced;
-}
-
-export function shouldRefreshExistingCaseContact(previousSync: Date | null) {
-	return previousSync !== null;
 }
 
 async function ensureContactEntity(
@@ -853,11 +888,18 @@ async function upsertEntity(contact: IntercomContact) {
 					eq(entities.source, "intercom"),
 				),
 			);
+		await captureContactNps(contact, existing[0].id);
 	} else {
-		await db.insert(entities).values({
-			...data,
-			createdAt: new Date(),
-		});
+		const inserted = await db
+			.insert(entities)
+			.values({
+				...data,
+				createdAt: new Date(),
+			})
+			.returning({ id: entities.id });
+		if (inserted[0]) {
+			await captureContactNps(contact, inserted[0].id);
+		}
 	}
 }
 
@@ -1186,7 +1228,11 @@ async function updateSyncState(
 		.limit(1);
 
 	const data = {
-		lastSyncAt: new Date(),
+		lastSyncAt: resolveSuccessfulSyncTimestamp({
+			previousSuccessfulSyncAt: existing[0]?.lastSyncAt ?? null,
+			completedAt: new Date(),
+			errors,
+		}),
 		nodesSynced,
 		entitiesSynced,
 		teamMembersSynced,

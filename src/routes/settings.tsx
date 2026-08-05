@@ -31,6 +31,7 @@ import {
 	saveIntercomWorkspaceLink,
 	saveWallboardDisplaySettings,
 	triggerIntercomSync,
+	type WallboardPulsePeriod,
 	type WallboardTheme,
 } from "@/lib/intercom-admin";
 import type { SupportPerformanceTargets } from "@/lib/support-health/targets";
@@ -38,6 +39,17 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_CODEX_MODEL } from "@/lib/wallboard-llm-config";
 
 type TickerProvider = "ollama" | "codex";
+
+const pulsePeriodOptions: Array<{
+	value: WallboardPulsePeriod;
+	label: string;
+}> = [
+	{ value: "current-week", label: "This week" },
+	{ value: "previous-week", label: "Past week" },
+	{ value: "rolling-30-days", label: "Last 30 days" },
+	{ value: "rolling-90-days", label: "Last 90 days" },
+	{ value: "rolling-180-days", label: "Last 180 days" },
+];
 
 const settingsSectionClassName = "border-t border-border/40 pt-5";
 const settingsSubsectionClassName = "border-t border-border/40 pt-4";
@@ -129,6 +141,8 @@ export function SettingsDialogContent({
 	const [wallboardTheme, setWallboardTheme] = useState<WallboardTheme>(
 		initialState.wallboardTheme,
 	);
+	const [wallboardPulsePeriod, setWallboardPulsePeriod] =
+		useState<WallboardPulsePeriod>(initialState.wallboardPulsePeriod);
 	const [wallboardProducts, setWallboardProducts] = useState<string[]>(
 		initialState.wallboardProducts,
 	);
@@ -190,6 +204,7 @@ export function SettingsDialogContent({
 	const supportTargetsAutosaveKey = JSON.stringify(supportTargets);
 	const displayAutosaveKey = JSON.stringify({
 		wallboardTheme,
+		wallboardPulsePeriod,
 		wallboardProducts,
 		wallboardTrackedTeammates,
 	});
@@ -642,6 +657,7 @@ export function SettingsDialogContent({
 			const result = await saveWallboardDisplay({
 				data: {
 					theme: wallboardTheme,
+					pulsePeriod: wallboardPulsePeriod,
 					products: wallboardProducts,
 					trackedTeammates: wallboardTrackedTeammates,
 				},
@@ -664,8 +680,10 @@ export function SettingsDialogContent({
 		// biome-ignore lint/a11y/noStaticElementInteractions: The backdrop is a conventional pointer-only dismiss target; Escape and the close button provide keyboard dismissal.
 		<div
 			className={cn(
-				"fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm lg:p-6",
-				wallboardTheme === "dark" && "dark",
+				"fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 text-foreground backdrop-blur-sm lg:p-6",
+				wallboardTheme === "dark"
+					? "dark [color-scheme:dark]"
+					: "[color-scheme:light]",
 			)}
 			onMouseDown={onClose}
 		>
@@ -760,7 +778,7 @@ export function SettingsDialogContent({
 
 								<div className="grid gap-2 sm:grid-cols-3 text-xs mb-3">
 									<StatItem
-										label="Last sync"
+										label="Last successful sync"
 										value={formatTimestamp(state.lastSyncAt, "Never")}
 									/>
 									<StatItem
@@ -772,7 +790,7 @@ export function SettingsDialogContent({
 										}
 									/>
 									<StatItem
-										label="Latest import"
+										label="Latest successful import"
 										value={
 											state.lastSyncAt
 												? `${state.nodesSynced} cases • ${state.entitiesSynced} contacts`
@@ -1414,6 +1432,35 @@ export function SettingsDialogContent({
 									</div>
 								</div>
 
+								<div className={settingsSubsectionClassName}>
+									<div className="text-xs font-medium text-foreground mb-1">
+										Pulse period
+									</div>
+									<div className="text-[10px] text-muted-foreground mb-3">
+										Sets the time window for all metrics, feedback, and product
+										insights on Pulse.
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{pulsePeriodOptions.map((option) => (
+											<Button
+												key={option.value}
+												size="sm"
+												type="button"
+												aria-pressed={wallboardPulsePeriod === option.value}
+												variant={
+													wallboardPulsePeriod === option.value
+														? "default"
+														: "outline"
+												}
+												className="h-7 px-3 text-xs"
+												onClick={() => setWallboardPulsePeriod(option.value)}
+											>
+												{option.label}
+											</Button>
+										))}
+									</div>
+								</div>
+
 								{state.supportTargetProducts.length > 0 ? (
 									<div className={settingsSubsectionClassName}>
 										<div className="text-xs font-medium text-foreground mb-1">
@@ -1474,7 +1521,8 @@ export function SettingsDialogContent({
 														variant={isSelected ? "default" : "outline"}
 														className={cn(
 															"h-8 gap-2 px-3 text-xs",
-															isSelected && "ring-2 ring-accent-primary ring-offset-2 ring-offset-background",
+															isSelected &&
+																"ring-2 ring-accent-primary ring-offset-2 ring-offset-background",
 														)}
 														onClick={() => {
 															setWallboardTrackedTeammates((current) =>
@@ -1486,7 +1534,9 @@ export function SettingsDialogContent({
 															);
 														}}
 													>
-														{isSelected ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
+														{isSelected ? (
+															<CheckCircle2 className="h-3.5 w-3.5" />
+														) : null}
 														<span
 															className={cn(
 																"h-1.5 w-1.5 rounded-full",

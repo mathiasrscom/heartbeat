@@ -15,7 +15,10 @@ import {
 	readSupportTargetsFromSettings,
 	type SupportTargetsConfig,
 } from "./support-health/targets";
-import type { WallboardTeammateOption } from "./support-health/types";
+import type {
+	SupportPeriodPreset,
+	WallboardTeammateOption,
+} from "./support-health/types";
 import {
 	DEFAULT_CODEX_MODEL,
 	DEFAULT_OLLAMA_BASE_URL,
@@ -50,11 +53,17 @@ interface SaveIntercomSupportTargetsInput {
 }
 
 export type WallboardTheme = "light" | "dark";
+export type WallboardPulsePeriod = Exclude<SupportPeriodPreset, "custom">;
 
 interface SaveWallboardDisplayInput {
 	theme: WallboardTheme;
+	pulsePeriod: WallboardPulsePeriod;
 	products: string[];
 	trackedTeammates: string[];
+}
+
+interface SaveWallboardPulsePeriodInput {
+	pulsePeriod: WallboardPulsePeriod;
 }
 
 interface ResetIntercomDataInput {
@@ -118,6 +127,7 @@ export interface IntercomConnectionState {
 	supportTargets: SupportTargetsConfig;
 	supportTargetProducts: string[];
 	wallboardTheme: WallboardTheme;
+	wallboardPulsePeriod: WallboardPulsePeriod;
 	wallboardProducts: string[];
 	wallboardTrackedTeammates: string[];
 	availableWallboardTeammates: WallboardTeammateOption[];
@@ -260,6 +270,7 @@ function emptyState(
 			overrides.supportTargets ?? normalizeSupportTargetsConfig(null),
 		supportTargetProducts: overrides.supportTargetProducts ?? [],
 		wallboardTheme: overrides.wallboardTheme ?? "dark",
+		wallboardPulsePeriod: overrides.wallboardPulsePeriod ?? "current-week",
 		wallboardProducts: overrides.wallboardProducts ?? [],
 		wallboardTrackedTeammates: overrides.wallboardTrackedTeammates ?? [],
 		availableWallboardTeammates: overrides.availableWallboardTeammates ?? [],
@@ -443,6 +454,9 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		supportTargets,
 		supportTargetProducts: listSupportTargetProducts(supportTargets),
 		wallboardTheme: normalizeWallboardTheme(settings.wallboardTheme),
+		wallboardPulsePeriod: normalizeWallboardPulsePeriod(
+			settings.wallboardPulsePeriod,
+		),
 		wallboardProducts: normalizeWallboardProducts(settings.wallboardProducts),
 		wallboardTrackedTeammates: normalizeWallboardTrackedTeammates(
 			settings.wallboardTrackedTeammates,
@@ -954,6 +968,19 @@ function normalizeWallboardTheme(value: unknown): WallboardTheme {
 	return value === "light" ? "light" : "dark";
 }
 
+function normalizeWallboardPulsePeriod(value: unknown): WallboardPulsePeriod {
+	const periods: WallboardPulsePeriod[] = [
+		"current-week",
+		"previous-week",
+		"rolling-30-days",
+		"rolling-90-days",
+		"rolling-180-days",
+	];
+	return periods.includes(value as WallboardPulsePeriod)
+		? (value as WallboardPulsePeriod)
+		: "current-week";
+}
+
 function normalizeWallboardProducts(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return value
@@ -985,6 +1012,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 	.inputValidator((data: SaveWallboardDisplayInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
 		const theme = normalizeWallboardTheme(data.theme);
+		const pulsePeriod = normalizeWallboardPulsePeriod(data.pulsePeriod);
 		const products = normalizeWallboardProducts(data.products);
 		const trackedTeammates = normalizeWallboardTrackedTeammates(
 			data.trackedTeammates,
@@ -1008,6 +1036,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 			settings: {
 				...existingSettings,
 				wallboardTheme: theme,
+				wallboardPulsePeriod: pulsePeriod,
 				wallboardProducts: products,
 				wallboardTrackedTeammates: trackedTeammates,
 			},
@@ -1027,7 +1056,49 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 		}
 
 		return {
-			message: `Wallboard display updated: ${theme} theme, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
+			message: `Wallboard display updated: ${theme} theme, ${pulsePeriod.replaceAll("-", " ")} Pulse period, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
+			state: await readIntercomState(),
+		};
+	});
+
+export const saveWallboardPulsePeriod = createServerFn({ method: "POST" })
+	.inputValidator((data: SaveWallboardPulsePeriodInput) => data)
+	.handler(async ({ data }): Promise<IntercomMutationResult> => {
+		const pulsePeriod = normalizeWallboardPulsePeriod(data.pulsePeriod);
+		const { db, adapterConfigs, configRow } = await getIntercomRows();
+		const existingSettings = isRecord(configRow?.settings)
+			? configRow.settings
+			: {};
+		const values = {
+			adapterId: "intercom",
+			name: "Intercom",
+			enabled:
+				configRow?.enabled ??
+				Boolean(normalizeToken(process.env.INTERCOM_ACCESS_TOKEN)),
+			credentials: isRecord(configRow?.credentials)
+				? configRow.credentials
+				: {},
+			settings: {
+				...existingSettings,
+				wallboardPulsePeriod: pulsePeriod,
+			},
+			updatedAt: new Date(),
+		};
+
+		if (configRow) {
+			await db
+				.update(adapterConfigs)
+				.set(values)
+				.where(eq(adapterConfigs.adapterId, "intercom"));
+		} else {
+			await db.insert(adapterConfigs).values({
+				...values,
+				createdAt: new Date(),
+			});
+		}
+
+		return {
+			message: `Pulse period updated to ${pulsePeriod.replaceAll("-", " ")}.`,
 			state: await readIntercomState(),
 		};
 	});

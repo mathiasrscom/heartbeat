@@ -43,6 +43,8 @@ export function normalizeSupportPeriodInput(
 	const validPresets = [
 		"previous-week",
 		"rolling-30-days",
+		"rolling-90-days",
+		"rolling-180-days",
 		"current-month",
 		"previous-month",
 		"year-to-date",
@@ -107,6 +109,25 @@ export function resolveSupportPeriod(
 			range: {
 				preset: "rolling-30-days",
 				label: "Last 30 days",
+				from: toDateInput(from),
+				to: toDateInput(now),
+			},
+			from,
+			to: now,
+		};
+	}
+
+	if (
+		normalized.period === "rolling-90-days" ||
+		normalized.period === "rolling-180-days"
+	) {
+		const days = normalized.period === "rolling-90-days" ? 90 : 180;
+		const from = startOfDay(subDays(now, days - 1));
+
+		return {
+			range: {
+				preset: normalized.period,
+				label: `Last ${days} days`,
 				from: toDateInput(from),
 				to: toDateInput(now),
 			},

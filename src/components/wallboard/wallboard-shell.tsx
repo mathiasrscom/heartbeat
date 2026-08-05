@@ -11,6 +11,7 @@ import {
 import { useSettingsDialog } from "@/components/settings-dialog-provider";
 import { panelSurfaceClassName } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { shouldReloadForNewDeployment } from "@/lib/wallboard-deployment-refresh";
 
 /**
  * Page indicator mount (from PaginatedContent).
@@ -24,6 +25,7 @@ interface WallboardShellProps {
 	refreshedAt: string | null;
 	stale: boolean;
 	toolbar?: React.ReactNode;
+	navigationControl?: React.ReactNode;
 	showcase?: React.ReactNode;
 	tickerItems?: string[];
 	theme?: "light" | "dark";
@@ -35,6 +37,7 @@ export function WallboardShell({
 	refreshedAt,
 	stale,
 	toolbar,
+	navigationControl,
 	showcase,
 	tickerItems,
 	theme = "dark",
@@ -46,15 +49,35 @@ export function WallboardShell({
 
 	useEffect(() => {
 		if (import.meta.env.DEV || isSettingsOpen) return;
-		const timer = window.setTimeout(
-			() => window.location.reload(),
+		const checkForDeployment = async () => {
+			try {
+				const response = await fetch(window.location.href, {
+					cache: "no-store",
+					headers: { Accept: "text/html" },
+				});
+				if (!response.ok) return;
+				const html = await response.text();
+				const currentSources = Array.from(document.scripts)
+					.map((script) => script.getAttribute("src"))
+					.filter((source): source is string => Boolean(source));
+				if (shouldReloadForNewDeployment(currentSources, html)) {
+					window.location.reload();
+				}
+			} catch {
+				// Keep the last good wallboard frame when the server is restarting or
+				// temporarily unavailable. The next check will try again.
+			}
+		};
+		const timer = window.setInterval(
+			() => void checkForDeployment(),
 			WALLBOARD_DEPLOYMENT_REFRESH_INTERVAL_MS,
 		);
-		return () => window.clearTimeout(timer);
+		return () => window.clearInterval(timer);
 	}, [isSettingsOpen]);
 
 	return (
 		<div
+			data-wallboard-theme={theme}
 			className={cn(
 				"h-[100dvh] overflow-hidden bg-bg-app text-foreground dark:bg-background",
 				theme !== "light" && "dark",
@@ -93,6 +116,7 @@ export function WallboardShell({
 									active={location.pathname === "/wallboard/pulse"}
 									icon={Radar}
 								/>
+								{navigationControl}
 								<button
 									type="button"
 									aria-label="Settings"
@@ -123,7 +147,7 @@ export function WallboardShell({
 									)}
 								>
 									{refreshedDate
-										? `${formatDistanceToNowStrict(refreshedDate)} ago`
+										? `${stale ? "Stale · " : ""}${formatDistanceToNowStrict(refreshedDate)} ago`
 										: "No sync yet"}
 								</div>
 							</div>
@@ -200,10 +224,9 @@ export function WallboardSection({
 // length differs.
 const TICKER_SPEED_PX_PER_SEC = 80;
 
-// Watchtower replaces the production containers after a new image lands, but
-// an already-open kiosk tab would otherwise keep executing the old client
-// bundle. A periodic hard refresh makes deployed UI changes reach unattended
-// TV screens. Settings pauses the timer so an active edit is never interrupted.
+// Watchtower replaces the production containers after a new image lands. Check
+// for a changed client entry before reloading so normal data refreshes retain
+// the last good TV frame instead of showing a blank document load.
 const WALLBOARD_DEPLOYMENT_REFRESH_INTERVAL_MS = 10 * 60_000;
 
 function TickerTape({ items }: { items: string[] }) {

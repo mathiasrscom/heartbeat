@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildAgentPerformanceComparison,
 	buildCxSeries,
 	buildDailyVolumeSlaSeries,
 	buildLiveWallboardData,
 	buildLookupCases,
+	buildSupportHealthSnapshot,
 	buildTrendsWallboardData,
 	buildWorkflowCounts,
 	calculateHealthStatus,
@@ -50,6 +52,8 @@ function makeCase(
 		hasSlaTracking: overrides.hasSlaTracking ?? true,
 		cxScore: overrides.cxScore ?? null,
 		cxComment: overrides.cxComment ?? null,
+		finParticipated: overrides.finParticipated ?? false,
+		finResolutionState: overrides.finResolutionState ?? null,
 		ratedTeammateExternalId: overrides.ratedTeammateExternalId ?? null,
 		responseTimeMinutes: overrides.responseTimeMinutes ?? 22,
 		resolutionTimeHours: overrides.resolutionTimeHours ?? null,
@@ -65,6 +69,44 @@ function makeCase(
 }
 
 describe("support health logic", () => {
+	it("compares Fin resolutions with teammate resolutions in the same period", () => {
+		const comparison = buildAgentPerformanceComparison(
+			[
+				makeCase({
+					id: "fin-resolved",
+					actionableState: "resolved",
+					status: "closed",
+					resolvedAt: new Date("2026-03-31T10:00:00.000Z"),
+					finParticipated: true,
+					finResolutionState: "confirmed_resolution",
+					cxScore: 10,
+				}),
+				makeCase({
+					id: "human-resolved",
+					actionableState: "resolved",
+					status: "closed",
+					resolvedAt: new Date("2026-03-31T10:30:00.000Z"),
+					finParticipated: true,
+					finResolutionState: "routed_to_team",
+					cxScore: 6,
+				}),
+			],
+			currentWeek,
+		);
+
+		expect(comparison.fin).toMatchObject({
+			resolvedCount: 1,
+			ratedCount: 1,
+			happinessPercent: 100,
+		});
+		expect(comparison.teammates).toMatchObject({
+			resolvedCount: 1,
+			ratedCount: 1,
+			happinessPercent: 0,
+		});
+		expect(comparison.finHandoffCount).toBe(1);
+	});
+
 	it("classifies actionable state correctly", () => {
 		expect(
 			classifyActionableState({
@@ -303,6 +345,16 @@ describe("support health logic", () => {
 		).toBe("red");
 	});
 
+	it("uses the configured stale threshold for the successful sync clock", () => {
+		const lastSyncAt = new Date("2026-03-31T11:45:00.000Z");
+		expect(buildSupportHealthSnapshot([], lastSyncAt, now, 20).stale).toBe(
+			false,
+		);
+		expect(buildSupportHealthSnapshot([], lastSyncAt, now, 10).stale).toBe(
+			true,
+		);
+	});
+
 	it("builds month, quarter, and year CX summaries", () => {
 		const cases = [
 			makeCase({
@@ -523,12 +575,13 @@ describe("support health logic", () => {
 		).toBe(true);
 		expect(
 			live.peopleMoments.some(
-				(item) => item.includes("Fin") && item.includes("2 recent strong CX results"),
+				(item) =>
+					item.includes("Fin") && item.includes("2 recent strong CX results"),
 			),
 		).toBe(true);
-		expect(live.peopleMoments.filter((item) => item.includes("Fin"))).toHaveLength(
-			1,
-		);
+		expect(
+			live.peopleMoments.filter((item) => item.includes("Fin")),
+		).toHaveLength(1);
 		expect(
 			live.peopleMoments.some((item) => item.includes("Worth a quick review")),
 		).toBe(false);
@@ -867,6 +920,9 @@ describe("support health logic", () => {
 		expect(trends.periodSummary.responseRatePercent).toBe(100);
 		expect(trends.periodSummary.cxScore).toBe(8);
 		expect(trends.periodSummary.satisfactionScorePercent).toBe(100);
+		expect(trends.productHealth[0]?.resolvedCount).toBe(2);
+		expect(trends.productHealth[0]?.eligibleCount).toBe(1);
+		expect(trends.productHealth[0]?.ratedCount).toBe(1);
 	});
 
 	it("builds daily CX series as average five-point score from rated resolved conversations", () => {
