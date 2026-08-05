@@ -1,6 +1,6 @@
 import type { NpsComment } from "@/lib/support-health/types";
-import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
 import { cn } from "@/lib/utils";
+import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
 
 const wbCell =
 	"rounded-lg border border-border/30 bg-white dark:border-transparent dark:bg-muted/50";

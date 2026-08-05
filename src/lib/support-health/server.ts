@@ -49,6 +49,7 @@ import type {
 	NpsRecord,
 	SupportCasePriority,
 	SupportCaseRecord,
+	SupportNextActionOwner,
 	SupportTier,
 	TrendsWallboardData,
 	WallboardTeammateOption,
@@ -402,7 +403,10 @@ function getTags(raw: unknown, current: unknown) {
 	return [];
 }
 
-function isAwaitingCustomer(raw: unknown) {
+export function resolveSupportNextActionOwner(
+	raw: unknown,
+	isAssignedToDeveloperTeam = false,
+): SupportNextActionOwner {
 	const stateCandidates = [
 		getNestedValue(raw, ["state"]),
 		getNestedValue(raw, ["ticket_state", "state"]),
@@ -417,16 +421,54 @@ function isAwaitingCustomer(raw: unknown) {
 		getNestedValue(raw, ["ticket", "ticket_state", "external_label"]),
 	];
 
+	const normalizedStates = stateCandidates
+		.filter((value): value is string => typeof value === "string")
+		.map((value) => value.toLowerCase());
+
+	const snoozedUntil = toDate(getNestedValue(raw, ["snoozed_until"]));
+	if (snoozedUntil !== null && snoozedUntil.getTime() > Date.now()) {
+		return "other";
+	}
+
 	if (
-		stateCandidates.some(
+		normalizedStates.some(
 			(value) =>
-				typeof value === "string" &&
-				(value.toLowerCase().includes("customer") ||
-					value.toLowerCase().includes("waiting on developers")),
+				value.includes("waiting on customer") ||
+				value.includes("waiting for customer") ||
+				value.includes("waiting on you"),
 		)
 	) {
-		return true;
+		return "customer";
 	}
+	if (
+		normalizedStates.some(
+			(value) =>
+				value.includes("waiting on developer") ||
+				value.includes("waiting for developer"),
+		)
+	) {
+		return "development";
+	}
+	if (
+		normalizedStates.some(
+			(value) =>
+				value.includes("waiting on other") ||
+				value.includes("waiting for other") ||
+				value.includes("third party"),
+		)
+	) {
+		return "other";
+	}
+	if (
+		normalizedStates.some(
+			(value) =>
+				value.includes("waiting on support") ||
+				value.includes("waiting for support"),
+		)
+	) {
+		return "support";
+	}
+	if (isAssignedToDeveloperTeam) return "development";
 
 	const lastAdminReplyAt = getFirstTimestamp(raw, [
 		["statistics", "last_admin_reply_at"],
@@ -442,11 +484,10 @@ function isAwaitingCustomer(raw: unknown) {
 		lastContactReplyAt !== null &&
 		lastAdminReplyAt > lastContactReplyAt
 	) {
-		return true;
+		return "customer";
 	}
 
-	const snoozedUntil = toDate(getNestedValue(raw, ["snoozed_until"]));
-	return snoozedUntil !== null && snoozedUntil.getTime() > Date.now();
+	return "support";
 }
 
 function getExplicitSlaDueAt(raw: unknown) {
@@ -510,6 +551,14 @@ function normalizeSupportCase(input: {
 	const queueName = getQueueName(input.rawData, input.teamName);
 	const teamAssignmentId = getTeamAssignmentId(input.rawData);
 	const hasAssignment = Boolean(input.assigneeName || teamAssignmentId);
+	const assignedToDeveloperTeam = isAssignedToDeveloperTeam(
+		input.rawData,
+		ticketType,
+	);
+	const nextActionOwner = resolveSupportNextActionOwner(
+		input.rawData,
+		assignedToDeveloperTeam,
+	);
 	const classification = classifySupportCase({
 		title: input.title,
 		description: input.description,
@@ -534,7 +583,7 @@ function normalizeSupportCase(input: {
 		waitingSinceAt,
 		priority,
 		customerTier: tier,
-		isAwaitingCustomer: isAwaitingCustomer(input.rawData),
+		isAwaitingCustomer: nextActionOwner !== "support",
 		now: new Date(),
 	});
 
@@ -600,18 +649,16 @@ function normalizeSupportCase(input: {
 			["statistics", "reopen_count"],
 		]),
 		actionableState,
+		nextActionOwner,
 		isBreached,
 		isDueSoon,
 		isHighRisk,
 		isDeveloperTicket,
 		isTicketReview:
-			isDeveloperTicket &&
+			(isDeveloperTicket || assignedToDeveloperTeam) &&
 			(normalizedTicketState === "submitted" ||
 				normalizedTicketState === "waiting on support"),
-		isAssignedToDeveloperTeam: isAssignedToDeveloperTeam(
-			input.rawData,
-			ticketType,
-		),
+		isAssignedToDeveloperTeam: assignedToDeveloperTeam,
 	};
 }
 
@@ -750,6 +797,7 @@ export async function loadSupportCases() {
 			if (extracted.score === null) continue;
 			npsRecords.push({
 				entityId: row.id,
+				entityExternalId: row.externalId,
 				name: row.name ?? null,
 				score: extracted.score,
 				comment: extracted.comment,
@@ -1147,6 +1195,7 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 					if (!comment) return [];
 					return [
 						{
+							entityExternalId: r.entityExternalId,
 							name: r.name,
 							score: r.score,
 							bucket: r.bucket,

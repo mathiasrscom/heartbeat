@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
 	CheckCircle2,
@@ -58,6 +58,22 @@ export const Route = createFileRoute("/settings")({
 
 function SettingsPage() {
 	const initialState = Route.useLoaderData();
+	const navigate = useNavigate();
+	return (
+		<SettingsDialogContent
+			initialState={initialState}
+			onClose={() => void navigate({ to: "/wallboard/attention" })}
+		/>
+	);
+}
+
+export function SettingsDialogContent({
+	initialState,
+	onClose,
+}: {
+	initialState: IntercomConnectionState;
+	onClose: () => void;
+}) {
 	const refreshIntercomState = useServerFn(getIntercomConnectionState);
 	const connectIntercom = useServerFn(saveIntercomConnection);
 	const saveWorkspaceLink = useServerFn(saveIntercomWorkspaceLink);
@@ -121,7 +137,12 @@ function SettingsPage() {
 	>(initialState.wallboardTrackedTeammates);
 	const [isSavingWallboard, setIsSavingWallboard] = useState(false);
 	const tickerLookupRequestRef = useRef(0);
+	const didInitializeWorkspaceAutosaveRef = useRef(false);
+	const didInitializeTickerAutosaveRef = useRef(false);
+	const didInitializeTargetsAutosaveRef = useRef(false);
+	const didInitializeDisplayAutosaveRef = useRef(false);
 	const supportTargetFieldId = useId();
+	const dialogTitleId = useId();
 	const resetConfirmationId = useId();
 	const intercomSectionId = useId();
 	const aiSectionId = useId();
@@ -166,6 +187,12 @@ function SettingsPage() {
 			: resetConfirmation === "RESET INTERCOM"
 				? "Ready to reset"
 				: "Type RESET INTERCOM";
+	const supportTargetsAutosaveKey = JSON.stringify(supportTargets);
+	const displayAutosaveKey = JSON.stringify({
+		wallboardTheme,
+		wallboardProducts,
+		wallboardTrackedTeammates,
+	});
 
 	useEffect(() => {
 		if (!state.isSyncRunning) {
@@ -175,7 +202,6 @@ function SettingsPage() {
 		const intervalId = window.setInterval(() => {
 			void refreshIntercomState().then((nextState) => {
 				setState(nextState);
-				setSupportTargets(nextState.supportTargets);
 			});
 		}, 2000);
 
@@ -256,6 +282,67 @@ function SettingsPage() {
 		tickerLlmBaseUrl,
 	]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: The debounce must restart only when the editable workspace value changes.
+	useEffect(() => {
+		if (!didInitializeWorkspaceAutosaveRef.current) {
+			didInitializeWorkspaceAutosaveRef.current = true;
+			return;
+		}
+		if (!appUrl.trim()) return;
+
+		const timeoutId = window.setTimeout(() => {
+			void saveWorkspaceLinkNow();
+		}, 700);
+		return () => window.clearTimeout(timeoutId);
+	}, [appUrl]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: The listed primitive fields are the intended autosave trigger surface.
+	useEffect(() => {
+		if (!didInitializeTickerAutosaveRef.current) {
+			didInitializeTickerAutosaveRef.current = true;
+			return;
+		}
+		if (!canSaveTickerLlm) return;
+
+		const timeoutId = window.setTimeout(() => {
+			void saveTickerLlmNow();
+		}, 800);
+		return () => window.clearTimeout(timeoutId);
+	}, [
+		canSaveTickerLlm,
+		removeTickerLlmAuthToken,
+		tickerLlmAuthToken,
+		tickerLlmBaseUrl,
+		tickerLlmModel,
+		tickerLlmProvider,
+	]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: The serialized target draft is the intentional autosave key.
+	useEffect(() => {
+		if (!didInitializeTargetsAutosaveRef.current) {
+			didInitializeTargetsAutosaveRef.current = true;
+			return;
+		}
+
+		const timeoutId = window.setTimeout(() => {
+			void saveSupportTargetsNow();
+		}, 600);
+		return () => window.clearTimeout(timeoutId);
+	}, [supportTargetsAutosaveKey]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: The serialized display draft is the intentional autosave key.
+	useEffect(() => {
+		if (!didInitializeDisplayAutosaveRef.current) {
+			didInitializeDisplayAutosaveRef.current = true;
+			return;
+		}
+
+		const timeoutId = window.setTimeout(() => {
+			void handleSaveWallboardDisplay();
+		}, 500);
+		return () => window.clearTimeout(timeoutId);
+	}, [displayAutosaveKey]);
+
 	async function handleConnect(event: FormEvent<HTMLFormElement>) {
 		event.preventDefault();
 		setFeedback(null);
@@ -284,8 +371,7 @@ function SettingsPage() {
 		}
 	}
 
-	async function handleSaveWorkspaceLink(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
+	async function saveWorkspaceLinkNow() {
 		setFeedback(null);
 		setIsSavingAppUrl(true);
 
@@ -310,8 +396,7 @@ function SettingsPage() {
 		}
 	}
 
-	async function handleSaveTickerLlm(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
+	async function saveTickerLlmNow() {
 		setFeedback(null);
 		setIsSavingTickerLlm(true);
 
@@ -461,7 +546,7 @@ function SettingsPage() {
 			: "Access token";
 	const saveLabel = state.hasStoredToken
 		? "Replace and verify"
-		: "Save and verify";
+		: "Connect and verify";
 	const syncButtonLabel = state.isSyncRunning
 		? state.syncStageLabel || "Syncing"
 		: "Sync now";
@@ -504,8 +589,7 @@ function SettingsPage() {
 		});
 	}
 
-	async function handleSaveSupportTargets(event: FormEvent<HTMLFormElement>) {
-		event.preventDefault();
+	async function saveSupportTargetsNow() {
 		setFeedback(null);
 		setIsSavingSupportTargets(true);
 
@@ -538,7 +622,6 @@ function SettingsPage() {
 			});
 
 			setState(result.state);
-			setSupportTargets(result.state.supportTargets);
 			setFeedback({ tone: "success", text: result.message });
 		} catch (error) {
 			const message =
@@ -564,9 +647,6 @@ function SettingsPage() {
 				},
 			});
 			setState(result.state);
-			setWallboardTheme(result.state.wallboardTheme);
-			setWallboardProducts(result.state.wallboardProducts);
-			setWallboardTrackedTeammates(result.state.wallboardTrackedTeammates);
 			setSupportTargets(result.state.supportTargets);
 			setFeedback({ tone: "success", text: result.message });
 		} catch (error) {
@@ -581,8 +661,21 @@ function SettingsPage() {
 	}
 
 	return (
-		<div className="min-h-screen bg-bg-app p-3 lg:p-6">
-			<div className="mx-auto flex h-[calc(100vh-1.5rem)] max-w-7xl overflow-hidden rounded-3xl border border-border/70 bg-background shadow-2xl shadow-black/10 lg:h-[calc(100vh-3rem)]">
+		// biome-ignore lint/a11y/noStaticElementInteractions: The backdrop is a conventional pointer-only dismiss target; Escape and the close button provide keyboard dismissal.
+		<div
+			className={cn(
+				"fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm lg:p-6",
+				wallboardTheme === "dark" && "dark",
+			)}
+			onMouseDown={onClose}
+		>
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby={dialogTitleId}
+				className="mx-auto flex h-[calc(100vh-1.5rem)] w-full max-w-7xl overflow-hidden rounded-3xl border border-border/70 bg-background shadow-2xl shadow-black/10 lg:h-[calc(100vh-3rem)]"
+				onMouseDown={(event) => event.stopPropagation()}
+			>
 				<aside className="flex w-60 shrink-0 flex-col border-r border-border/60 bg-bg-surface/55 p-4">
 					<div className="flex items-center gap-3 px-2 py-2">
 						<span className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-background">
@@ -611,13 +704,13 @@ function SettingsPage() {
 					</nav>
 					<div className="mt-auto space-y-1 border-t border-border/50 pt-4">
 						<Link
-							to="/wallboard/live"
+							to="/wallboard/attention"
 							className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-background hover:text-foreground"
 						>
 							<Monitor className="h-4 w-4" /> Attention now
 						</Link>
 						<Link
-							to="/wallboard/trends"
+							to="/wallboard/pulse"
 							className="flex items-center gap-3 rounded-xl px-3 py-2 text-sm text-muted-foreground hover:bg-background hover:text-foreground"
 						>
 							<Gauge className="h-4 w-4" /> Customer pulse
@@ -629,20 +722,24 @@ function SettingsPage() {
 					<div className="mx-auto max-w-4xl p-6 lg:p-9">
 						<div className="mb-8 flex items-start justify-between gap-4">
 							<div>
-								<h1 className="text-2xl font-semibold tracking-tight">
+								<h1
+									id={dialogTitleId}
+									className="text-2xl font-semibold tracking-tight"
+								>
 									Settings
 								</h1>
 								<p className="mt-1 text-sm text-muted-foreground">
 									Connections, intelligence, targets, and monitor defaults
 								</p>
 							</div>
-							<Link
-								to="/wallboard/live"
+							<button
+								type="button"
 								aria-label="Close settings"
+								onClick={onClose}
 								className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/60 text-muted-foreground hover:bg-muted hover:text-foreground"
 							>
 								<X className="h-4 w-4" />
-							</Link>
+							</button>
 						</div>
 
 						<div className="space-y-10">
@@ -872,10 +969,7 @@ function SettingsPage() {
 									</div>
 								</form>
 
-								<form
-									className="mt-3 flex flex-col gap-2 sm:flex-row"
-									onSubmit={handleSaveWorkspaceLink}
-								>
+								<div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
 									<Input
 										type="url"
 										placeholder="Intercom workspace link"
@@ -883,27 +977,18 @@ function SettingsPage() {
 										value={appUrl}
 										onChange={(event) => setAppUrl(event.target.value)}
 									/>
-									<Button
-										size="sm"
-										className="h-7 text-xs px-3"
-										type="submit"
-										disabled={isSavingAppUrl || appUrl.trim().length === 0}
-									>
-										{isSavingAppUrl ? (
-											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-										) : null}
-										Save workspace link
-									</Button>
-								</form>
+									<span className="text-[10px] text-muted-foreground">
+										{isSavingAppUrl ? "Saving…" : "Saved automatically"}
+									</span>
+								</div>
 								<p className="text-[10px] text-muted-foreground mt-1">
 									Example:
 									https://app.eu.intercom.com/a/inbox/zah460bv/inbox/conversation/215560824562362
 								</p>
 
-								<form
+								<div
 									id={aiSectionId}
 									className={cn("mt-4", settingsSubsectionClassName)}
-									onSubmit={handleSaveTickerLlm}
 								>
 									<div className="mb-2 flex items-center justify-between gap-3">
 										<div>
@@ -1096,22 +1181,12 @@ function SettingsPage() {
 											>
 												Clear settings
 											</Button>
-											<Button
-												size="sm"
-												className="h-7 text-xs px-3"
-												type="submit"
-												disabled={isSavingTickerLlm || !canSaveTickerLlm}
-											>
-												{isSavingTickerLlm ? (
-													<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-												) : null}
-												{isOllamaProvider
-													? "Save Ollama settings"
-													: "Use Codex CLI default"}
-											</Button>
+											<span className="text-[10px] text-muted-foreground">
+												{isSavingTickerLlm ? "Saving…" : "Saved automatically"}
+											</span>
 										</div>
 									</div>
-								</form>
+								</div>
 
 								<div className="mt-4 border-t border-border/40 pt-3 text-xs">
 									<div className="font-medium text-foreground">CX source</div>
@@ -1129,10 +1204,9 @@ function SettingsPage() {
 									</div>
 								</div>
 
-								<form
+								<div
 									id={targetsSectionId}
 									className={cn("mt-4", settingsSubsectionClassName)}
-									onSubmit={handleSaveSupportTargets}
 								>
 									<div className="mb-3">
 										<div className="text-xs font-medium text-foreground">
@@ -1232,20 +1306,10 @@ function SettingsPage() {
 										</div>
 									</div>
 
-									<div className="mt-3 flex justify-end">
-										<Button
-											size="sm"
-											className="h-7 px-3 text-xs"
-											type="submit"
-											disabled={isSavingSupportTargets}
-										>
-											{isSavingSupportTargets ? (
-												<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-											) : null}
-											Save support targets
-										</Button>
+									<div className="mt-3 text-right text-[10px] text-muted-foreground">
+										{isSavingSupportTargets ? "Saving…" : "Saved automatically"}
 									</div>
-								</form>
+								</div>
 
 								{feedback ? (
 									<div
@@ -1387,8 +1451,11 @@ function SettingsPage() {
 
 								{state.availableWallboardTeammates.length > 0 ? (
 									<div className={settingsSubsectionClassName}>
-										<div className="text-xs font-medium text-foreground mb-1">
-											Tracked teammates
+										<div className="flex items-center justify-between gap-3 text-xs font-medium text-foreground mb-1">
+											<span>Tracked teammates</span>
+											<span className="rounded-full bg-accent-soft px-2 py-0.5 text-[10px] text-foreground">
+												{wallboardTrackedTeammates.length} selected
+											</span>
 										</div>
 										<div className="text-[10px] text-muted-foreground mb-3">
 											Select who should appear in the live assignment load view.
@@ -1403,8 +1470,12 @@ function SettingsPage() {
 														key={teammate.externalId}
 														size="sm"
 														type="button"
+														aria-pressed={isSelected}
 														variant={isSelected ? "default" : "outline"}
-														className="h-7 gap-2 px-3 text-xs"
+														className={cn(
+															"h-8 gap-2 px-3 text-xs",
+															isSelected && "ring-2 ring-accent-primary ring-offset-2 ring-offset-background",
+														)}
 														onClick={() => {
 															setWallboardTrackedTeammates((current) =>
 																isSelected
@@ -1415,6 +1486,7 @@ function SettingsPage() {
 															);
 														}}
 													>
+														{isSelected ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
 														<span
 															className={cn(
 																"h-1.5 w-1.5 rounded-full",
@@ -1431,19 +1503,8 @@ function SettingsPage() {
 									</div>
 								) : null}
 
-								<div className="flex justify-end pt-1">
-									<Button
-										size="sm"
-										className="h-7 px-3 text-xs"
-										type="button"
-										disabled={isSavingWallboard}
-										onClick={handleSaveWallboardDisplay}
-									>
-										{isSavingWallboard ? (
-											<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-										) : null}
-										Save display settings
-									</Button>
+								<div className="pt-1 text-right text-[10px] text-muted-foreground">
+									{isSavingWallboard ? "Saving…" : "Saved automatically"}
 								</div>
 							</section>
 						</div>
@@ -1471,6 +1532,26 @@ function TargetNumberField({
 	value: number;
 	onChange: (value: string) => void;
 }) {
+	const [draft, setDraft] = useState(String(value));
+
+	function handleChange(nextValue: string) {
+		setDraft(nextValue);
+		if (nextValue.trim() === "") return;
+		const parsed = Number(nextValue);
+		if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 100) {
+			onChange(nextValue);
+		}
+	}
+
+	function handleBlur() {
+		const parsed = Number(draft);
+		const normalized = Number.isFinite(parsed)
+			? Math.min(100, Math.max(0, Number(parsed.toFixed(1))))
+			: value;
+		setDraft(String(normalized));
+		onChange(String(normalized));
+	}
+
 	return (
 		<div className="block">
 			<label
@@ -1486,8 +1567,9 @@ function TargetNumberField({
 				max={100}
 				step={1}
 				className="h-8 text-xs"
-				value={value}
-				onChange={(event) => onChange(event.target.value)}
+				value={draft}
+				onChange={(event) => handleChange(event.target.value)}
+				onBlur={handleBlur}
 			/>
 		</div>
 	);

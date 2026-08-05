@@ -46,7 +46,7 @@ export function AttentionCard({
 					signal.severity === "watch" && "bg-info",
 				)}
 			/>
-			<div className="flex items-start justify-between gap-5">
+			<div className="grid grid-cols-1 items-start gap-4 @min-[520px]:grid-cols-[minmax(0,1fr)_auto] @min-[520px]:gap-5">
 				<div className="min-w-0 flex-1">
 					<div className="mb-2 flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
 						<span className="inline-flex items-center gap-1.5 rounded-full bg-background/70 px-2.5 py-1 text-foreground/80">
@@ -68,13 +68,13 @@ export function AttentionCard({
 					<p
 						className={cn(
 							"mt-2 leading-relaxed text-text-secondary",
-							compact ? "line-clamp-2 text-sm" : "text-base",
+							compact ? "line-clamp-1 text-sm" : "text-base",
 						)}
 					>
 						{signal.summary}
 					</p>
 				</div>
-				<div className="shrink-0 text-right">
+				<div className="flex items-center justify-between gap-4 text-left @min-[520px]:block @min-[520px]:text-right">
 					<div className="text-[0.68rem] uppercase tracking-[0.12em] text-muted-foreground">
 						Evidence
 					</div>
@@ -84,7 +84,7 @@ export function AttentionCard({
 							: signal.conversationExternalIds.length}
 					</div>
 					<div className="text-xs text-muted-foreground">
-						{signal.kind === "product" ? "customers" : "conversation"}
+						{signal.kind === "product" ? "customers" : "case"}
 					</div>
 				</div>
 			</div>
@@ -97,14 +97,6 @@ export function AttentionCard({
 			</div>
 
 			<div className="mt-3 flex flex-wrap items-center gap-2">
-				{signal.reasons.map((reason) => (
-					<span
-						key={reason}
-						className="rounded-md bg-background/65 px-2 py-1 text-xs text-muted-foreground"
-					>
-						{reason}
-					</span>
-				))}
 				{signal.conversationExternalIds.slice(0, 4).map((externalId) => {
 					const href = buildIntercomCaseUrl(appUrl, {
 						externalId,
@@ -116,20 +108,30 @@ export function AttentionCard({
 							href={href}
 							target="_blank"
 							rel="noreferrer"
-							className="ml-auto inline-flex items-center gap-1 font-mono text-xs font-semibold text-accent-primary hover:text-accent-hover"
+							className="inline-flex items-center gap-1 font-mono text-sm font-semibold text-accent-primary hover:text-accent-hover"
 						>
-							#{externalId}
+							Case #{externalId}
 							<ArrowUpRight className="h-3.5 w-3.5" />
 						</a>
 					) : (
 						<span
 							key={externalId}
-							className="ml-auto font-mono text-xs text-muted-foreground"
+							className="font-mono text-sm text-muted-foreground"
 						>
-							#{externalId}
+							Case #{externalId}
 						</span>
 					);
 				})}
+				{signal.reasons
+					.filter((reason) => reason !== "no clear owner")
+					.map((reason) => (
+						<span
+							key={reason}
+							className="rounded-md bg-background/65 px-2 py-1 text-xs text-muted-foreground"
+						>
+							{reason}
+						</span>
+					))}
 			</div>
 		</article>
 	);

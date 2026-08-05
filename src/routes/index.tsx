@@ -2,6 +2,6 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/")({
 	beforeLoad: () => {
-		throw redirect({ to: "/wallboard/live" });
+		throw redirect({ to: "/wallboard/attention" });
 	},
 });

@@ -1,23 +1,22 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownRight,
 	ArrowUpRight,
+	Frown,
 	Heart,
 	MessageSquareQuote,
-	MessagesSquare,
+	MessageSquareText,
 	Radar,
-	Repeat2,
-	Users,
+	Star,
 } from "lucide-react";
 import { useEffect } from "react";
-import { AttentionCard } from "@/components/wallboard/attention-card";
 import {
 	WallboardSection,
 	WallboardShell,
 } from "@/components/wallboard/wallboard-shell";
-import { getTrendsWallboard } from "@/lib/support-health/server";
 import type {
 	NpsComment,
+	NpsPeriodSummary,
 	NpsTheme,
 	ProductHealthRow,
 	TrendsWallboardData,
@@ -27,25 +26,26 @@ import { cn } from "@/lib/utils";
 const WALLBOARD_REFRESH_INTERVAL_MS = 60_000;
 
 export const Route = createFileRoute("/wallboard/trends")({
-	ssr: false,
-	head: () => ({ meta: [{ title: "Heartbeat - Customer pulse" }] }),
-	loader: async () => getTrendsWallboard(),
-	component: CustomerPulsePage,
+	beforeLoad: () => {
+		throw redirect({ to: "/wallboard/pulse" });
+	},
 });
 
-function CustomerPulsePage() {
-	const data = Route.useLoaderData() as TrendsWallboardData;
+export function CustomerPulseWallboard({
+	data,
+}: {
+	data: TrendsWallboardData;
+}) {
 	const router = useRouter();
-	const attention = data.attention;
-	const productSignals = attention.productSignals.slice(0, 2);
+	const themes = selectPriorityThemes(data.npsThemes);
 	const voice = selectVoice(data.npsComments);
-	const satisfaction = data.periodSummary.satisfactionScorePercent;
+	const happiness = selectHappiness(data);
+	const satisfaction = happiness?.satisfactionScorePercent ?? null;
 	const pulseLabel =
-		attention.status === "needs-attention" ||
 		(satisfaction !== null &&
 			satisfaction < data.selectedTargets.satisfactionTargetPercent)
 			? "Customer confidence needs attention"
-			: attention.status === "watch"
+			: data.npsSummary.detractorCount > data.npsSummary.promoterCount / 2
 				? "Customer needs are shifting"
 				: "Customer pulse is steady";
 
@@ -63,8 +63,7 @@ function CustomerPulsePage() {
 			refreshedAt={data.snapshot.freshnessTimestamp ?? data.refreshedAt}
 			stale={data.snapshot.stale}
 			tickerItems={[
-				...productSignals.map((signal) => signal.headline),
-				...data.npsThemes.slice(0, 3).map((theme) => theme.headline),
+				...themes.map((theme) => theme.headline),
 			]}
 			theme={data.wallboardTheme}
 			showcase={
@@ -80,29 +79,14 @@ function CustomerPulsePage() {
 						title="Recurring customer needs"
 						className="min-h-0 flex-1"
 					>
-						{productSignals.length > 0 ? (
+						{themes.length > 0 ? (
 							<div
 								className="grid h-full gap-4"
 								style={{
-									gridTemplateRows: `repeat(${productSignals.length}, minmax(0, 1fr))`,
+									gridTemplateRows: `repeat(${themes.length}, minmax(0, 1fr))`,
 								}}
 							>
-								{productSignals.map((signal) => (
-									<AttentionCard
-										key={signal.id}
-										signal={signal}
-										appUrl={data.intercomAppUrl}
-									/>
-								))}
-							</div>
-						) : data.npsThemes.length > 0 ? (
-							<div
-								className="grid h-full gap-4"
-								style={{
-									gridTemplateRows: `repeat(${Math.min(2, data.npsThemes.length)}, minmax(0, 1fr))`,
-								}}
-							>
-								{data.npsThemes.slice(0, 2).map((theme) => (
+								{themes.map((theme) => (
 									<ThemeCard key={theme.headline} theme={theme} />
 								))}
 							</div>
@@ -113,15 +97,15 @@ function CustomerPulsePage() {
 				</div>
 
 				<div className="flex min-h-0 flex-col gap-6">
-					<WallboardSection title={`Pulse · ${data.period.label}`}>
+					<WallboardSection title="Customer happiness">
 						<div className="grid grid-cols-2 gap-3">
 							<PulseMetric
 								label="Customer happiness"
 								value={satisfaction === null ? "—" : `${satisfaction}%`}
 								detail={
-									data.periodSummary.ratedCount > 0
-										? `${data.periodSummary.ratedCount} rated`
-										: "No ratings yet"
+									happiness
+										? `${happiness.ratedCount} CX ratings · ${formatPeriodContext(happiness.label)}`
+										: "No CX ratings available"
 								}
 								icon={Heart}
 								tone={
@@ -132,23 +116,24 @@ function CustomerPulsePage() {
 								}
 							/>
 							<PulseMetric
-								label="Conversations"
-								value={String(data.periodSummary.eligibleCount)}
-								detail={`${data.periodSummary.responseRatePercent}% rated`}
-								icon={MessagesSquare}
+								label="NPS"
+								value={formatNps(data.npsSummary.score)}
+								detail={`${data.npsSummary.responseCount} latest known responses`}
+								icon={Star}
+								tone={data.npsSummary.score < 0 ? "warn" : "good"}
 							/>
 							<PulseMetric
-								label="At risk now"
-								value={String(attention.atRiskCustomerCount)}
-								detail="customer signals"
-								icon={Users}
-								tone={attention.atRiskCustomerCount > 0 ? "warn" : "good"}
+								label="Detractors"
+								value={String(data.npsSummary.detractorCount)}
+								detail="customers scoring 0–6"
+								icon={Frown}
+								tone={data.npsSummary.detractorCount > 0 ? "warn" : "good"}
 							/>
 							<PulseMetric
-								label="Recurring needs"
-								value={String(attention.recurringThemeCount)}
-								detail="evidence clusters"
-								icon={Repeat2}
+								label="Written feedback"
+								value={String(data.npsSummary.commentCount)}
+								detail="comments to learn from"
+								icon={MessageSquareText}
 							/>
 						</div>
 					</WallboardSection>
@@ -165,7 +150,13 @@ function CustomerPulsePage() {
 							{data.productHealth.length > 0 ? (
 								data.productHealth
 									.slice(0, 4)
-									.map((row) => <ProductRow key={row.productName} row={row} />)
+									.map((row) => (
+										<ProductRow
+											key={row.productName}
+											row={row}
+											nps={data.npsByProduct[row.productName]?.summary}
+										/>
+									))
 							) : (
 								<div className="py-6 text-center text-sm text-muted-foreground">
 									Product evidence appears after the first Intercom sync.
@@ -300,9 +291,14 @@ function ThemeCard({ theme }: { theme: NpsTheme }) {
 				</div>
 			</div>
 			{theme.quote ? (
-				<blockquote className="mt-4 border-l-2 border-accent-primary/60 pl-4 text-sm italic text-foreground/85">
-					“{theme.quote}”
-				</blockquote>
+				theme.sourceName ? (
+					<div className="mt-4 border-l-2 border-accent-primary/60 pl-4">
+						<blockquote className="text-sm italic text-foreground/85">
+							“{theme.quote}”
+						</blockquote>
+						<CustomerReference name={theme.sourceName} />
+					</div>
+				) : null
 			) : null}
 		</article>
 	);
@@ -329,15 +325,37 @@ function VoiceCard({
 				“{comment.englishComment ?? comment.comment}”
 			</blockquote>
 			<div className="mt-3 text-xs text-muted-foreground">
-				One of {responseCount} NPS response{responseCount === 1 ? "" : "s"} ·{" "}
+				One of {responseCount} latest known NPS response
+				{responseCount === 1 ? "" : "s"} ·{" "}
 				{comment.bucket}
 			</div>
+			{comment.name ? <CustomerReference name={comment.name} /> : null}
 		</div>
 	);
 }
 
-function ProductRow({ row }: { row: ProductHealthRow }) {
+function CustomerReference({ name }: { name: string }) {
+	return (
+		<div className="mt-2 text-sm font-medium text-muted-foreground">
+			{name}
+		</div>
+	);
+}
+
+function ProductRow({
+	row,
+	nps,
+}: {
+	row: ProductHealthRow;
+	nps?: NpsPeriodSummary;
+}) {
 	const happiness = row.satisfactionScorePercent;
+	const hasCx = happiness !== null;
+	const displayValue = hasCx
+		? `${happiness}%`
+		: nps && nps.responseCount > 0
+			? formatNps(nps.score)
+			: "—";
 	return (
 		<div className="flex items-center justify-between gap-4 py-3.5">
 			<div className="min-w-0">
@@ -356,14 +374,56 @@ function ProductRow({ row }: { row: ProductHealthRow }) {
 							: "text-foreground",
 					)}
 				>
-					{happiness === null ? "—" : `${happiness}%`}
+					{displayValue}
 				</div>
 				<div className="text-[0.68rem] uppercase tracking-wide text-muted-foreground">
-					happiness
+					{hasCx ? "CX happiness" : nps ? `NPS · ${nps.responseCount}` : "No ratings"}
 				</div>
 			</div>
 		</div>
 	);
+}
+
+function selectHappiness(data: TrendsWallboardData) {
+	if (data.periodSummary.ratedCount > 0) {
+		return {
+			label: data.period.label,
+			ratedCount: data.periodSummary.ratedCount,
+			satisfactionScorePercent:
+				data.periodSummary.satisfactionScorePercent,
+		};
+	}
+	const broaderPeriod = data.periods.find((period) => period.ratedCount > 0);
+	return broaderPeriod
+		? {
+				label: broaderPeriod.label,
+				ratedCount: broaderPeriod.ratedCount,
+				satisfactionScorePercent:
+					broaderPeriod.satisfactionScorePercent,
+			}
+		: null;
+}
+
+function selectPriorityThemes(themes: NpsTheme[]) {
+	const priority = { negative: 0, mixed: 1, positive: 2 } as const;
+	return [...themes]
+		.sort(
+			(a, b) =>
+				priority[a.sentiment] - priority[b.sentiment] ||
+				b.mentionCount - a.mentionCount,
+		)
+		.slice(0, 2);
+}
+
+function formatNps(score: number) {
+	return score > 0 ? `+${score}` : String(score);
+}
+
+function formatPeriodContext(label: string) {
+	if (label === "Year") return "year to date";
+	if (label === "Quarter") return "quarter to date";
+	if (label === "Month") return "month to date";
+	return label.toLowerCase();
 }
 
 function selectVoice(comments: NpsComment[]) {

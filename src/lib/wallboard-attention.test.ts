@@ -98,6 +98,90 @@ describe("buildCustomerAttentionSummary", () => {
 		expect(result.productSignals).toEqual([]);
 	});
 
+	it("shows ordinary waiting-on-support work without requiring a risk flag", () => {
+		const result = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					title: "A simple question",
+					description: "Could you confirm the account setting?",
+					waitingSinceAt: now,
+					nextDueAt: null,
+					hasSlaTracking: false,
+				}),
+			],
+			now,
+		);
+
+		expect(result.customerSignals).toHaveLength(1);
+		expect(result.supportActionCount).toBe(1);
+		expect(result.statusLabel).toBe("Support can act");
+	});
+
+	it("keeps externally blocked work out of support action cards", () => {
+		const result = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					id: "customer-wait",
+					externalId: "customer-wait",
+					actionableState: "awaiting-customer",
+					nextActionOwner: "customer",
+				}),
+				supportCase({
+					id: "developer-wait",
+					externalId: "developer-wait",
+					nextActionOwner: "development",
+					isAssignedToDeveloperTeam: true,
+				}),
+				supportCase({
+					id: "other-wait",
+					externalId: "other-wait",
+					nextActionOwner: "other",
+				}),
+			],
+			now,
+		);
+
+		expect(result.customerSignals).toEqual([]);
+		expect(result.waitingElsewhere).toEqual({
+			totalCount: 3,
+			customerCount: 1,
+			developmentCount: 1,
+			otherCount: 1,
+		});
+	});
+
+	it("does not use ordinary ticket age alone as a support action", () => {
+		const result = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					subtype: "ticket",
+					waitingSinceAt: new Date("2026-07-01T08:00:00.000Z"),
+					description: "A long-running internal ticket",
+				}),
+			],
+			now,
+		);
+
+		expect(result.customerSignals).toEqual([]);
+		expect(result.waitingElsewhere.totalCount).toBe(1);
+	});
+
+	it("keeps developer tickets waiting on support actionable", () => {
+		const result = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					subtype: "ticket",
+					nextActionOwner: "support",
+					isAssignedToDeveloperTeam: true,
+					isTicketReview: true,
+				}),
+			],
+			now,
+		);
+
+		expect(result.customerSignals).toHaveLength(1);
+	});
+
 	it("removes email addresses and links from monitor excerpts", () => {
 		const result = buildCustomerAttentionSummary(
 			[
@@ -113,6 +197,25 @@ describe("buildCustomerAttentionSummary", () => {
 		expect(result.customerSignals[0]?.summary).toContain("[link]");
 		expect(result.customerSignals[0]?.summary).not.toContain(
 			"jane@example.com",
+		);
+	});
+
+	it("does not present chat launcher choices as customer evidence", () => {
+		const result = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					title: "Conversation",
+					description: "❓ Stil et spørgsmål",
+				}),
+			],
+			now,
+		);
+
+		expect(result.customerSignals[0]?.summary).toBe(
+			"No additional customer message is available.",
+		);
+		expect(result.customerSignals[0]?.summary).not.toContain(
+			"Stil et spørgsmål",
 		);
 	});
 });

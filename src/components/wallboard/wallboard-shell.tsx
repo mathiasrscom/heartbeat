@@ -8,6 +8,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { useSettingsDialog } from "@/components/settings-dialog-provider";
 import { panelSurfaceClassName } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,7 @@ export function WallboardShell({
 }: WallboardShellProps) {
 	const refreshedDate = refreshedAt ? new Date(refreshedAt) : null;
 	const location = useLocation();
+	const { openSettings } = useSettingsDialog();
 
 	return (
 		<div
@@ -71,24 +73,25 @@ export function WallboardShell({
 								className="flex items-center rounded-xl border border-border/50 bg-bg-surface/70 p-1"
 							>
 								<WallboardNavLink
-									to="/wallboard/live"
+									to="/wallboard/attention"
 									label="Attention"
-									active={location.pathname === "/wallboard/live"}
+									active={location.pathname === "/wallboard/attention"}
 									icon={HeartPulse}
 								/>
 								<WallboardNavLink
-									to="/wallboard/trends"
+									to="/wallboard/pulse"
 									label="Pulse"
-									active={location.pathname === "/wallboard/trends"}
+									active={location.pathname === "/wallboard/pulse"}
 									icon={Radar}
 								/>
-								<Link
-									to="/settings"
+								<button
+									type="button"
 									aria-label="Settings"
+									onClick={openSettings}
 									className="ml-1 inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
 								>
 									<Settings2 className="h-4 w-4" />
-								</Link>
+								</button>
 							</nav>
 							<div>
 								<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
@@ -132,7 +135,7 @@ function WallboardNavLink({
 	active,
 	icon: Icon,
 }: {
-	to: "/wallboard/live" | "/wallboard/trends";
+	to: "/wallboard/attention" | "/wallboard/pulse";
 	label: string;
 	active: boolean;
 	icon: typeof HeartPulse;

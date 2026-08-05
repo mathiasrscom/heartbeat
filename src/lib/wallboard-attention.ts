@@ -46,6 +46,16 @@ const CONFIDENCE_PATTERNS = [
 	/\bstadig\b/i,
 	/\bigen\b/i,
 ];
+const GENERIC_CHAT_CHOICES = new Set([
+	"ask a question",
+	"stil et spørgsmål",
+	"share feedback",
+	"del feedback",
+	"send us a message",
+	"start a conversation",
+	"conversation",
+	"new conversation",
+]);
 
 function plainText(value: string | null | undefined) {
 	return (value ?? "")
@@ -65,6 +75,14 @@ function clamp(value: string, length: number) {
 	return `${value.slice(0, Math.max(0, length - 1)).trimEnd()}…`;
 }
 
+function isGenericChatChoice(value: string) {
+	const normalized = value
+		.toLowerCase()
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.trim();
+	return GENERIC_CHAT_CHOICES.has(normalized);
+}
+
 function conversationText(item: SupportCaseRecord) {
 	return `${plainText(item.title)} ${plainText(item.description)}`.trim();
 }
@@ -79,6 +97,59 @@ interface RankedCase {
 	reasons: string[];
 	isBlocked: boolean;
 	hasConfidenceRisk: boolean;
+}
+
+function isSupportActionable(item: SupportCaseRecord) {
+	if (
+		item.nextActionOwner &&
+		item.nextActionOwner !== "support" &&
+		item.nextActionOwner !== "none"
+	) {
+		return false;
+	}
+	if (item.actionableState === "resolved") return false;
+	if (item.actionableState === "awaiting-customer") return false;
+	if (item.isAssignedToDeveloperTeam && !item.isTicketReview) return false;
+	if (
+		item.subtype === "ticket" &&
+		!item.isTicketReview &&
+		!item.isBreached &&
+		!item.isDueSoon &&
+		item.actionableState !== "unassigned"
+	) {
+		return false;
+	}
+	return true;
+}
+
+function buildWaitingElsewhere(cases: SupportCaseRecord[]) {
+	const waiting = cases.filter(
+		(item) => item.actionableState !== "resolved" && !isSupportActionable(item),
+	);
+	let customerCount = 0;
+	let developmentCount = 0;
+	let otherCount = 0;
+	for (const item of waiting) {
+		if (
+			item.nextActionOwner === "customer" ||
+			item.actionableState === "awaiting-customer"
+		) {
+			customerCount++;
+		} else if (
+			item.nextActionOwner === "development" ||
+			item.isAssignedToDeveloperTeam
+		) {
+			developmentCount++;
+		} else {
+			otherCount++;
+		}
+	}
+	return {
+		totalCount: waiting.length,
+		customerCount,
+		developmentCount,
+		otherCount,
+	};
 }
 
 function rankCustomerCase(item: SupportCaseRecord, now: Date): RankedCase {
@@ -153,7 +224,7 @@ function customerHeadline(ranked: RankedCase) {
 	if (ranked.item.isBreached) return `${customer} has waited beyond SLA`;
 	if (ranked.item.isDueSoon)
 		return `${customer} needs an update within the hour`;
-	if (!ranked.item.hasAssignment) return `${customer} has no clear owner`;
+	if (!ranked.item.hasAssignment) return `${customer} is waiting for Support`;
 	return `${customer} needs a clear next step`;
 }
 
@@ -171,10 +242,12 @@ function customerAction(ranked: RankedCase) {
 
 function buildCustomerSignal(ranked: RankedCase): CustomerAttentionSignal {
 	const item = ranked.item;
+	const description = plainText(item.description);
+	const title = plainText(item.title);
 	const evidence =
-		plainText(item.description) ||
-		plainText(item.title) ||
-		"Open customer conversation requiring review.";
+		(description && !isGenericChatChoice(description) ? description : "") ||
+		(title && !isGenericChatChoice(title) ? title : "") ||
+		"No additional customer message is available.";
 	return {
 		id: `customer-${item.id}`,
 		kind: "customer",
@@ -279,12 +352,9 @@ export function buildCustomerAttentionSummary(
 	cases: SupportCaseRecord[],
 	now = new Date(),
 ): CustomerAttentionSummary {
-	const actionable = cases.filter(
-		(item) => item.actionableState !== "resolved",
-	);
+	const actionable = cases.filter(isSupportActionable);
 	const ranked = actionable
 		.map((item) => rankCustomerCase(item, now))
-		.filter((item) => item.score >= 12)
 		.sort((left, right) => right.score - left.score);
 	const customerSignals = ranked
 		.slice(0, MAX_CUSTOMER_SIGNALS)
@@ -303,13 +373,17 @@ export function buildCustomerAttentionSummary(
 		status === "needs-attention"
 			? "Needs attention"
 			: status === "watch"
-				? "Worth watching"
+				? customerSignals.length > 0
+					? "Support can act"
+					: "Worth watching"
 				: "Calm";
 	const summary =
 		status === "needs-attention"
 			? `${criticalCount} customer situation${criticalCount === 1 ? "" : "s"} need a clear owner or update now.`
 			: status === "watch"
-				? "No broad emergency, but there are customer signals worth acting on before they grow."
+				? customerSignals.length > 0
+					? `${actionable.length} customer situation${actionable.length === 1 ? "" : "s"} can be moved forward by Support now.`
+					: "No immediate support action, but recurring customer themes are worth watching."
 				: "No material customer-risk signals are visible in the current Intercom data.";
 
 	return {
@@ -317,8 +391,10 @@ export function buildCustomerAttentionSummary(
 		statusLabel,
 		summary,
 		atRiskCustomerCount: customerSignals.length,
+		supportActionCount: actionable.length,
 		recurringThemeCount: productSignals.length,
 		customerSignals,
 		productSignals,
+		waitingElsewhere: buildWaitingElsewhere(cases),
 	};
 }

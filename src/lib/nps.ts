@@ -122,9 +122,7 @@ export function extractNps(rawEntityData: unknown): ExtractedNps {
   const rawRatedAt =
     getFieldCaseInsensitive(customAttributes, "nps_rated_at") ??
     getFieldCaseInsensitive(customAttributes, "nps_submitted_at") ??
-    getFieldCaseInsensitive(customAttributes, "NPS Rated At") ??
-    rawEntityData.updated_at ??
-    rawEntityData.signed_up_at
+    getFieldCaseInsensitive(customAttributes, "NPS Rated At")
   const ratedAt = toDate(rawRatedAt)
 
   return { score, comment, ratedAt }

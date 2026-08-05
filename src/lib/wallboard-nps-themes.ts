@@ -27,8 +27,16 @@ const NPS_THEMES_OUTPUT_SCHEMA = {
 				anyOf: [{ type: "string" }, { type: "null" }],
 			},
 			mentionCount: { type: "number" },
+			sourceIndex: { type: "number" },
 		},
-		required: ["headline", "summary", "sentiment", "quote", "mentionCount"],
+		required: [
+			"headline",
+			"summary",
+			"sentiment",
+			"quote",
+			"mentionCount",
+			"sourceIndex",
+		],
 		additionalProperties: false,
 	},
 };
@@ -166,6 +174,8 @@ export function buildDeterministicNpsThemes(
 					? clampText(anonymizeComment(sample.comment), MAX_QUOTE_LENGTH)
 					: null,
 				mentionCount: entry.records.length,
+				sourceEntityExternalId: sample?.entityExternalId ?? null,
+				sourceName: sample?.name ?? null,
 			};
 		});
 
@@ -215,6 +225,7 @@ function buildNpsThemesPrompt(
 		'- sentiment: one of "positive", "mixed", "negative"',
 		"- quote: an English translation of one representative comment, max 120 chars",
 		"- mentionCount: number of comments that mentioned this theme",
+		"- sourceIndex: the numbered source comment used for quote",
 		"",
 		"Rules:",
 		"- Office-safe: no customer names or company names (emails and URLs are already stripped).",
@@ -259,7 +270,17 @@ function extractJsonArray(text: string): unknown[] | null {
 	}
 }
 
-function sanitizeThemes(raw: unknown[]): NpsTheme[] | null {
+function sanitizeThemes(
+	raw: unknown[],
+	records: NpsRecord[] = [],
+): NpsTheme[] | null {
+	const sourceRecords = records
+		.filter((record) => record.comment?.trim())
+		.sort(
+			(left, right) =>
+				(right.ratedAt?.getTime() ?? 0) - (left.ratedAt?.getTime() ?? 0),
+		)
+		.slice(0, 40);
 	const results: NpsTheme[] = [];
 	for (const item of raw) {
 		if (!isRecord(item)) continue;
@@ -285,7 +306,28 @@ function sanitizeThemes(raw: unknown[]): NpsTheme[] | null {
 			typeof mentionCountRaw === "number" && Number.isFinite(mentionCountRaw)
 				? Math.max(0, Math.round(mentionCountRaw))
 				: 0;
-		results.push({ headline, summary, sentiment, quote, mentionCount });
+		const sourceIndex =
+			typeof item.sourceIndex === "number" && Number.isFinite(item.sourceIndex)
+				? Math.max(1, Math.round(item.sourceIndex))
+				: null;
+		const sourceRecord = sourceIndex ? sourceRecords[sourceIndex - 1] : null;
+		const sourceEntityExternalId =
+			sourceRecord?.entityExternalId ??
+			(typeof item.sourceEntityExternalId === "string"
+				? item.sourceEntityExternalId
+				: null);
+		const sourceName =
+			sourceRecord?.name ??
+			(typeof item.sourceName === "string" ? item.sourceName : null);
+		results.push({
+			headline,
+			summary,
+			sentiment,
+			quote,
+			mentionCount,
+			sourceEntityExternalId,
+			sourceName,
+		});
 		if (results.length >= MAX_THEMES) break;
 	}
 	return results.length > 0 ? results : null;
@@ -310,7 +352,7 @@ export async function rewriteNpsThemesWithLlm(
 	const parsed = extractJsonArray(content);
 	if (!parsed) return null;
 
-	const themes = sanitizeThemes(parsed);
+	const themes = sanitizeThemes(parsed, records);
 	if (!themes) return null;
 
 	return {

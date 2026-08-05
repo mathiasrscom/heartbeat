@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WallboardTrendsRouteImport } from './routes/wallboard/trends'
+import { Route as WallboardPulseRouteImport } from './routes/wallboard/pulse'
 import { Route as WallboardLiveRouteImport } from './routes/wallboard/live'
+import { Route as WallboardAttentionRouteImport } from './routes/wallboard/attention'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -29,43 +31,80 @@ const WallboardTrendsRoute = WallboardTrendsRouteImport.update({
   path: '/wallboard/trends',
   getParentRoute: () => rootRouteImport,
 } as any)
+const WallboardPulseRoute = WallboardPulseRouteImport.update({
+  id: '/wallboard/pulse',
+  path: '/wallboard/pulse',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WallboardLiveRoute = WallboardLiveRouteImport.update({
   id: '/wallboard/live',
   path: '/wallboard/live',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WallboardAttentionRoute = WallboardAttentionRouteImport.update({
+  id: '/wallboard/attention',
+  path: '/wallboard/attention',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
+  '/wallboard/attention': typeof WallboardAttentionRoute
   '/wallboard/live': typeof WallboardLiveRoute
+  '/wallboard/pulse': typeof WallboardPulseRoute
   '/wallboard/trends': typeof WallboardTrendsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
+  '/wallboard/attention': typeof WallboardAttentionRoute
   '/wallboard/live': typeof WallboardLiveRoute
+  '/wallboard/pulse': typeof WallboardPulseRoute
   '/wallboard/trends': typeof WallboardTrendsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/settings': typeof SettingsRoute
+  '/wallboard/attention': typeof WallboardAttentionRoute
   '/wallboard/live': typeof WallboardLiveRoute
+  '/wallboard/pulse': typeof WallboardPulseRoute
   '/wallboard/trends': typeof WallboardTrendsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/settings' | '/wallboard/live' | '/wallboard/trends'
+  fullPaths:
+    | '/'
+    | '/settings'
+    | '/wallboard/attention'
+    | '/wallboard/live'
+    | '/wallboard/pulse'
+    | '/wallboard/trends'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/settings' | '/wallboard/live' | '/wallboard/trends'
-  id: '__root__' | '/' | '/settings' | '/wallboard/live' | '/wallboard/trends'
+  to:
+    | '/'
+    | '/settings'
+    | '/wallboard/attention'
+    | '/wallboard/live'
+    | '/wallboard/pulse'
+    | '/wallboard/trends'
+  id:
+    | '__root__'
+    | '/'
+    | '/settings'
+    | '/wallboard/attention'
+    | '/wallboard/live'
+    | '/wallboard/pulse'
+    | '/wallboard/trends'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   SettingsRoute: typeof SettingsRoute
+  WallboardAttentionRoute: typeof WallboardAttentionRoute
   WallboardLiveRoute: typeof WallboardLiveRoute
+  WallboardPulseRoute: typeof WallboardPulseRoute
   WallboardTrendsRoute: typeof WallboardTrendsRoute
 }
 
@@ -92,11 +131,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WallboardTrendsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/wallboard/pulse': {
+      id: '/wallboard/pulse'
+      path: '/wallboard/pulse'
+      fullPath: '/wallboard/pulse'
+      preLoaderRoute: typeof WallboardPulseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/wallboard/live': {
       id: '/wallboard/live'
       path: '/wallboard/live'
       fullPath: '/wallboard/live'
       preLoaderRoute: typeof WallboardLiveRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/wallboard/attention': {
+      id: '/wallboard/attention'
+      path: '/wallboard/attention'
+      fullPath: '/wallboard/attention'
+      preLoaderRoute: typeof WallboardAttentionRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -105,7 +158,9 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   SettingsRoute: SettingsRoute,
+  WallboardAttentionRoute: WallboardAttentionRoute,
   WallboardLiveRoute: WallboardLiveRoute,
+  WallboardPulseRoute: WallboardPulseRoute,
   WallboardTrendsRoute: WallboardTrendsRoute,
 }
 export const routeTree = rootRouteImport

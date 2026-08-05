@@ -217,7 +217,7 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 						);
 					}
 
-					await upsertConversationNode(conversation);
+					await upsertConversationNode(conversation, teamNamesById);
 					nodesSynced++;
 				}
 
@@ -275,7 +275,7 @@ async function runIntercomSync(accessToken: string): Promise<SyncResult> {
 						);
 					}
 
-					await upsertTicketNode(ticket);
+					await upsertTicketNode(ticket, teamNamesById);
 					nodesSynced++;
 				}
 
@@ -961,7 +961,23 @@ function mapTicketStatus(ticket: IntercomTicket) {
 	return "open" as const;
 }
 
-async function upsertConversationNode(conversation: IntercomConversation) {
+function enrichTeamAssignment<T extends { team_assignee_id?: string | null }>(
+	record: T,
+	teamNamesById: Map<string, string>,
+) {
+	const teamId = record.team_assignee_id;
+	const teamName = teamId ? teamNamesById.get(teamId) : null;
+	if (!teamId || !teamName) return record;
+	return {
+		...record,
+		team_assignee: { id: teamId, name: teamName },
+	};
+}
+
+async function upsertConversationNode(
+	conversation: IntercomConversation,
+	teamNamesById: Map<string, string>,
+) {
 	const existing = await db
 		.select()
 		.from(nodes)
@@ -1051,7 +1067,10 @@ async function upsertConversationNode(conversation: IntercomConversation) {
 			: null,
 		cxScore: cx.score,
 		cxComment: cx.comment,
-		rawData: conversation as unknown as Record<string, unknown>,
+		rawData: enrichTeamAssignment(
+			conversation,
+			teamNamesById,
+		) as unknown as Record<string, unknown>,
 		resolvedAt,
 		updatedAt: new Date(conversation.updated_at * 1000),
 	};
@@ -1074,7 +1093,10 @@ async function upsertConversationNode(conversation: IntercomConversation) {
 	}
 }
 
-async function upsertTicketNode(ticket: IntercomTicket) {
+async function upsertTicketNode(
+	ticket: IntercomTicket,
+	teamNamesById: Map<string, string>,
+) {
 	const existing = await db
 		.select()
 		.from(nodes)
@@ -1128,7 +1150,10 @@ async function upsertTicketNode(ticket: IntercomTicket) {
 			ticketType: ticket.ticket_type?.name || null,
 		},
 		effortSignals: {},
-		rawData: ticket as unknown as Record<string, unknown>,
+		rawData: enrichTeamAssignment(ticket, teamNamesById) as unknown as Record<
+			string,
+			unknown
+		>,
 		resolvedAt,
 		updatedAt: new Date(ticket.updated_at * 1000),
 	};

@@ -3,6 +3,7 @@ import {
 	buildTrackedTeammateAssignments,
 	buildTrackedTeammateInboxAssignments,
 	resolveSupportCaseSubtype,
+	resolveSupportNextActionOwner,
 } from "./server";
 import type { SupportCaseRecord } from "./types";
 
@@ -54,6 +55,29 @@ function makeCase(
 }
 
 describe("support health server normalization", () => {
+	it("resolves explicit Intercom next-action ownership", () => {
+		expect(
+			resolveSupportNextActionOwner({
+				ticket: { ticket_custom_state_admin_label: "Waiting on customer" },
+			}),
+		).toBe("customer");
+		expect(
+			resolveSupportNextActionOwner({
+				ticket: { ticket_custom_state_admin_label: "Waiting on developers" },
+			}),
+		).toBe("development");
+		expect(
+			resolveSupportNextActionOwner({
+				ticket: { ticket_custom_state_admin_label: "Waiting on others" },
+			}),
+		).toBe("other");
+		expect(
+			resolveSupportNextActionOwner({
+				ticket: { ticket_custom_state_admin_label: "Waiting for support" },
+			}),
+		).toBe("support");
+	});
+
 	it("treats conversation rows with embedded ticket payloads as tickets", () => {
 		expect(
 			resolveSupportCaseSubtype("conversation", {

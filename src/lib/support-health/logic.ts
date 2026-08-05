@@ -1549,11 +1549,21 @@ export function buildNpsSummary(
 	records: NpsRecord[],
 	period: ResolvedSupportPeriod,
 ): NpsPeriodSummary {
-	const current = filterNpsByPeriod(records, period.from, period.to);
+	// Some Intercom workspaces expose the latest NPS score and comment on the
+	// contact, but no timestamp for when that score was submitted. Treat those
+	// values as a current snapshot instead of pretending the contact's generic
+	// `updated_at` timestamp is an NPS response date.
+	const datedRecords = records.filter((record) => record.ratedAt !== null);
+	const isSnapshot = records.length > 0 && datedRecords.length === 0;
+	const current = isSnapshot
+		? records
+		: filterNpsByPeriod(datedRecords, period.from, period.to);
 	const windowMs = Math.max(1, period.to.getTime() - period.from.getTime());
 	const previousStart = new Date(period.from.getTime() - windowMs);
 	const previousEnd = new Date(period.from.getTime() - 1);
-	const previous = filterNpsByPeriod(records, previousStart, previousEnd);
+	const previous = isSnapshot
+		? []
+		: filterNpsByPeriod(datedRecords, previousStart, previousEnd);
 
 	const scores = current.map((r) => r.score);
 	const currentScore = calculateNps(scores);
@@ -1571,7 +1581,8 @@ export function buildNpsSummary(
 	}
 
 	return {
-		periodLabel: period.range.label,
+		periodLabel: isSnapshot ? "Latest known" : period.range.label,
+		isSnapshot,
 		score: currentScore,
 		previousScore: previousScoreValue,
 		delta:
@@ -1580,6 +1591,9 @@ export function buildNpsSummary(
 		passiveCount,
 		detractorCount,
 		responseCount: current.length,
+		commentCount: current.filter(
+			(record) => record.comment && record.comment.trim().length > 0,
+		).length,
 		averageScore,
 	};
 }

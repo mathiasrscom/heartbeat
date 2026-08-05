@@ -10,6 +10,13 @@ export type ActionableState =
 	| "breached"
 	| "resolved";
 
+export type SupportNextActionOwner =
+	| "support"
+	| "customer"
+	| "development"
+	| "other"
+	| "none";
+
 export type SupportCasePriority = "low" | "normal" | "high" | "urgent";
 export type SupportCaseSubtype = "conversation" | "ticket";
 export type SupportTier = "free" | "starter" | "pro" | "enterprise" | "unknown";
@@ -64,6 +71,7 @@ export interface SupportCaseRecord {
 	resolutionTimeHours: number | null;
 	reopenCount: number;
 	actionableState: ActionableState;
+	nextActionOwner?: SupportNextActionOwner;
 	isBreached: boolean;
 	isDueSoon: boolean;
 	isHighRisk: boolean;
@@ -179,9 +187,16 @@ export interface CustomerAttentionSummary {
 	statusLabel: string;
 	summary: string;
 	atRiskCustomerCount: number;
+	supportActionCount: number;
 	recurringThemeCount: number;
 	customerSignals: CustomerAttentionSignal[];
 	productSignals: CustomerAttentionSignal[];
+	waitingElsewhere: {
+		totalCount: number;
+		customerCount: number;
+		developmentCount: number;
+		otherCount: number;
+	};
 }
 
 export interface CxPeriodSummary {
@@ -336,6 +351,7 @@ export interface LiveWallboardData {
 
 export interface NpsRecord {
 	entityId: string;
+	entityExternalId?: string;
 	name: string | null;
 	score: number;
 	comment: string | null;
@@ -345,6 +361,8 @@ export interface NpsRecord {
 
 export interface NpsPeriodSummary {
 	periodLabel: string;
+	/** True when Intercom supplied scores but no rating timestamps. */
+	isSnapshot: boolean;
 	score: number;
 	previousScore: number | null;
 	delta: number | null;
@@ -352,6 +370,7 @@ export interface NpsPeriodSummary {
 	passiveCount: number;
 	detractorCount: number;
 	responseCount: number;
+	commentCount: number;
 	averageScore: number | null;
 }
 
@@ -361,6 +380,7 @@ export interface NpsPeriodSummary {
  * duplicated here so consumers don't need to import `classifyNps`.
  */
 export interface NpsComment {
+	entityExternalId?: string;
 	name: string | null;
 	score: number;
 	bucket: "promoter" | "passive" | "detractor";
@@ -375,6 +395,8 @@ export interface NpsTheme {
 	sentiment: "positive" | "mixed" | "negative";
 	quote: string | null;
 	mentionCount: number;
+	sourceEntityExternalId?: string | null;
+	sourceName?: string | null;
 }
 
 export interface TopContributor {

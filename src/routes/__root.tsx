@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { Monitor, SearchX, Settings2 } from "lucide-react";
+import { SettingsDialogProvider } from "@/components/settings-dialog-provider";
 import { Button } from "@/components/ui/button";
 import {
 	Card,
@@ -82,7 +83,11 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 }
 
 function RootLayout() {
-	return <Outlet />;
+	return (
+		<SettingsDialogProvider>
+			<Outlet />
+		</SettingsDialogProvider>
+	);
 }
 
 function RootNotFound() {
@@ -103,13 +108,13 @@ function RootNotFound() {
 				</div>
 			</CardHeader>
 			<CardContent className="flex flex-wrap gap-2">
-				<Link to="/wallboard/live">
+				<Link to="/wallboard/attention">
 					<Button>
 						<Monitor className="h-4 w-4" />
 						Attention now
 					</Button>
 				</Link>
-				<Link to="/wallboard/trends">
+				<Link to="/wallboard/pulse">
 					<Button variant="outline">
 						<Monitor className="h-4 w-4" />
 						Customer pulse

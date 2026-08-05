@@ -1,5 +1,6 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { LayoutDashboard, LineChart, Monitor, Settings } from "lucide-react";
+import { useSettingsDialog } from "@/components/settings-dialog-provider";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -9,19 +10,14 @@ const navItems = [
 		icon: LayoutDashboard,
 	},
 	{
-		label: "Live",
-		to: "/wallboard/live",
+		label: "Attention",
+		to: "/wallboard/attention",
 		icon: Monitor,
 	},
 	{
-		label: "Trends",
-		to: "/wallboard/trends",
+		label: "Pulse",
+		to: "/wallboard/pulse",
 		icon: LineChart,
-	},
-	{
-		label: "Settings",
-		to: "/settings",
-		icon: Settings,
 	},
 ] as const;
 
@@ -32,6 +28,7 @@ function isActivePath(pathname: string, to: (typeof navItems)[number]["to"]) {
 
 export function AppTopNav() {
 	const location = useLocation();
+	const { openSettings } = useSettingsDialog();
 
 	return (
 		<header className="sticky top-0 z-30 border-b border-border bg-background">
@@ -71,6 +68,15 @@ export function AppTopNav() {
 							</Link>
 						);
 					})}
+					<button
+						type="button"
+						aria-label="Settings"
+						onClick={openSettings}
+						className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					>
+						<Settings className="h-4 w-4" />
+						<span className="hidden sm:inline">Settings</span>
+					</button>
 				</nav>
 			</div>
 		</header>
