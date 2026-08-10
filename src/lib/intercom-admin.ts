@@ -70,6 +70,10 @@ interface ResetIntercomDataInput {
 	confirmation: string;
 }
 
+interface ImportIntercomNpsExportInput {
+	responses: unknown[];
+}
+
 interface ListIntercomTickerOllamaModelsInput {
 	baseUrl: string;
 	authToken?: string;
@@ -78,6 +82,7 @@ interface ListIntercomTickerOllamaModelsInput {
 const INTERCOM_RESET_CONFIRMATION = "RESET INTERCOM";
 const WALLBOARD_CACHE_SETTING_KEYS = [
 	"intercom_sync_runtime",
+	"intercom_nps_capture_initialized_at",
 	"wallboard_live_focus_plan",
 	"wallboard_product_insights",
 	"wallboard_nps_themes",
@@ -709,6 +714,22 @@ export const triggerIntercomSync = createServerFn({ method: "POST" }).handler(
 	},
 );
 
+export const importIntercomNpsHistory = createServerFn({ method: "POST" })
+	.inputValidator((data: ImportIntercomNpsExportInput) => data)
+	.handler(async ({ data }) => {
+		const { importIntercomNpsExport } = await import(
+			"./intercom-nps-export-import"
+		);
+		const result = await importIntercomNpsExport(data.responses);
+		return {
+			...result,
+			message:
+				result.importedCount === 0
+					? `All ${result.alreadyImportedCount} NPS responses were already imported.`
+					: `Imported ${result.importedCount} NPS responses (${result.matchedContactCount} linked to synced contacts).`,
+		};
+	});
+
 export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 	.inputValidator((data: ResetIntercomDataInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
@@ -734,7 +755,23 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 			import("@/db"),
 			import("@/db/schema"),
 		]);
-		const { entities, nodes, settings, syncState, teamMembers } = schema;
+		const {
+			entities,
+			nodes,
+			npsContactState,
+			npsResponses,
+			settings,
+			syncState,
+			teamMembers,
+		} = schema;
+
+		const deletedNpsResponses = await db
+			.delete(npsResponses)
+			.where(eq(npsResponses.source, "intercom"))
+			.returning({ id: npsResponses.id });
+		await db
+			.delete(npsContactState)
+			.where(eq(npsContactState.source, "intercom"));
 
 		const deletedNodes = await db
 			.delete(nodes)
@@ -759,7 +796,7 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 
 		return {
 			message: started
-				? `Intercom data reset: ${deletedNodes.length} cases, ${deletedEntities.length} contacts, and ${deletedTeamMembers.length} teammates removed. Fresh sync started.`
+				? `Intercom data reset: ${deletedNodes.length} cases, ${deletedEntities.length} contacts, ${deletedTeamMembers.length} teammates, and ${deletedNpsResponses.length} NPS responses removed. Fresh sync started.`
 				: "Intercom data reset, but a sync was already running before the fresh sync could start.",
 			state: await readIntercomState(),
 		};

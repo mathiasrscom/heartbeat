@@ -371,6 +371,7 @@ export interface LiveWallboardData {
 export interface NpsRecord {
 	entityId: string;
 	entityExternalId?: string;
+	productName?: string | null;
 	name: string | null;
 	score: number;
 	comment: string | null;

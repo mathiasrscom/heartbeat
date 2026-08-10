@@ -764,6 +764,7 @@ export async function loadSupportCases() {
 						score: npsResponses.score,
 						comment: npsResponses.comment,
 						ratedAt: npsResponses.respondedAt,
+						rawData: npsResponses.rawData,
 					})
 					.from(npsResponses)
 					.leftJoin(entities, eq(npsResponses.entityId, entities.id))
@@ -833,6 +834,10 @@ export async function loadSupportCases() {
 		const npsRecords: NpsRecord[] = npsRows.map((row) => ({
 			entityId: row.entityId ?? row.entityExternalId,
 			entityExternalId: row.entityExternalId,
+			productName:
+				isRecord(row.rawData) && typeof row.rawData.productName === "string"
+					? row.rawData.productName
+					: null,
 			name: row.name ?? null,
 			score: row.score,
 			comment: row.comment,
@@ -1288,6 +1293,7 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			selectedProducts.length > 0 ? selectedProducts : availableProducts;
 		for (const product of productsToSlice) {
 			const scopedRecords = npsRecords.filter((record) => {
+				if (record.productName) return record.productName === product;
 				const products = contactProducts[record.entityId];
 				if (!products || products.length === 0) return false;
 				return products.includes(product);

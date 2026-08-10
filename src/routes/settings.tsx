@@ -12,16 +12,25 @@ import {
 	ShieldAlert,
 	SlidersHorizontal,
 	Target,
+	Upload,
 	X,
 	XCircle,
 } from "lucide-react";
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import {
+	type ChangeEvent,
+	type FormEvent,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
 	getIntercomConnectionState,
 	type IntercomConnectionState,
+	importIntercomNpsHistory,
 	listIntercomTickerOllamaModels,
 	removeIntercomConnection,
 	resetIntercomDataAndSync,
@@ -34,6 +43,7 @@ import {
 	type WallboardPulsePeriod,
 	type WallboardTheme,
 } from "@/lib/intercom-admin";
+import { readIntercomNpsExport } from "@/lib/intercom-nps-export";
 import type { SupportPerformanceTargets } from "@/lib/support-health/targets";
 import { cn } from "@/lib/utils";
 import { DEFAULT_CODEX_MODEL } from "@/lib/wallboard-llm-config";
@@ -95,6 +105,7 @@ export function SettingsDialogContent({
 	const removeIntercom = useServerFn(removeIntercomConnection);
 	const syncIntercom = useServerFn(triggerIntercomSync);
 	const resetIntercomData = useServerFn(resetIntercomDataAndSync);
+	const importNpsHistory = useServerFn(importIntercomNpsHistory);
 
 	const [state, setState] = useState(initialState);
 	const [accessToken, setAccessToken] = useState("");
@@ -133,6 +144,7 @@ export function SettingsDialogContent({
 	const [isSavingAppUrl, setIsSavingAppUrl] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isStartingSync, setIsStartingSync] = useState(false);
+	const [isImportingNps, setIsImportingNps] = useState(false);
 	const [isResettingIntercomData, setIsResettingIntercomData] = useState(false);
 	const [resetConfirmation, setResetConfirmation] = useState("");
 	const [isSavingSupportTargets, setIsSavingSupportTargets] = useState(false);
@@ -551,6 +563,36 @@ export function SettingsDialogContent({
 			setFeedback({ tone: "error", text: message });
 		} finally {
 			setIsResettingIntercomData(false);
+		}
+	}
+
+	async function handleNpsExport(event: ChangeEvent<HTMLInputElement>) {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (!file || isImportingNps) return;
+		setFeedback(null);
+		setIsImportingNps(true);
+
+		try {
+			if (file.size > 20 * 1024 * 1024) {
+				throw new Error("The NPS export must be smaller than 20 MB.");
+			}
+			const responses = readIntercomNpsExport(
+				file.name,
+				new Uint8Array(await file.arrayBuffer()),
+			);
+			const result = await importNpsHistory({ data: { responses } });
+			setFeedback({ tone: "success", text: result.message });
+		} catch (error) {
+			setFeedback({
+				tone: "error",
+				text:
+					error instanceof Error
+						? error.message
+						: "Unable to import the Intercom NPS export.",
+			});
+		} finally {
+			setIsImportingNps(false);
 		}
 	}
 
@@ -1379,6 +1421,35 @@ export function SettingsDialogContent({
 										<div className="font-medium">
 											After {state.staleAfterMinutes} minutes
 										</div>
+									</div>
+								</div>
+
+								<div className={cn("mt-3", settingsSubsectionClassName)}>
+									<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+										<div>
+											<div className="text-xs font-medium text-foreground">
+												Historical NPS
+											</div>
+											<div className="mt-1 text-[10px] text-muted-foreground">
+												Import the one-time Intercom ZIP export. Existing
+												receipt IDs are skipped safely.
+											</div>
+										</div>
+										<label className="inline-flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+											{isImportingNps ? (
+												<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+											) : (
+												<Upload className="h-3.5 w-3.5" />
+											)}
+											{isImportingNps ? "Importing…" : "Choose export"}
+											<input
+												type="file"
+												accept=".zip,.csv,application/zip,text/csv"
+												className="sr-only"
+												disabled={isImportingNps}
+												onChange={handleNpsExport}
+											/>
+										</label>
 									</div>
 								</div>
 							</section>
