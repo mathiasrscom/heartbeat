@@ -15,7 +15,10 @@ import {
 	readSupportTargetsFromSettings,
 	type SupportTargetsConfig,
 } from "./support-health/targets";
-import type { WallboardTeammateOption } from "./support-health/types";
+import type {
+	SupportPeriodPreset,
+	WallboardTeammateOption,
+} from "./support-health/types";
 import {
 	DEFAULT_CODEX_MODEL,
 	DEFAULT_OLLAMA_BASE_URL,
@@ -50,15 +53,25 @@ interface SaveIntercomSupportTargetsInput {
 }
 
 export type WallboardTheme = "light" | "dark";
+export type WallboardPulsePeriod = Exclude<SupportPeriodPreset, "custom">;
 
 interface SaveWallboardDisplayInput {
 	theme: WallboardTheme;
+	pulsePeriod: WallboardPulsePeriod;
 	products: string[];
 	trackedTeammates: string[];
 }
 
+interface SaveWallboardPulsePeriodInput {
+	pulsePeriod: WallboardPulsePeriod;
+}
+
 interface ResetIntercomDataInput {
 	confirmation: string;
+}
+
+interface ImportIntercomNpsExportInput {
+	responses: unknown[];
 }
 
 interface ListIntercomTickerOllamaModelsInput {
@@ -69,6 +82,7 @@ interface ListIntercomTickerOllamaModelsInput {
 const INTERCOM_RESET_CONFIRMATION = "RESET INTERCOM";
 const WALLBOARD_CACHE_SETTING_KEYS = [
 	"intercom_sync_runtime",
+	"intercom_nps_capture_initialized_at",
 	"wallboard_live_focus_plan",
 	"wallboard_product_insights",
 	"wallboard_nps_themes",
@@ -118,6 +132,7 @@ export interface IntercomConnectionState {
 	supportTargets: SupportTargetsConfig;
 	supportTargetProducts: string[];
 	wallboardTheme: WallboardTheme;
+	wallboardPulsePeriod: WallboardPulsePeriod;
 	wallboardProducts: string[];
 	wallboardTrackedTeammates: string[];
 	availableWallboardTeammates: WallboardTeammateOption[];
@@ -260,6 +275,7 @@ function emptyState(
 			overrides.supportTargets ?? normalizeSupportTargetsConfig(null),
 		supportTargetProducts: overrides.supportTargetProducts ?? [],
 		wallboardTheme: overrides.wallboardTheme ?? "dark",
+		wallboardPulsePeriod: overrides.wallboardPulsePeriod ?? "current-week",
 		wallboardProducts: overrides.wallboardProducts ?? [],
 		wallboardTrackedTeammates: overrides.wallboardTrackedTeammates ?? [],
 		availableWallboardTeammates: overrides.availableWallboardTeammates ?? [],
@@ -443,6 +459,9 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		supportTargets,
 		supportTargetProducts: listSupportTargetProducts(supportTargets),
 		wallboardTheme: normalizeWallboardTheme(settings.wallboardTheme),
+		wallboardPulsePeriod: normalizeWallboardPulsePeriod(
+			settings.wallboardPulsePeriod,
+		),
 		wallboardProducts: normalizeWallboardProducts(settings.wallboardProducts),
 		wallboardTrackedTeammates: normalizeWallboardTrackedTeammates(
 			settings.wallboardTrackedTeammates,
@@ -695,6 +714,22 @@ export const triggerIntercomSync = createServerFn({ method: "POST" }).handler(
 	},
 );
 
+export const importIntercomNpsHistory = createServerFn({ method: "POST" })
+	.inputValidator((data: ImportIntercomNpsExportInput) => data)
+	.handler(async ({ data }) => {
+		const { importIntercomNpsExport } = await import(
+			"./intercom-nps-export-import"
+		);
+		const result = await importIntercomNpsExport(data.responses);
+		return {
+			...result,
+			message:
+				result.importedCount === 0
+					? `All ${result.alreadyImportedCount} NPS responses were already imported.`
+					: `Imported ${result.importedCount} NPS responses (${result.matchedContactCount} linked to synced contacts).`,
+		};
+	});
+
 export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 	.inputValidator((data: ResetIntercomDataInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
@@ -720,7 +755,23 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 			import("@/db"),
 			import("@/db/schema"),
 		]);
-		const { entities, nodes, settings, syncState, teamMembers } = schema;
+		const {
+			entities,
+			nodes,
+			npsContactState,
+			npsResponses,
+			settings,
+			syncState,
+			teamMembers,
+		} = schema;
+
+		const deletedNpsResponses = await db
+			.delete(npsResponses)
+			.where(eq(npsResponses.source, "intercom"))
+			.returning({ id: npsResponses.id });
+		await db
+			.delete(npsContactState)
+			.where(eq(npsContactState.source, "intercom"));
 
 		const deletedNodes = await db
 			.delete(nodes)
@@ -745,7 +796,7 @@ export const resetIntercomDataAndSync = createServerFn({ method: "POST" })
 
 		return {
 			message: started
-				? `Intercom data reset: ${deletedNodes.length} cases, ${deletedEntities.length} contacts, and ${deletedTeamMembers.length} teammates removed. Fresh sync started.`
+				? `Intercom data reset: ${deletedNodes.length} cases, ${deletedEntities.length} contacts, ${deletedTeamMembers.length} teammates, and ${deletedNpsResponses.length} NPS responses removed. Fresh sync started.`
 				: "Intercom data reset, but a sync was already running before the fresh sync could start.",
 			state: await readIntercomState(),
 		};
@@ -954,6 +1005,19 @@ function normalizeWallboardTheme(value: unknown): WallboardTheme {
 	return value === "light" ? "light" : "dark";
 }
 
+function normalizeWallboardPulsePeriod(value: unknown): WallboardPulsePeriod {
+	const periods: WallboardPulsePeriod[] = [
+		"current-week",
+		"previous-week",
+		"rolling-30-days",
+		"rolling-90-days",
+		"rolling-180-days",
+	];
+	return periods.includes(value as WallboardPulsePeriod)
+		? (value as WallboardPulsePeriod)
+		: "current-week";
+}
+
 function normalizeWallboardProducts(value: unknown): string[] {
 	if (!Array.isArray(value)) return [];
 	return value
@@ -985,6 +1049,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 	.inputValidator((data: SaveWallboardDisplayInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
 		const theme = normalizeWallboardTheme(data.theme);
+		const pulsePeriod = normalizeWallboardPulsePeriod(data.pulsePeriod);
 		const products = normalizeWallboardProducts(data.products);
 		const trackedTeammates = normalizeWallboardTrackedTeammates(
 			data.trackedTeammates,
@@ -1008,6 +1073,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 			settings: {
 				...existingSettings,
 				wallboardTheme: theme,
+				wallboardPulsePeriod: pulsePeriod,
 				wallboardProducts: products,
 				wallboardTrackedTeammates: trackedTeammates,
 			},
@@ -1027,7 +1093,49 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 		}
 
 		return {
-			message: `Wallboard display updated: ${theme} theme, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
+			message: `Wallboard display updated: ${theme} theme, ${pulsePeriod.replaceAll("-", " ")} Pulse period, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
+			state: await readIntercomState(),
+		};
+	});
+
+export const saveWallboardPulsePeriod = createServerFn({ method: "POST" })
+	.inputValidator((data: SaveWallboardPulsePeriodInput) => data)
+	.handler(async ({ data }): Promise<IntercomMutationResult> => {
+		const pulsePeriod = normalizeWallboardPulsePeriod(data.pulsePeriod);
+		const { db, adapterConfigs, configRow } = await getIntercomRows();
+		const existingSettings = isRecord(configRow?.settings)
+			? configRow.settings
+			: {};
+		const values = {
+			adapterId: "intercom",
+			name: "Intercom",
+			enabled:
+				configRow?.enabled ??
+				Boolean(normalizeToken(process.env.INTERCOM_ACCESS_TOKEN)),
+			credentials: isRecord(configRow?.credentials)
+				? configRow.credentials
+				: {},
+			settings: {
+				...existingSettings,
+				wallboardPulsePeriod: pulsePeriod,
+			},
+			updatedAt: new Date(),
+		};
+
+		if (configRow) {
+			await db
+				.update(adapterConfigs)
+				.set(values)
+				.where(eq(adapterConfigs.adapterId, "intercom"));
+		} else {
+			await db.insert(adapterConfigs).values({
+				...values,
+				createdAt: new Date(),
+			});
+		}
+
+		return {
+			message: `Pulse period updated to ${pulsePeriod.replaceAll("-", " ")}.`,
 			state: await readIntercomState(),
 		};
 	});

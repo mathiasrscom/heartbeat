@@ -25,6 +25,8 @@ export type SupportPeriodPreset =
 	| "current-week"
 	| "previous-week"
 	| "rolling-30-days"
+	| "rolling-90-days"
+	| "rolling-180-days"
 	| "current-month"
 	| "previous-month"
 	| "year-to-date"
@@ -60,6 +62,8 @@ export interface SupportCaseRecord {
 	hasSlaTracking: boolean;
 	cxScore: number | null;
 	cxComment: string | null;
+	finParticipated?: boolean;
+	finResolutionState?: string | null;
 	/**
 	 * Intercom admin externalId identified by `conversation_rating.teammate.id`
 	 * — i.e. the teammate the customer actually rated. This is the authoritative
@@ -267,6 +271,7 @@ export interface ProductHealthRow {
 	openNowCount: number;
 	awaitingTeamCount: number;
 	breachedNowCount: number;
+	resolvedCount: number;
 	slaTrackedCount: number;
 	slaAdherencePercent: number | null;
 	slaMissedCount: number;
@@ -294,6 +299,20 @@ export interface ProductHealthSummary {
 	eligibleCount: number;
 	positiveCount: number;
 	ratingMix: Record<1 | 2 | 3 | 4 | 5, number>;
+}
+
+export interface AgentPerformanceRow {
+	label: "Fin" | "Teammates";
+	resolvedCount: number;
+	ratedCount: number;
+	happinessPercent: number | null;
+	ratingCoveragePercent: number;
+}
+
+export interface AgentPerformanceComparison {
+	fin: AgentPerformanceRow;
+	teammates: AgentPerformanceRow;
+	finHandoffCount: number;
 }
 
 export type LiveFocusLane = "over-sla" | "due-soon" | "unassigned";
@@ -352,6 +371,7 @@ export interface LiveWallboardData {
 export interface NpsRecord {
 	entityId: string;
 	entityExternalId?: string;
+	productName?: string | null;
 	name: string | null;
 	score: number;
 	comment: string | null;
@@ -361,7 +381,7 @@ export interface NpsRecord {
 
 export interface NpsPeriodSummary {
 	periodLabel: string;
-	/** True when Intercom supplied scores but no rating timestamps. */
+	/** Reserved for non-period snapshot views; Pulse period summaries are false. */
 	isSnapshot: boolean;
 	score: number;
 	previousScore: number | null;
@@ -426,6 +446,7 @@ export interface TrendsWallboardData {
 	period: SupportPeriodRange;
 	periodSummary: ProductHealthSummary;
 	productHealth: ProductHealthRow[];
+	agentPerformance: AgentPerformanceComparison;
 	periods: CxPeriodSummary[];
 	cxSeries: TrendPoint[];
 	themeTrends: ThemeTrend[];

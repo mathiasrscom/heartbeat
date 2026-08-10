@@ -12,16 +12,25 @@ import {
 	ShieldAlert,
 	SlidersHorizontal,
 	Target,
+	Upload,
 	X,
 	XCircle,
 } from "lucide-react";
-import { type FormEvent, useEffect, useId, useRef, useState } from "react";
+import {
+	type ChangeEvent,
+	type FormEvent,
+	useEffect,
+	useId,
+	useRef,
+	useState,
+} from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
 	getIntercomConnectionState,
 	type IntercomConnectionState,
+	importIntercomNpsHistory,
 	listIntercomTickerOllamaModels,
 	removeIntercomConnection,
 	resetIntercomDataAndSync,
@@ -31,13 +40,26 @@ import {
 	saveIntercomWorkspaceLink,
 	saveWallboardDisplaySettings,
 	triggerIntercomSync,
+	type WallboardPulsePeriod,
 	type WallboardTheme,
 } from "@/lib/intercom-admin";
+import { readIntercomNpsExport } from "@/lib/intercom-nps-export";
 import type { SupportPerformanceTargets } from "@/lib/support-health/targets";
 import { cn } from "@/lib/utils";
 import { DEFAULT_CODEX_MODEL } from "@/lib/wallboard-llm-config";
 
 type TickerProvider = "ollama" | "codex";
+
+const pulsePeriodOptions: Array<{
+	value: WallboardPulsePeriod;
+	label: string;
+}> = [
+	{ value: "current-week", label: "This week" },
+	{ value: "previous-week", label: "Past week" },
+	{ value: "rolling-30-days", label: "Last 30 days" },
+	{ value: "rolling-90-days", label: "Last 90 days" },
+	{ value: "rolling-180-days", label: "Last 180 days" },
+];
 
 const settingsSectionClassName = "border-t border-border/40 pt-5";
 const settingsSubsectionClassName = "border-t border-border/40 pt-4";
@@ -83,6 +105,7 @@ export function SettingsDialogContent({
 	const removeIntercom = useServerFn(removeIntercomConnection);
 	const syncIntercom = useServerFn(triggerIntercomSync);
 	const resetIntercomData = useServerFn(resetIntercomDataAndSync);
+	const importNpsHistory = useServerFn(importIntercomNpsHistory);
 
 	const [state, setState] = useState(initialState);
 	const [accessToken, setAccessToken] = useState("");
@@ -121,6 +144,7 @@ export function SettingsDialogContent({
 	const [isSavingAppUrl, setIsSavingAppUrl] = useState(false);
 	const [isRemoving, setIsRemoving] = useState(false);
 	const [isStartingSync, setIsStartingSync] = useState(false);
+	const [isImportingNps, setIsImportingNps] = useState(false);
 	const [isResettingIntercomData, setIsResettingIntercomData] = useState(false);
 	const [resetConfirmation, setResetConfirmation] = useState("");
 	const [isSavingSupportTargets, setIsSavingSupportTargets] = useState(false);
@@ -129,6 +153,8 @@ export function SettingsDialogContent({
 	const [wallboardTheme, setWallboardTheme] = useState<WallboardTheme>(
 		initialState.wallboardTheme,
 	);
+	const [wallboardPulsePeriod, setWallboardPulsePeriod] =
+		useState<WallboardPulsePeriod>(initialState.wallboardPulsePeriod);
 	const [wallboardProducts, setWallboardProducts] = useState<string[]>(
 		initialState.wallboardProducts,
 	);
@@ -190,6 +216,7 @@ export function SettingsDialogContent({
 	const supportTargetsAutosaveKey = JSON.stringify(supportTargets);
 	const displayAutosaveKey = JSON.stringify({
 		wallboardTheme,
+		wallboardPulsePeriod,
 		wallboardProducts,
 		wallboardTrackedTeammates,
 	});
@@ -539,6 +566,36 @@ export function SettingsDialogContent({
 		}
 	}
 
+	async function handleNpsExport(event: ChangeEvent<HTMLInputElement>) {
+		const file = event.target.files?.[0];
+		event.target.value = "";
+		if (!file || isImportingNps) return;
+		setFeedback(null);
+		setIsImportingNps(true);
+
+		try {
+			if (file.size > 20 * 1024 * 1024) {
+				throw new Error("The NPS export must be smaller than 20 MB.");
+			}
+			const responses = readIntercomNpsExport(
+				file.name,
+				new Uint8Array(await file.arrayBuffer()),
+			);
+			const result = await importNpsHistory({ data: { responses } });
+			setFeedback({ tone: "success", text: result.message });
+		} catch (error) {
+			setFeedback({
+				tone: "error",
+				text:
+					error instanceof Error
+						? error.message
+						: "Unable to import the Intercom NPS export.",
+			});
+		} finally {
+			setIsImportingNps(false);
+		}
+	}
+
 	const tokenPlaceholder = state.hasStoredToken
 		? "Paste a new token to replace the stored one"
 		: state.tokenSource === "environment"
@@ -642,6 +699,7 @@ export function SettingsDialogContent({
 			const result = await saveWallboardDisplay({
 				data: {
 					theme: wallboardTheme,
+					pulsePeriod: wallboardPulsePeriod,
 					products: wallboardProducts,
 					trackedTeammates: wallboardTrackedTeammates,
 				},
@@ -664,8 +722,10 @@ export function SettingsDialogContent({
 		// biome-ignore lint/a11y/noStaticElementInteractions: The backdrop is a conventional pointer-only dismiss target; Escape and the close button provide keyboard dismissal.
 		<div
 			className={cn(
-				"fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 backdrop-blur-sm lg:p-6",
-				wallboardTheme === "dark" && "dark",
+				"fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-3 text-foreground backdrop-blur-sm lg:p-6",
+				wallboardTheme === "dark"
+					? "dark [color-scheme:dark]"
+					: "[color-scheme:light]",
 			)}
 			onMouseDown={onClose}
 		>
@@ -760,7 +820,7 @@ export function SettingsDialogContent({
 
 								<div className="grid gap-2 sm:grid-cols-3 text-xs mb-3">
 									<StatItem
-										label="Last sync"
+										label="Last successful sync"
 										value={formatTimestamp(state.lastSyncAt, "Never")}
 									/>
 									<StatItem
@@ -772,7 +832,7 @@ export function SettingsDialogContent({
 										}
 									/>
 									<StatItem
-										label="Latest import"
+										label="Latest successful import"
 										value={
 											state.lastSyncAt
 												? `${state.nodesSynced} cases • ${state.entitiesSynced} contacts`
@@ -1363,6 +1423,35 @@ export function SettingsDialogContent({
 										</div>
 									</div>
 								</div>
+
+								<div className={cn("mt-3", settingsSubsectionClassName)}>
+									<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+										<div>
+											<div className="text-xs font-medium text-foreground">
+												Historical NPS
+											</div>
+											<div className="mt-1 text-[10px] text-muted-foreground">
+												Import the one-time Intercom ZIP export. Existing
+												receipt IDs are skipped safely.
+											</div>
+										</div>
+										<label className="inline-flex h-8 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50">
+											{isImportingNps ? (
+												<LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+											) : (
+												<Upload className="h-3.5 w-3.5" />
+											)}
+											{isImportingNps ? "Importing…" : "Choose export"}
+											<input
+												type="file"
+												accept=".zip,.csv,application/zip,text/csv"
+												className="sr-only"
+												disabled={isImportingNps}
+												onChange={handleNpsExport}
+											/>
+										</label>
+									</div>
+								</div>
 							</section>
 
 							<section
@@ -1411,6 +1500,35 @@ export function SettingsDialogContent({
 										>
 											Dark
 										</Button>
+									</div>
+								</div>
+
+								<div className={settingsSubsectionClassName}>
+									<div className="text-xs font-medium text-foreground mb-1">
+										Pulse period
+									</div>
+									<div className="text-[10px] text-muted-foreground mb-3">
+										Sets the time window for all metrics, feedback, and product
+										insights on Pulse.
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{pulsePeriodOptions.map((option) => (
+											<Button
+												key={option.value}
+												size="sm"
+												type="button"
+												aria-pressed={wallboardPulsePeriod === option.value}
+												variant={
+													wallboardPulsePeriod === option.value
+														? "default"
+														: "outline"
+												}
+												className="h-7 px-3 text-xs"
+												onClick={() => setWallboardPulsePeriod(option.value)}
+											>
+												{option.label}
+											</Button>
+										))}
 									</div>
 								</div>
 
@@ -1474,7 +1592,8 @@ export function SettingsDialogContent({
 														variant={isSelected ? "default" : "outline"}
 														className={cn(
 															"h-8 gap-2 px-3 text-xs",
-															isSelected && "ring-2 ring-accent-primary ring-offset-2 ring-offset-background",
+															isSelected &&
+																"ring-2 ring-accent-primary ring-offset-2 ring-offset-background",
 														)}
 														onClick={() => {
 															setWallboardTrackedTeammates((current) =>
@@ -1486,7 +1605,9 @@ export function SettingsDialogContent({
 															);
 														}}
 													>
-														{isSelected ? <CheckCircle2 className="h-3.5 w-3.5" /> : null}
+														{isSelected ? (
+															<CheckCircle2 className="h-3.5 w-3.5" />
+														) : null}
 														<span
 															className={cn(
 																"h-1.5 w-1.5 rounded-full",

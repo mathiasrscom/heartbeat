@@ -3,7 +3,36 @@ import { eq } from "drizzle-orm"
 
 config({ path: [".env.local", ".env"] })
 
-const SYNC_INTERVAL_MS = 5 * 60 * 1000
+const DEFAULT_SYNC_INTERVAL_MINUTES = 5
+const MIN_SYNC_INTERVAL_MINUTES = 1
+const MAX_SYNC_INTERVAL_MINUTES = 60
+
+async function getSyncIntervalMs() {
+  try {
+    const [{ db }, { adapterConfigs }] = await Promise.all([
+      import("@/db"),
+      import("@/db/schema"),
+    ])
+    const rows = await db
+      .select({ settings: adapterConfigs.settings })
+      .from(adapterConfigs)
+      .where(eq(adapterConfigs.adapterId, "intercom"))
+      .limit(1)
+    const settings = rows[0]?.settings as Record<string, unknown> | undefined
+    const configured = settings?.syncIntervalMinutes
+    const minutes =
+      typeof configured === "number" && Number.isFinite(configured)
+        ? Math.min(
+            MAX_SYNC_INTERVAL_MINUTES,
+            Math.max(MIN_SYNC_INTERVAL_MINUTES, configured),
+          )
+        : DEFAULT_SYNC_INTERVAL_MINUTES
+    return minutes * 60 * 1000
+  } catch (error) {
+    console.error("[workers] Failed to read sync interval; using 5 minutes", error)
+    return DEFAULT_SYNC_INTERVAL_MINUTES * 60 * 1000
+  }
+}
 
 async function getAccessToken() {
   if (process.env.INTERCOM_ACCESS_TOKEN) {
@@ -53,21 +82,21 @@ async function runSyncCycle() {
       console.info(
         `[workers] Intercom sync complete: ${result.nodesSynced} nodes, ${result.entitiesSynced} entities`
       )
+      await refreshWallboardContent({ logPrefix: "[workers]" })
     } else {
       console.error("[workers] Intercom sync finished with errors", result.errors)
     }
-
-    await refreshWallboardContent({ logPrefix: "[workers]" })
   } catch (error) {
     console.error("[workers] Intercom sync crashed", error)
   }
 }
 
 async function start() {
-  await runSyncCycle()
-  setInterval(() => {
-    void runSyncCycle()
-  }, SYNC_INTERVAL_MS)
+  while (true) {
+    await runSyncCycle()
+    const intervalMs = await getSyncIntervalMs()
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
 }
 
 void start()

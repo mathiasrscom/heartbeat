@@ -218,6 +218,40 @@ schema, run:
 docker compose -f docker-compose.production.yml exec web pnpm db:push
 ```
 
+## Sync Freshness Guarantees
+
+The worker runs immediately after startup and then waits for the configured
+sync interval (five minutes by default). Incremental Intercom searches replay a
+five-minute overlap, so updates near a sync boundary are safe to process more
+than once. Database upserts keep that replay idempotent.
+
+`last_sync_at` means the last fully successful sync. A partial failure records
+the error but does not advance that timestamp, so the wallboard becomes stale
+after the configured threshold instead of presenting partial data as fresh.
+Contacts are searched independently from cases, ensuring contact-level NPS
+changes arrive even when the customer's case has not changed.
+
+NPS history starts with a one-time baseline of every synced Intercom contact.
+That baseline is not counted as a dated response because Intercom's Contacts
+API exposes only the latest mutable score, not the original survey date. After
+the baseline, each changed score is appended to `nps_responses` using the
+contact's Intercom `updated_at` time; a late comment amends the latest response
+instead of creating a duplicate. Pulse period filters read this append-only
+table, so the history survives later contact syncs and restarts.
+
+The new history tables must exist before starting a release that contains this
+capture logic:
+
+```bash
+docker compose -f docker-compose.production.yml exec web pnpm db:push
+docker compose -f docker-compose.production.yml restart web worker
+```
+
+After `pnpm db:push`, the schema enforces one row per `(source, external_id)`
+for cases, contacts, and teammates. Historical rows remain available for trend
+reporting; hard-deleted Intercom records are not currently removed
+automatically.
+
 ## Common Problems
 
 ### Wrong compose filename

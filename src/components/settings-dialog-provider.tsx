@@ -12,7 +12,9 @@ import {
 import {
 	getIntercomConnectionState,
 	type IntercomConnectionState,
+	type WallboardTheme,
 } from "@/lib/intercom-admin";
+import { cn } from "@/lib/utils";
 
 const SettingsDialogContent = lazy(() =>
 	import("@/routes/settings").then((module) => ({
@@ -31,9 +33,14 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
 	const [initialState, setInitialState] =
 		useState<IntercomConnectionState | null>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
+	const [loadingTheme, setLoadingTheme] = useState<WallboardTheme>("dark");
 
 	const closeSettings = useCallback(() => setIsOpen(false), []);
 	const openSettings = useCallback(() => {
+		const wallboardTheme = document
+			.querySelector<HTMLElement>("[data-wallboard-theme]")
+			?.getAttribute("data-wallboard-theme");
+		setLoadingTheme(wallboardTheme === "light" ? "light" : "dark");
 		setIsOpen(true);
 		setInitialState(null);
 		setLoadError(null);
@@ -63,17 +70,30 @@ export function SettingsDialogProvider({ children }: { children: ReactNode }) {
 	}, [closeSettings, isOpen]);
 
 	return (
-		<SettingsDialogContext.Provider value={{ openSettings, isSettingsOpen: isOpen }}>
+		<SettingsDialogContext.Provider
+			value={{ openSettings, isSettingsOpen: isOpen }}
+		>
 			{children}
 			{isOpen ? (
-				<Suspense fallback={<SettingsDialogLoading onClose={closeSettings} />}>
+				<Suspense
+					fallback={
+						<SettingsDialogLoading
+							onClose={closeSettings}
+							theme={loadingTheme}
+						/>
+					}
+				>
 					{initialState ? (
 						<SettingsDialogContent
 							initialState={initialState}
 							onClose={closeSettings}
 						/>
 					) : (
-						<SettingsDialogLoading onClose={closeSettings} error={loadError} />
+						<SettingsDialogLoading
+							onClose={closeSettings}
+							error={loadError}
+							theme={loadingTheme}
+						/>
 					)}
 				</Suspense>
 			) : null}
@@ -94,14 +114,19 @@ export function useSettingsDialog() {
 function SettingsDialogLoading({
 	onClose,
 	error,
+	theme,
 }: {
 	onClose: () => void;
 	error?: string | null;
+	theme: WallboardTheme;
 }) {
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: The backdrop is a conventional pointer-only dismiss target; Escape and the close button provide keyboard dismissal.
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm"
+			className={cn(
+				"fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 text-foreground backdrop-blur-sm",
+				theme === "dark" ? "dark [color-scheme:dark]" : "[color-scheme:light]",
+			)}
 			onMouseDown={onClose}
 		>
 			<div

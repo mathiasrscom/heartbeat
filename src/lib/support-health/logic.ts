@@ -24,6 +24,7 @@ import {
 import type {
 	ActionableState,
 	ActionItem,
+	AgentPerformanceComparison,
 	CaseLookupItem,
 	CaseStatusBreakdown,
 	ClassificationHint,
@@ -274,6 +275,7 @@ export function buildSupportHealthSnapshot(
 	cases: SupportCaseRecord[],
 	lastSyncAt: Date | null,
 	now: Date,
+	staleAfterMinutes = 10,
 ): SupportHealthSnapshot {
 	const headlineCases = filterCasesByBucket(cases, "headline");
 	const exceptionCases = filterCasesByBucket(cases, "exception");
@@ -340,7 +342,7 @@ export function buildSupportHealthSnapshot(
 		lastSyncAt === null
 			? Number.POSITIVE_INFINITY
 			: differenceInMinutes(now, lastSyncAt);
-	const stale = freshnessMinutes > 10;
+	const stale = freshnessMinutes > staleAfterMinutes;
 
 	const queues = buildQueueHealth(cases, now, "headline");
 	const queueOffTrack = queues.some(
@@ -626,6 +628,56 @@ function buildCxAggregate(eligible: SupportCaseRecord[]) {
 		eligibleCount: eligible.length,
 		positiveCount,
 		ratingMix,
+	};
+}
+
+const FIN_RESOLVED_STATES = new Set([
+	"assumed_resolution",
+	"confirmed_resolution",
+	"assumed resolution",
+	"confirmed resolution",
+]);
+
+function isFinResolvedCase(item: SupportCaseRecord) {
+	return (
+		item.finParticipated &&
+		typeof item.finResolutionState === "string" &&
+		FIN_RESOLVED_STATES.has(item.finResolutionState.toLowerCase())
+	);
+}
+
+export function buildAgentPerformanceComparison(
+	cases: SupportCaseRecord[],
+	period: ResolvedSupportPeriod,
+): AgentPerformanceComparison {
+	const eligible = getPeriodEligibleCases(cases, period.from, period.to);
+	const finCases = eligible.filter(isFinResolvedCase);
+	const teammateCases = eligible.filter((item) => !isFinResolvedCase(item));
+	const finCx = buildCxAggregate(finCases);
+	const teammateCx = buildCxAggregate(teammateCases);
+	const finHandoffCount = eligible.filter(
+		(item) =>
+			item.finParticipated &&
+			item.finResolutionState?.toLowerCase().replaceAll(" ", "_") ===
+				"routed_to_team",
+	).length;
+
+	return {
+		fin: {
+			label: "Fin",
+			resolvedCount: finCases.length,
+			ratedCount: finCx.ratedCount,
+			happinessPercent: finCx.satisfactionScorePercent,
+			ratingCoveragePercent: finCx.responseRatePercent,
+		},
+		teammates: {
+			label: "Teammates",
+			resolvedCount: teammateCases.length,
+			ratedCount: teammateCx.ratedCount,
+			happinessPercent: teammateCx.satisfactionScorePercent,
+			ratingCoveragePercent: teammateCx.responseRatePercent,
+		},
+		finHandoffCount,
 	};
 }
 
@@ -1146,9 +1198,10 @@ export function buildProductHealthRows(
 			const slaMissedCount = slaTracked.filter((item) =>
 				isSlaMissedForPeriod(item, now),
 			).length;
-			const rated = group.periodResolvedItems.filter(
-				(item) => item.cxScore !== null,
+			const cxEligible = group.periodResolvedItems.filter(
+				(item) => item.subtype === "conversation",
 			);
+			const rated = cxEligible.filter((item) => item.cxScore !== null);
 			const positiveCount = rated.filter(
 				(item) => toFivePointRating(item.cxScore ?? 0) >= 4,
 			).length;
@@ -1177,6 +1230,7 @@ export function buildProductHealthRows(
 				openNowCount: group.openItems.length,
 				awaitingTeamCount,
 				breachedNowCount,
+				resolvedCount: group.periodResolvedItems.length,
 				slaTrackedCount: slaTracked.length,
 				slaAdherencePercent:
 					slaTracked.length === 0
@@ -1199,11 +1253,11 @@ export function buildProductHealthRows(
 					rated.length,
 				),
 				responseRatePercent:
-					group.periodResolvedItems.length === 0
+					cxEligible.length === 0
 						? 0
-						: round((rated.length / group.periodResolvedItems.length) * 100),
+						: round((rated.length / cxEligible.length) * 100),
 				ratedCount: rated.length,
-				eligibleCount: group.periodResolvedItems.length,
+				eligibleCount: cxEligible.length,
 				positiveCount,
 				topPerformerName: topPerformer?.[0] ?? null,
 				topPerformerPositiveCount: topPerformer?.[1] ?? 0,
@@ -1502,12 +1556,18 @@ export function buildLiveWallboardData(
 	cases: SupportCaseRecord[],
 	lastSyncAt: Date | null,
 	now: Date,
+	staleAfterMinutes = 10,
 ): LiveWallboardPayload {
 	const actionableLookupPoolLimit = Math.min(
 		100,
 		Math.max(20, cases.filter((item) => isActionableCase(item)).length),
 	);
-	const snapshot = buildSupportHealthSnapshot(cases, lastSyncAt, now);
+	const snapshot = buildSupportHealthSnapshot(
+		cases,
+		lastSyncAt,
+		now,
+		staleAfterMinutes,
+	);
 	const queues = buildQueueHealth(cases, now, "headline");
 	const exceptionQueues = buildQueueHealth(cases, now, "exception");
 	const unknownQueues = buildQueueHealth(cases, now, "unknown");
@@ -1549,21 +1609,14 @@ export function buildNpsSummary(
 	records: NpsRecord[],
 	period: ResolvedSupportPeriod,
 ): NpsPeriodSummary {
-	// Some Intercom workspaces expose the latest NPS score and comment on the
-	// contact, but no timestamp for when that score was submitted. Treat those
-	// values as a current snapshot instead of pretending the contact's generic
-	// `updated_at` timestamp is an NPS response date.
+	// A contact's generic updated_at can change for many reasons, so undated NPS
+	// attributes must never be counted inside a selected reporting period.
 	const datedRecords = records.filter((record) => record.ratedAt !== null);
-	const isSnapshot = records.length > 0 && datedRecords.length === 0;
-	const current = isSnapshot
-		? records
-		: filterNpsByPeriod(datedRecords, period.from, period.to);
+	const current = filterNpsByPeriod(datedRecords, period.from, period.to);
 	const windowMs = Math.max(1, period.to.getTime() - period.from.getTime());
 	const previousStart = new Date(period.from.getTime() - windowMs);
 	const previousEnd = new Date(period.from.getTime() - 1);
-	const previous = isSnapshot
-		? []
-		: filterNpsByPeriod(datedRecords, previousStart, previousEnd);
+	const previous = filterNpsByPeriod(datedRecords, previousStart, previousEnd);
 
 	const scores = current.map((r) => r.score);
 	const currentScore = calculateNps(scores);
@@ -1581,8 +1634,8 @@ export function buildNpsSummary(
 	}
 
 	return {
-		periodLabel: isSnapshot ? "Latest known" : period.range.label,
-		isSnapshot,
+		periodLabel: period.range.label,
+		isSnapshot: false,
 		score: currentScore,
 		previousScore: previousScoreValue,
 		delta:
@@ -1859,8 +1912,14 @@ export function buildTrendsWallboardData(
 	period: ResolvedSupportPeriod,
 	resolveTargets: (productName: string) => SupportPerformanceTargets = () =>
 		DEFAULT_SUPPORT_TARGETS,
+	staleAfterMinutes = 10,
 ): TrendsWallboardPayload {
-	const snapshot = buildSupportHealthSnapshot(cases, lastSyncAt, now);
+	const snapshot = buildSupportHealthSnapshot(
+		cases,
+		lastSyncAt,
+		now,
+		staleAfterMinutes,
+	);
 	const headlineCases = filterCasesByBucket(cases, "headline");
 	const productHealth = buildProductHealthRows(
 		cases,
@@ -1873,6 +1932,7 @@ export function buildTrendsWallboardData(
 		period: period.range,
 		periodSummary: buildProductHealthSummary(productHealth, cases, period),
 		productHealth,
+		agentPerformance: buildAgentPerformanceComparison(cases, period),
 		periods: [
 			buildCxPeriodSummary(
 				cases,

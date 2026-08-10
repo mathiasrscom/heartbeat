@@ -50,6 +50,7 @@ import type {
 	SupportCasePriority,
 	SupportCaseRecord,
 	SupportNextActionOwner,
+	SupportPeriodPreset,
 	SupportTier,
 	TrendsWallboardData,
 	WallboardTeammateOption,
@@ -184,6 +185,21 @@ function normalizeWallboardTrackedTeammates(value: unknown): string[] {
 	}
 
 	return teammates;
+}
+
+function normalizeWallboardPulsePeriod(value: unknown): SupportPeriodPreset {
+	const normalized = normalizeSupportPeriodInput({
+		period: typeof value === "string" ? value : undefined,
+	}).period;
+	return [
+		"current-week",
+		"previous-week",
+		"rolling-30-days",
+		"rolling-90-days",
+		"rolling-180-days",
+	].includes(normalized)
+		? normalized
+		: "current-week";
 }
 
 async function readLiveAdminAvailability(input: {
@@ -571,6 +587,12 @@ function normalizeSupportCase(input: {
 		input.cxScore ?? (subtype === "conversation" ? cxFromRaw.score : null);
 	const resolvedCxComment =
 		input.cxComment ?? (subtype === "conversation" ? cxFromRaw.comment : null);
+	const finParticipated =
+		getNestedValue(input.rawData, ["ai_agent_participated"]) === true;
+	const finResolutionState = getFirstString(input.rawData, [
+		["ai_agent", "resolution_state"],
+		["custom_attributes", "Fin AI Agent resolution state"],
+	]);
 	// Pull the teammate the customer actually rated (distinct from the current
 	// assignee — conversations often get reassigned after the rating was given).
 	const ratedTeammateExternalId = extractRatedTeammateExternalId(input.rawData);
@@ -640,6 +662,8 @@ function normalizeSupportCase(input: {
 		hasSlaTracking,
 		cxScore: resolvedCxScore,
 		cxComment: resolvedCxComment,
+		finParticipated,
+		finResolutionState,
 		ratedTeammateExternalId,
 		responseTimeMinutes: input.responseTimeMinutes,
 		resolutionTimeHours: input.resolutionTimeHours,
@@ -671,9 +695,16 @@ export async function loadSupportCases() {
 			import("@/db/schema"),
 		]);
 
-		const { adapterConfigs, nodes, entities, teamMembers, syncState } = schema;
+		const {
+			adapterConfigs,
+			nodes,
+			entities,
+			npsResponses,
+			teamMembers,
+			syncState,
+		} = schema;
 
-		const [rows, syncRows, configRows, entityRows, teammateRows] =
+		const [rows, syncRows, configRows, teammateRows, npsRows] =
 			await Promise.all([
 				db
 					.select({
@@ -718,15 +749,6 @@ export async function loadSupportCases() {
 					.limit(1),
 				db
 					.select({
-						id: entities.id,
-						externalId: entities.externalId,
-						name: entities.name,
-						rawData: entities.rawData,
-					})
-					.from(entities)
-					.where(eq(entities.source, "intercom")),
-				db
-					.select({
 						externalId: teamMembers.externalId,
 						name: teamMembers.name,
 						avatarUrl: teamMembers.avatarUrl,
@@ -734,6 +756,19 @@ export async function loadSupportCases() {
 					})
 					.from(teamMembers)
 					.where(eq(teamMembers.source, "intercom")),
+				db
+					.select({
+						entityId: npsResponses.entityId,
+						entityExternalId: npsResponses.contactExternalId,
+						name: entities.name,
+						score: npsResponses.score,
+						comment: npsResponses.comment,
+						ratedAt: npsResponses.respondedAt,
+						rawData: npsResponses.rawData,
+					})
+					.from(npsResponses)
+					.leftJoin(entities, eq(npsResponses.entityId, entities.id))
+					.where(eq(npsResponses.source, "intercom")),
 			]);
 
 		// Pair each raw row with its normalized case so we can map contact → products.
@@ -773,6 +808,11 @@ export async function loadSupportCases() {
 			? configRow.credentials
 			: {};
 		const supportTargets = readSupportTargetsFromSettings(settings);
+		const staleAfterMinutes =
+			typeof settings.staleAfterMinutes === "number" &&
+			Number.isFinite(settings.staleAfterMinutes)
+				? Math.min(120, Math.max(1, settings.staleAfterMinutes))
+				: 10;
 		const accessToken =
 			normalizeToken(process.env.INTERCOM_ACCESS_TOKEN) ??
 			normalizeToken(credentials.accessToken);
@@ -790,21 +830,20 @@ export async function loadSupportCases() {
 			);
 		}
 
-		const { extractNps, classifyNps } = await import("@/lib/nps");
-		const npsRecords: NpsRecord[] = [];
-		for (const row of entityRows) {
-			const extracted = extractNps(row.rawData);
-			if (extracted.score === null) continue;
-			npsRecords.push({
-				entityId: row.id,
-				entityExternalId: row.externalId,
-				name: row.name ?? null,
-				score: extracted.score,
-				comment: extracted.comment,
-				ratedAt: extracted.ratedAt,
-				bucket: classifyNps(extracted.score),
-			});
-		}
+		const { classifyNps } = await import("@/lib/nps");
+		const npsRecords: NpsRecord[] = npsRows.map((row) => ({
+			entityId: row.entityId ?? row.entityExternalId,
+			entityExternalId: row.entityExternalId,
+			productName:
+				isRecord(row.rawData) && typeof row.rawData.productName === "string"
+					? row.rawData.productName
+					: null,
+			name: row.name ?? null,
+			score: row.score,
+			comment: row.comment,
+			ratedAt: row.ratedAt,
+			bucket: classifyNps(row.score),
+		}));
 
 		// Lookup map for attributing ratings to the teammate the customer actually
 		// rated (via `conversation_rating.teammate.id`), instead of whoever the
@@ -835,6 +874,7 @@ export async function loadSupportCases() {
 		return {
 			now,
 			lastSyncAt: syncRows[0]?.lastSyncAt ?? null,
+			staleAfterMinutes,
 			intercomAppUrl:
 				normalizeIntercomAppUrl(settings.appUrl) ?? getDefaultIntercomAppUrl(),
 			supportTargets,
@@ -842,6 +882,9 @@ export async function loadSupportCases() {
 				settings.wallboardTheme === "light"
 					? ("light" as const)
 					: ("dark" as const),
+			wallboardPulsePeriod: normalizeWallboardPulsePeriod(
+				settings.wallboardPulsePeriod,
+			),
 			wallboardProducts: Array.isArray(settings.wallboardProducts)
 				? (settings.wallboardProducts as string[]).filter(
 						(v) => typeof v === "string" && v.trim().length > 0,
@@ -872,9 +915,11 @@ export async function loadSupportCases() {
 		return {
 			now,
 			lastSyncAt: null,
+			staleAfterMinutes: 10,
 			intercomAppUrl: getDefaultIntercomAppUrl(),
 			supportTargets: readSupportTargetsFromSettings(null),
 			wallboardTheme: "dark" as const,
+			wallboardPulsePeriod: "current-week" as const,
 			wallboardProducts: [] as string[],
 			wallboardTrackedTeammates: [] as string[],
 			availableWallboardTeammates: [] as WallboardTeammateOption[],
@@ -1020,6 +1065,7 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				cases,
 				lastSyncAt,
 				now,
+				staleAfterMinutes,
 				intercomAppUrl,
 				supportTargets,
 				wallboardTheme,
@@ -1067,13 +1113,23 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				return [
 					productName,
 					{
-						snapshot: buildSupportHealthSnapshot(productCases, lastSyncAt, now),
+						snapshot: buildSupportHealthSnapshot(
+							productCases,
+							lastSyncAt,
+							now,
+							staleAfterMinutes,
+						),
 						workflowCounts: buildWorkflowCounts(productCases),
 					},
 				];
 			}),
 		);
-		const payload = buildLiveWallboardData(filteredCases, lastSyncAt, now);
+		const payload = buildLiveWallboardData(
+			filteredCases,
+			lastSyncAt,
+			now,
+			staleAfterMinutes,
+		);
 		const workflowCounts = buildWorkflowCounts(filteredCases);
 		const attention = buildCustomerAttentionSummary(filteredCases, now);
 		const focusPlan = await readLiveWallboardFocusPlan({
@@ -1111,11 +1167,11 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 
 export const getTrendsWallboard = createServerFn({ method: "GET" })
 	.inputValidator((data: SupportViewInput | undefined) =>
-		normalizeSupportPeriodInput(data),
+		data ? normalizeSupportPeriodInput(data) : undefined,
 	)
 	.handler(async ({ data }): Promise<TrendsWallboardData> => {
 		const [
-			{ readWallboardNpsThemes, buildDeterministicNpsThemes },
+			{ buildDeterministicNpsThemes },
 			{ buildNpsCommentTranslationKey, readWallboardNpsCommentTranslations },
 		] = await Promise.all([
 			import("../wallboard-nps-themes"),
@@ -1126,21 +1182,21 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 				cases,
 				lastSyncAt,
 				now,
+				staleAfterMinutes,
 				intercomAppUrl,
 				supportTargets,
 				wallboardTheme,
 				wallboardProducts,
+				wallboardPulsePeriod,
 				npsRecords,
 				contactProducts,
 				teammateLookup,
 			},
 			storedInsights,
-			storedNpsThemes,
 			storedNpsCommentTranslations,
 		] = await Promise.all([
 			loadSupportCases(),
 			readWallboardInsights(),
-			readWallboardNpsThemes(),
 			readWallboardNpsCommentTranslations(),
 		]);
 		const workflowCounts = buildWorkflowCounts(cases);
@@ -1151,7 +1207,10 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 		const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
 			includeUnknownWhenAll: false,
 		});
-		const period = resolveSupportPeriod(data, now);
+		const period = resolveSupportPeriod(
+			data ?? { period: wallboardPulsePeriod },
+			now,
+		);
 		// Trim the chart x-axis at "now" for current-period views so we don't
 		// render empty runway for days that haven't happened yet. Historical
 		// periods use their natural end.
@@ -1162,6 +1221,7 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			now,
 			period,
 			(productName) => resolveSupportTargets(supportTargets, productName),
+			staleAfterMinutes,
 		);
 		// Override the cxSeries to use the natural period end.
 		const cxSeriesDisplay = buildCxSeries(
@@ -1181,7 +1241,7 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			const comments = records
 				.filter((r) => r.comment && r.comment.trim().length > 0)
 				.filter((r) => {
-					if (!r.ratedAt) return true;
+					if (!r.ratedAt) return false;
 					return r.ratedAt >= period.from && r.ratedAt <= period.to;
 				})
 				.sort((a, b) => {
@@ -1220,10 +1280,10 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 		const npsDistribution = globalNps.distribution;
 		const npsComments = globalNps.comments;
 
-		// Global themes — prefer Ollama-enhanced if available, else deterministic.
-		const npsThemes =
-			storedNpsThemes?.themes ??
-			buildDeterministicNpsThemes(npsRecords, period).themes;
+		// Themes must use the same selected window as the rest of Pulse. Stored
+		// AI themes are generated after sync for the latest snapshot and cannot
+		// safely be reused for an arbitrary historical window.
+		const npsThemes = buildDeterministicNpsThemes(npsRecords, period).themes;
 
 		// Per-product NPS slices. For each product the wallboard might focus
 		// on, filter npsRecords down to contacts who have raised a case in
@@ -1233,6 +1293,7 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			selectedProducts.length > 0 ? selectedProducts : availableProducts;
 		for (const product of productsToSlice) {
 			const scopedRecords = npsRecords.filter((record) => {
+				if (record.productName) return record.productName === product;
 				const products = contactProducts[record.entityId];
 				if (!products || products.length === 0) return false;
 				return products.includes(product);

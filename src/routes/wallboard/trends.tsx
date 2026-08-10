@@ -1,19 +1,24 @@
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import {
-	ArrowDownRight,
-	ArrowUpRight,
+	Bot,
 	Frown,
 	Heart,
 	MessageSquareQuote,
 	MessageSquareText,
 	Radar,
 	Star,
+	Users,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useId, useState } from "react";
 import {
 	WallboardSection,
 	WallboardShell,
 } from "@/components/wallboard/wallboard-shell";
+import {
+	saveWallboardPulsePeriod,
+	type WallboardPulsePeriod,
+} from "@/lib/intercom-admin";
 import type {
 	NpsComment,
 	NpsPeriodSummary,
@@ -41,9 +46,10 @@ export function CustomerPulseWallboard({
 	const voice = selectVoice(data.npsComments);
 	const happiness = selectHappiness(data);
 	const satisfaction = happiness?.satisfactionScorePercent ?? null;
+	const hasPeriodNps = data.npsSummary.responseCount > 0;
 	const pulseLabel =
-		(satisfaction !== null &&
-			satisfaction < data.selectedTargets.satisfactionTargetPercent)
+		satisfaction !== null &&
+		satisfaction < data.selectedTargets.satisfactionTargetPercent
 			? "Customer confidence needs attention"
 			: data.npsSummary.detractorCount > data.npsSummary.promoterCount / 2
 				? "Customer needs are shifting"
@@ -62,10 +68,11 @@ export function CustomerPulseWallboard({
 			title="Customer pulse"
 			refreshedAt={data.snapshot.freshnessTimestamp ?? data.refreshedAt}
 			stale={data.snapshot.stale}
-			tickerItems={[
-				...themes.map((theme) => theme.headline),
-			]}
+			tickerItems={[...themes.map((theme) => theme.headline)]}
 			theme={data.wallboardTheme}
+			navigationControl={
+				<PulsePeriodPicker period={toPickerPeriod(data.period.preset)} />
+			}
 			showcase={
 				<span className="text-lg font-medium text-muted-foreground">
 					What customers need from us
@@ -97,7 +104,7 @@ export function CustomerPulseWallboard({
 				</div>
 
 				<div className="flex min-h-0 flex-col gap-6">
-					<WallboardSection title="Customer happiness">
+					<WallboardSection title={`Customer happiness · ${data.period.label}`}>
 						<div className="grid grid-cols-2 gap-3">
 							<PulseMetric
 								label="Customer happiness"
@@ -105,7 +112,7 @@ export function CustomerPulseWallboard({
 								detail={
 									happiness
 										? `${happiness.ratedCount} CX ratings · ${formatPeriodContext(happiness.label)}`
-										: "No CX ratings available"
+										: `No CX ratings in ${data.period.label.toLowerCase()}`
 								}
 								icon={Heart}
 								tone={
@@ -117,22 +124,38 @@ export function CustomerPulseWallboard({
 							/>
 							<PulseMetric
 								label="NPS"
-								value={formatNps(data.npsSummary.score)}
-								detail={`${data.npsSummary.responseCount} latest known responses`}
+								value={hasPeriodNps ? formatNps(data.npsSummary.score) : "—"}
+								detail={
+									hasPeriodNps
+										? `${data.npsSummary.responseCount} responses · ${data.period.label.toLowerCase()}`
+										: `No dated NPS responses in ${data.period.label.toLowerCase()}`
+								}
 								icon={Star}
 								tone={data.npsSummary.score < 0 ? "warn" : "good"}
 							/>
 							<PulseMetric
 								label="Detractors"
-								value={String(data.npsSummary.detractorCount)}
-								detail="customers scoring 0–6"
+								value={
+									hasPeriodNps ? String(data.npsSummary.detractorCount) : "—"
+								}
+								detail={
+									hasPeriodNps
+										? "customers scoring 0–6"
+										: "Requires a dated NPS response"
+								}
 								icon={Frown}
 								tone={data.npsSummary.detractorCount > 0 ? "warn" : "good"}
 							/>
 							<PulseMetric
 								label="Written feedback"
-								value={String(data.npsSummary.commentCount)}
-								detail="comments to learn from"
+								value={
+									hasPeriodNps ? String(data.npsSummary.commentCount) : "—"
+								}
+								detail={
+									hasPeriodNps
+										? "comments to learn from"
+										: "No dated feedback in this period"
+								}
 								icon={MessageSquareText}
 							/>
 						</div>
@@ -177,11 +200,6 @@ function PulseHero({
 	label: string;
 	data: TrendsWallboardData;
 }) {
-	const delta =
-		data.periodSummary.cxScore === null
-			? null
-			: data.periodSummary.cxScore -
-				(data.periods[1]?.score ?? data.periodSummary.cxScore);
 	return (
 		<section className="relative overflow-hidden rounded-3xl border border-accent-soft-border/60 bg-gradient-to-br from-accent-soft/75 via-bg-surface to-bg-surface px-7 py-6">
 			<div className="absolute -right-8 -top-16 h-48 w-48 rounded-full bg-accent-primary/15 blur-3xl" />
@@ -199,28 +217,49 @@ function PulseHero({
 						support, development, and leadership can act on together.
 					</p>
 				</div>
-				{delta !== null ? (
-					<div className="shrink-0 rounded-2xl border border-border/50 bg-background/55 px-5 py-4 text-center">
-						<div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
-							CX movement
-						</div>
-						<div
-							className={cn(
-								"mt-2 flex items-center justify-center gap-1 text-3xl font-semibold",
-								delta < 0 ? "text-danger" : "text-success",
-							)}
-						>
-							{delta < 0 ? (
-								<ArrowDownRight className="h-6 w-6" />
-							) : (
-								<ArrowUpRight className="h-6 w-6" />
-							)}
-							{Math.abs(delta).toFixed(1)}
-						</div>
-					</div>
-				) : null}
+				<AgentPerformanceCard data={data} />
 			</div>
 		</section>
+	);
+}
+
+function AgentPerformanceCard({ data }: { data: TrendsWallboardData }) {
+	const rows = [
+		{ ...data.agentPerformance.fin, icon: Bot },
+		{ ...data.agentPerformance.teammates, icon: Users },
+	];
+	return (
+		<div className="w-[19rem] shrink-0 rounded-2xl border border-border/50 bg-background/55 px-5 py-4">
+			<div className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+				Fin vs teammates · {data.period.label}
+			</div>
+			<div className="mt-3 divide-y divide-border/40">
+				{rows.map((row) => {
+					const Icon = row.icon;
+					return (
+						<div
+							key={row.label}
+							className="flex items-center justify-between gap-4 py-2 first:pt-0 last:pb-0"
+						>
+							<div className="flex items-center gap-2 text-sm font-medium">
+								<Icon className="h-4 w-4 text-accent-primary" />
+								{row.label}
+							</div>
+							<div className="text-right">
+								<div className="text-lg font-semibold tabular-nums">
+									{row.happinessPercent === null
+										? "—"
+										: `${row.happinessPercent}%`}
+								</div>
+								<div className="text-[0.68rem] text-muted-foreground">
+									{row.resolvedCount} resolved · {row.ratedCount} rated
+								</div>
+							</div>
+						</div>
+					);
+				})}
+			</div>
+		</div>
 	);
 }
 
@@ -325,9 +364,8 @@ function VoiceCard({
 				“{comment.englishComment ?? comment.comment}”
 			</blockquote>
 			<div className="mt-3 text-xs text-muted-foreground">
-				One of {responseCount} latest known NPS response
-				{responseCount === 1 ? "" : "s"} ·{" "}
-				{comment.bucket}
+				One of {responseCount} NPS response
+				{responseCount === 1 ? "" : "s"} · {comment.bucket}
 			</div>
 			{comment.name ? <CustomerReference name={comment.name} /> : null}
 		</div>
@@ -336,9 +374,7 @@ function VoiceCard({
 
 function CustomerReference({ name }: { name: string }) {
 	return (
-		<div className="mt-2 text-sm font-medium text-muted-foreground">
-			{name}
-		</div>
+		<div className="mt-2 text-sm font-medium text-muted-foreground">{name}</div>
 	);
 }
 
@@ -355,13 +391,13 @@ function ProductRow({
 		? `${happiness}%`
 		: nps && nps.responseCount > 0
 			? formatNps(nps.score)
-			: "—";
+			: String(row.resolvedCount);
 	return (
 		<div className="flex items-center justify-between gap-4 py-3.5">
 			<div className="min-w-0">
 				<div className="truncate text-sm font-semibold">{row.productName}</div>
 				<div className="mt-0.5 text-xs text-muted-foreground">
-					{row.awaitingTeamCount} waiting · {row.breachedNowCount} over SLA
+					{row.resolvedCount} resolved · {row.ratedCount} CX ratings
 				</div>
 			</div>
 			<div className="text-right">
@@ -377,7 +413,11 @@ function ProductRow({
 					{displayValue}
 				</div>
 				<div className="text-[0.68rem] uppercase tracking-wide text-muted-foreground">
-					{hasCx ? "CX happiness" : nps ? `NPS · ${nps.responseCount}` : "No ratings"}
+					{hasCx
+						? "CX happiness"
+						: nps && nps.responseCount > 0
+							? `NPS · ${nps.responseCount}`
+							: "resolved cases"}
 				</div>
 			</div>
 		</div>
@@ -389,19 +429,83 @@ function selectHappiness(data: TrendsWallboardData) {
 		return {
 			label: data.period.label,
 			ratedCount: data.periodSummary.ratedCount,
-			satisfactionScorePercent:
-				data.periodSummary.satisfactionScorePercent,
+			satisfactionScorePercent: data.periodSummary.satisfactionScorePercent,
 		};
 	}
-	const broaderPeriod = data.periods.find((period) => period.ratedCount > 0);
-	return broaderPeriod
-		? {
-				label: broaderPeriod.label,
-				ratedCount: broaderPeriod.ratedCount,
-				satisfactionScorePercent:
-					broaderPeriod.satisfactionScorePercent,
-			}
-		: null;
+	return null;
+}
+
+const pulsePeriodOptions: Array<{
+	value: WallboardPulsePeriod;
+	label: string;
+}> = [
+	{ value: "current-week", label: "Current week" },
+	{ value: "previous-week", label: "Past week" },
+	{ value: "rolling-30-days", label: "30 days" },
+	{ value: "rolling-90-days", label: "90 days" },
+	{ value: "rolling-180-days", label: "180 days" },
+];
+
+function toPickerPeriod(
+	period: TrendsWallboardData["period"]["preset"],
+): WallboardPulsePeriod {
+	return pulsePeriodOptions.some((option) => option.value === period)
+		? (period as WallboardPulsePeriod)
+		: "current-week";
+}
+
+function PulsePeriodPicker({ period }: { period: WallboardPulsePeriod }) {
+	const router = useRouter();
+	const savePeriod = useServerFn(saveWallboardPulsePeriod);
+	const selectId = useId();
+	const [selectedPeriod, setSelectedPeriod] = useState(period);
+	const [isSaving, setIsSaving] = useState(false);
+
+	useEffect(() => setSelectedPeriod(period), [period]);
+
+	async function handleChange(nextPeriod: WallboardPulsePeriod) {
+		const previousPeriod = selectedPeriod;
+		setSelectedPeriod(nextPeriod);
+		setIsSaving(true);
+		try {
+			await Promise.all([
+				savePeriod({ data: { pulsePeriod: nextPeriod } }),
+				router.navigate({
+					to: "/wallboard/pulse",
+					search: { period: nextPeriod },
+				}),
+			]);
+		} catch (error) {
+			console.error("Unable to update the Pulse period", error);
+			setSelectedPeriod(previousPeriod);
+		} finally {
+			setIsSaving(false);
+		}
+	}
+
+	return (
+		<div className="ml-1 flex h-9 items-center gap-1.5 border-l border-border/50 pl-2">
+			<label htmlFor={selectId} className="sr-only">
+				Pulse period
+			</label>
+			<select
+				id={selectId}
+				aria-label="Pulse period"
+				value={selectedPeriod}
+				disabled={isSaving}
+				onChange={(event) =>
+					void handleChange(event.target.value as WallboardPulsePeriod)
+				}
+				className="h-8 rounded-lg border border-border/50 bg-background px-2 text-xs font-medium text-foreground outline-none transition-colors focus:border-accent-primary disabled:opacity-60"
+			>
+				{pulsePeriodOptions.map((option) => (
+					<option key={option.value} value={option.value}>
+						{option.label}
+					</option>
+				))}
+			</select>
+		</div>
+	);
 }
 
 function selectPriorityThemes(themes: NpsTheme[]) {

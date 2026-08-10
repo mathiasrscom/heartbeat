@@ -128,7 +128,7 @@ export function buildDeterministicNpsThemes(
 	const eligible = records.filter((r) => {
 		if (!r.comment || r.comment.trim().length === 0) return false;
 		if (!period) return true;
-		if (!r.ratedAt) return true;
+		if (!r.ratedAt) return false;
 		return r.ratedAt >= period.from && r.ratedAt <= period.to;
 	});
 

@@ -8,6 +8,7 @@ import {
   real,
   uuid,
   pgEnum,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
 // ─────────────────────────────────────────────────────────────
@@ -83,7 +84,55 @@ export const entities = pgTable('entities', {
 
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-})
+}, (table) => [
+  uniqueIndex('entities_source_external_id_unique').on(table.source, table.externalId),
+])
+
+// ─────────────────────────────────────────────────────────────
+// NPS HISTORY
+// ─────────────────────────────────────────────────────────────
+
+// Intercom exposes NPS as mutable contact attributes. Keep the latest value
+// separately so a sync can detect changes without pretending that a contact's
+// generic updated_at timestamp is the original survey response date.
+export const npsContactState = pgTable('nps_contact_state', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  source: text('source').notNull(),
+  contactExternalId: text('contact_external_id').notNull(),
+  entityId: uuid('entity_id').references(() => entities.id),
+  score: integer('score'),
+  comment: text('comment'),
+  signature: text('signature').notNull(),
+  firstSeenAt: timestamp('first_seen_at').notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at').notNull().defaultNow(),
+  lastChangedAt: timestamp('last_changed_at'),
+}, (table) => [
+  uniqueIndex('nps_contact_state_source_contact_unique').on(
+    table.source,
+    table.contactExternalId,
+  ),
+])
+
+// One row per known, dated NPS response. Pulse reads this append-only history;
+// the contact table above is only the change-detection cursor.
+export const npsResponses = pgTable('nps_responses', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  source: text('source').notNull(),
+  externalId: text('external_id').notNull(),
+  contactExternalId: text('contact_external_id').notNull(),
+  entityId: uuid('entity_id').references(() => entities.id),
+  score: integer('score').notNull(),
+  comment: text('comment'),
+  respondedAt: timestamp('responded_at').notNull(),
+  capturedAt: timestamp('captured_at').notNull().defaultNow(),
+  origin: text('origin').notNull(),
+  rawData: jsonb('raw_data').$type<Record<string, unknown>>().default({}),
+}, (table) => [
+  uniqueIndex('nps_responses_source_external_id_unique').on(
+    table.source,
+    table.externalId,
+  ),
+])
 
 // ─────────────────────────────────────────────────────────────
 // TEAM MEMBERS (from any source)
@@ -107,7 +156,9 @@ export const teamMembers = pgTable('team_members', {
 
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
-})
+}, (table) => [
+  uniqueIndex('team_members_source_external_id_unique').on(table.source, table.externalId),
+])
 
 // ─────────────────────────────────────────────────────────────
 // NODES (generic work items from any source - aligned with Neuphlo)
@@ -161,7 +212,9 @@ export const nodes = pgTable('nodes', {
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
   resolvedAt: timestamp('resolved_at'),
-})
+}, (table) => [
+  uniqueIndex('nodes_source_external_id_unique').on(table.source, table.externalId),
+])
 
 // ─────────────────────────────────────────────────────────────
 // ACTIONS (user-defined rules)
