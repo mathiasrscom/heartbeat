@@ -62,6 +62,10 @@ describe("buildCustomerAttentionSummary", () => {
 			headline: "Acme appears blocked",
 			conversationExternalIds: ["123"],
 		});
+		expect(result.customerSignals[0]).toMatchObject({
+			assigneeName: "Maria",
+			assigneeAvatarUrl: null,
+		});
 		expect(result.customerSignals[0]?.reasons).toContain(
 			"customer may be blocked",
 		);
@@ -115,6 +119,21 @@ describe("buildCustomerAttentionSummary", () => {
 		expect(result.customerSignals).toHaveLength(1);
 		expect(result.supportActionCount).toBe(1);
 		expect(result.statusLabel).toBe("Support can act");
+	});
+
+	it("keeps enough ranked actions for tall wallboard layouts", () => {
+		const cases = Array.from({ length: 7 }, (_, index) =>
+			supportCase({
+				id: `case-${index + 1}`,
+				externalId: `${index + 1}`,
+				contactName: `Customer ${index + 1}`,
+			}),
+		);
+
+		const result = buildCustomerAttentionSummary(cases, now);
+
+		expect(result.supportActionCount).toBe(7);
+		expect(result.customerSignals).toHaveLength(6);
 	});
 
 	it("keeps externally blocked work out of support action cards", () => {
@@ -217,5 +236,35 @@ describe("buildCustomerAttentionSummary", () => {
 		expect(result.customerSignals[0]?.summary).not.toContain(
 			"Stil et spørgsmål",
 		);
+	});
+
+	it("removes all complete, escaped, and truncated HTML from monitor excerpts", () => {
+		const complete = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					description:
+						'<style>.hidden { display: none }</style><p>Please <strong>use this form</strong></p><a href="https://example.com/private">Open it</a><script>alert("hidden")</script>',
+				}),
+			],
+			now,
+		);
+		expect(complete.customerSignals[0]?.summary).toBe(
+			"Please use this form Open it",
+		);
+		expect(complete.customerSignals[0]?.summary).not.toMatch(
+			/<|href=|display|alert/i,
+		);
+
+		const truncated = buildCustomerAttentionSummary(
+			[
+				supportCase({
+					description:
+						'&lt;img src="https://example.com/form.png" alt="Addo Sign - Bestillingsformular" style="border: 0;',
+				}),
+			],
+			now,
+		);
+		expect(truncated.customerSignals[0]?.summary).toBe("Export fails");
+		expect(truncated.customerSignals[0]?.summary).not.toMatch(/<|src=|style=/i);
 	});
 });

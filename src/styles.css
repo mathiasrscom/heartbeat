@@ -274,3 +274,120 @@ code {
     transform: translate3d(-50%, 0, 0);
   }
 }
+/* Compact Attention cards are placed in equal-height TV rows. Respond to the
+   card's actual height so identity and case details never fall below its edge. */
+.wallboard-live-container {
+	container: live / size;
+}
+
+.attention-card-compact {
+	container-type: inline-size;
+}
+
+/* Three actions fit on constrained monitors. Reveal additional ranked actions
+   progressively when the wallboard itself has enough vertical room. */
+.attention-card-grid > article:nth-child(n + 4) {
+	display: none;
+}
+
+@container live (min-height: 1050px) {
+	.attention-card-grid > article:nth-child(4) {
+		display: flex;
+	}
+}
+
+@container live (min-height: 1275px) {
+	.attention-card-grid > article:nth-child(5) {
+		display: flex;
+	}
+}
+
+@container live (min-height: 1500px) {
+	.attention-card-grid > article:nth-child(6) {
+		display: flex;
+	}
+}
+
+/* Fill equal TV rows only when both columns are visible and vertical space is
+   genuinely constrained. Tall or stacked layouts keep content-sized cards. */
+@container live (min-width: 1000px) and (max-height: 900px) {
+	.attention-card-grid {
+		height: 100%;
+		grid-auto-rows: minmax(0, 1fr);
+	}
+
+	.attention-card-compact {
+		container-type: size;
+	}
+}
+
+@container (max-height: 220px) {
+	.attention-card-eyebrow {
+		margin-bottom: 0.25rem;
+	}
+
+	.attention-card-summary {
+		margin-top: 0.25rem;
+		line-height: 1.25;
+	}
+
+	.attention-card-next {
+		margin-top: 0.5rem;
+		padding-top: 0.5rem;
+		font-size: 0.75rem;
+		line-height: 1.25;
+	}
+
+	.attention-card-footer {
+		gap: 0.375rem;
+	}
+
+	.attention-card-reason {
+		display: none;
+	}
+}
+
+@container (max-height: 180px) {
+	.attention-card-header {
+		display: block;
+	}
+
+	.attention-card-eyebrow,
+	.attention-card-evidence {
+		display: none;
+	}
+
+	.attention-card-summary {
+		display: none;
+	}
+
+	.attention-card-headline {
+		overflow: hidden;
+		font-size: 0.9rem;
+		line-height: 1.15;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.attention-card-next {
+		margin-top: 0.25rem;
+		padding-top: 0.25rem;
+		line-height: 1;
+	}
+
+	.attention-card-next-text {
+		display: block;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.attention-card-footer {
+		flex-wrap: nowrap;
+		padding-top: 0;
+	}
+
+	.attention-card-assignee {
+		flex: 0 1 auto;
+	}
+}

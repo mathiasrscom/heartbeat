@@ -6,7 +6,7 @@ import type {
 	SupportCaseRecord,
 } from "./support-health/types";
 
-const MAX_CUSTOMER_SIGNALS = 5;
+const MAX_CUSTOMER_SIGNALS = 6;
 const MAX_PRODUCT_SIGNALS = 4;
 const GENERIC_TAGS = new Set([
 	"conversation",
@@ -57,17 +57,39 @@ const GENERIC_CHAT_CHOICES = new Set([
 	"new conversation",
 ]);
 
+function decodeCodePoint(value: string, radix: number) {
+	const codePoint = Number.parseInt(value, radix);
+	return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+		? String.fromCodePoint(codePoint)
+		: " ";
+}
+
 function plainText(value: string | null | undefined) {
-	return (value ?? "")
-		.replace(/<[^>]*>/g, " ")
-		.replace(/&nbsp;/gi, " ")
-		.replace(/&amp;/gi, "&")
-		.replace(/&#39;/gi, "'")
-		.replace(/&quot;/gi, '"')
-		.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
-		.replace(/https?:\/\/\S+/gi, "[link]")
-		.replace(/\s+/g, " ")
-		.trim();
+	return (
+		(value ?? "")
+			.replace(/&lt;/gi, "<")
+			.replace(/&gt;/gi, ">")
+			.replace(/&nbsp;/gi, " ")
+			.replace(/&#39;/gi, "'")
+			.replace(/&quot;/gi, '"')
+			.replace(/&#x([0-9a-f]+);/gi, (_, code) => decodeCodePoint(code, 16))
+			.replace(/&#(\d+);/g, (_, code) => decodeCodePoint(code, 10))
+			.replace(/&amp;/gi, "&")
+			.replace(/<!--[\s\S]*?(?:-->|$)/g, " ")
+			// Remove markup whose contents are never useful customer prose.
+			.replace(
+				/<\s*(script|style|template|noscript|svg|iframe|object)\b[^>]*>[\s\S]*?(?:<\/\s*\1\s*>|$)/gi,
+				" ",
+			)
+			// Intercom excerpts can end halfway through any HTML tag after upstream
+			// truncation. Strip complete tags and a final fragment through EOF while
+			// retaining readable text inside ordinary elements such as paragraphs.
+			.replace(/<\s*\/?\s*[a-z][^>]*(?:>|$)/gi, " ")
+			.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, "[email]")
+			.replace(/https?:\/\/\S+/gi, "[link]")
+			.replace(/\s+/g, " ")
+			.trim()
+	);
 }
 
 function clamp(value: string, length: number) {
@@ -262,6 +284,7 @@ function buildCustomerSignal(ranked: RankedCase): CustomerAttentionSignal {
 		affectedCustomerCount: 1,
 		contactName: item.contactName?.trim() || null,
 		assigneeName: item.assigneeName?.trim() || null,
+		assigneeAvatarUrl: item.assigneeAvatarUrl,
 		updatedAt: item.updatedAt.toISOString(),
 	};
 }
@@ -339,6 +362,7 @@ function buildProductSignals(cases: SupportCaseRecord[], now: Date) {
 					affectedCustomerCount: Math.max(customers.size, 1),
 					contactName: null,
 					assigneeName: null,
+					assigneeAvatarUrl: null,
 					updatedAt: latest.updatedAt.toISOString(),
 				} satisfies CustomerAttentionSignal,
 			};
