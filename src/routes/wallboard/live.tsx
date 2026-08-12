@@ -35,7 +35,7 @@ export const Route = createFileRoute("/wallboard/live")({
 export function AttentionWallboard({ live }: { live: LiveWallboardData }) {
 	const router = useRouter();
 	const attention = live.attention;
-	const visibleSignals = attention.customerSignals.slice(0, 3);
+	const visibleSignals = attention.customerSignals.slice(0, 6);
 	const tickerItems = [
 		...attention.customerSignals.map((signal) => signal.headline),
 		...attention.productSignals.map((signal) => signal.headline),
@@ -62,18 +62,13 @@ export function AttentionWallboard({ live }: { live: LiveWallboardData }) {
 				</span>
 			}
 		>
-			<div className="@container/live h-full min-h-0 overflow-y-auto @min-[1000px]/live:overflow-hidden">
+			<div className="wallboard-live-container @container/live h-full min-h-0 overflow-y-auto @min-[1000px]/live:overflow-hidden">
 				<div className="grid min-h-full grid-cols-1 gap-7 @min-[1000px]/live:h-full @min-[1000px]/live:min-h-0 @min-[1000px]/live:grid-cols-[minmax(0,1.58fr)_minmax(360px,0.82fr)]">
 					<div className="flex min-h-0 flex-col gap-5">
 						<StatusHero data={live} />
 						<WallboardSection title="Act now" className="min-h-0 flex-1">
 							{visibleSignals.length > 0 ? (
-								<div
-									className="grid h-full min-h-0 gap-3"
-									style={{
-										gridTemplateRows: `repeat(${visibleSignals.length}, minmax(0, 1fr))`,
-									}}
-								>
+								<div className="attention-card-grid grid min-h-0 auto-rows-max gap-3">
 									{visibleSignals.map((signal) => (
 										<AttentionCard
 											key={signal.id}

@@ -33,8 +33,8 @@ export function AttentionCard({
 	return (
 		<article
 			className={cn(
-				"relative overflow-hidden rounded-2xl border bg-bg-surface/80",
-				compact ? "px-5 py-4" : "px-6 py-5",
+				"relative flex flex-col overflow-hidden rounded-2xl border bg-bg-surface/80",
+				compact ? "attention-card-compact px-5 py-2" : "px-6 py-5",
 				signal.severity === "critical" && "border-danger/35",
 				signal.severity === "important" && "border-warning/30",
 				signal.severity === "watch" && "border-border/60",
@@ -48,9 +48,9 @@ export function AttentionCard({
 					signal.severity === "watch" && "bg-info",
 				)}
 			/>
-			<div className="grid grid-cols-1 items-start gap-4 @min-[520px]:grid-cols-[minmax(0,1fr)_auto] @min-[520px]:gap-5">
+			<div className="attention-card-header grid grid-cols-1 items-start gap-4 @min-[520px]:grid-cols-[minmax(0,1fr)_auto] @min-[520px]:gap-5">
 				<div className="min-w-0 flex-1">
-					<div className="mb-2 flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+					<div className="attention-card-eyebrow mb-2 flex flex-wrap items-center gap-2 text-[0.72rem] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
 						<span className="inline-flex items-center gap-1.5 rounded-full bg-background/70 px-2.5 py-1 text-foreground/80">
 							<OwnerIcon className="h-3.5 w-3.5" />
 							{owner.label} next
@@ -61,7 +61,7 @@ export function AttentionCard({
 					</div>
 					<h3
 						className={cn(
-							"font-semibold leading-tight tracking-tight text-foreground",
+							"attention-card-headline font-semibold leading-tight tracking-tight text-foreground",
 							compact ? "text-xl" : "text-2xl",
 						)}
 					>
@@ -69,14 +69,14 @@ export function AttentionCard({
 					</h3>
 					<p
 						className={cn(
-							"mt-2 leading-relaxed text-text-secondary",
+							"attention-card-summary mt-2 leading-relaxed text-text-secondary",
 							compact ? "line-clamp-1 text-sm" : "text-base",
 						)}
 					>
 						{signal.summary}
 					</p>
 				</div>
-				<div className="flex items-center justify-between gap-4 text-left @min-[520px]:block @min-[520px]:text-right">
+				<div className="attention-card-evidence flex items-center justify-between gap-4 text-left @min-[520px]:block @min-[520px]:text-right">
 					<div className="text-[0.68rem] uppercase tracking-[0.12em] text-muted-foreground">
 						Evidence
 					</div>
@@ -91,14 +91,14 @@ export function AttentionCard({
 				</div>
 			</div>
 
-			<div className="mt-4 flex items-start gap-2 border-t border-border/40 pt-3 text-sm text-foreground">
+			<div className="attention-card-next mt-3 flex items-start gap-2 border-t border-border/40 pt-2 text-sm text-foreground">
 				<CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-accent-primary" />
-				<span>
+				<span className="attention-card-next-text min-w-0">
 					<span className="font-semibold">Next:</span> {signal.suggestedAction}
 				</span>
 			</div>
 
-			<div className="mt-3 flex flex-wrap items-center gap-2">
+			<div className="attention-card-footer mt-auto flex flex-wrap items-center gap-2 pt-2">
 				{signal.conversationExternalIds.slice(0, 4).map((externalId) => {
 					const href = buildIntercomCaseUrl(appUrl, {
 						externalId,
@@ -131,8 +131,8 @@ export function AttentionCard({
 					);
 				})}
 				{assignee ? (
-					<span className="inline-flex items-center gap-2 rounded-full bg-background/65 py-1 pl-1 pr-2.5 text-xs text-muted-foreground">
-						<Avatar className="h-6 w-6 shrink-0 border border-border/60 bg-white">
+					<span className="attention-card-assignee inline-flex min-w-0 items-center gap-2 rounded-full bg-background/65 py-1 pl-1 pr-2.5 text-xs text-muted-foreground">
+						<Avatar className="attention-card-assignee-avatar h-6 w-6 shrink-0 border border-border/60 bg-white">
 							<AvatarImage
 								src={signal.assigneeAvatarUrl ?? undefined}
 								alt=""
@@ -145,7 +145,7 @@ export function AttentionCard({
 								{assignee.charAt(0).toUpperCase()}
 							</AvatarFallback>
 						</Avatar>
-						<span>
+						<span className="min-w-0 truncate">
 							Assigned to{" "}
 							<strong className="font-semibold text-foreground">
 								{assignee}
@@ -158,7 +158,7 @@ export function AttentionCard({
 					.map((reason) => (
 						<span
 							key={reason}
-							className="rounded-md bg-background/65 px-2 py-1 text-xs text-muted-foreground"
+							className="attention-card-reason rounded-md bg-background/65 px-2 py-1 text-xs text-muted-foreground"
 						>
 							{reason}
 						</span>
