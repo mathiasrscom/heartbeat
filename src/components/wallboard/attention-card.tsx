@@ -6,6 +6,7 @@ import {
 	Headphones,
 	Users,
 } from "lucide-react";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { buildIntercomCaseUrl } from "@/lib/intercom-links";
 import type { CustomerAttentionSignal } from "@/lib/support-health/types";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,7 @@ export function AttentionCard({
 }) {
 	const owner = ownerConfig[signal.owner];
 	const OwnerIcon = owner.icon;
+	const assignee = signal.assigneeName?.trim() || null;
 	return (
 		<article
 			className={cn(
@@ -108,20 +110,49 @@ export function AttentionCard({
 							href={href}
 							target="_blank"
 							rel="noreferrer"
-							className="inline-flex items-center gap-1 font-mono text-sm font-semibold text-accent-primary hover:text-accent-hover"
+							className={cn(
+								"inline-flex min-w-0 max-w-full items-center gap-1 font-mono font-semibold text-accent-primary hover:text-accent-hover",
+								compact ? "text-xs" : "text-sm",
+							)}
 						>
-							Case #{externalId}
-							<ArrowUpRight className="h-3.5 w-3.5" />
+							<span className="min-w-0 break-all">Case #{externalId}</span>
+							<ArrowUpRight className="h-3.5 w-3.5 shrink-0" />
 						</a>
 					) : (
 						<span
 							key={externalId}
-							className="font-mono text-sm text-muted-foreground"
+							className={cn(
+								"min-w-0 max-w-full break-all font-mono text-muted-foreground",
+								compact ? "text-xs" : "text-sm",
+							)}
 						>
 							Case #{externalId}
 						</span>
 					);
 				})}
+				{assignee ? (
+					<span className="inline-flex items-center gap-2 rounded-full bg-background/65 py-1 pl-1 pr-2.5 text-xs text-muted-foreground">
+						<Avatar className="h-6 w-6 shrink-0 border border-border/60 bg-white">
+							<AvatarImage
+								src={signal.assigneeAvatarUrl ?? undefined}
+								alt=""
+								className={cn(
+									"object-cover",
+									assignee.toLowerCase() === "fin" && "p-1",
+								)}
+							/>
+							<AvatarFallback className="bg-accent-soft text-[0.65rem] font-semibold text-foreground">
+								{assignee.charAt(0).toUpperCase()}
+							</AvatarFallback>
+						</Avatar>
+						<span>
+							Assigned to{" "}
+							<strong className="font-semibold text-foreground">
+								{assignee}
+							</strong>
+						</span>
+					</span>
+				) : null}
 				{signal.reasons
 					.filter((reason) => reason !== "no clear owner")
 					.map((reason) => (

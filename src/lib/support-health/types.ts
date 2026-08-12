@@ -183,6 +183,7 @@ export interface CustomerAttentionSignal {
 	affectedCustomerCount: number;
 	contactName: string | null;
 	assigneeName: string | null;
+	assigneeAvatarUrl: string | null;
 	updatedAt: string;
 }
 

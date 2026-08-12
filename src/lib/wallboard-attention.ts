@@ -262,6 +262,7 @@ function buildCustomerSignal(ranked: RankedCase): CustomerAttentionSignal {
 		affectedCustomerCount: 1,
 		contactName: item.contactName?.trim() || null,
 		assigneeName: item.assigneeName?.trim() || null,
+		assigneeAvatarUrl: item.assigneeAvatarUrl,
 		updatedAt: item.updatedAt.toISOString(),
 	};
 }
@@ -339,6 +340,7 @@ function buildProductSignals(cases: SupportCaseRecord[], now: Date) {
 					affectedCustomerCount: Math.max(customers.size, 1),
 					contactName: null,
 					assigneeName: null,
+					assigneeAvatarUrl: null,
 					updatedAt: latest.updatedAt.toISOString(),
 				} satisfies CustomerAttentionSignal,
 			};

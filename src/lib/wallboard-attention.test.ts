@@ -62,6 +62,10 @@ describe("buildCustomerAttentionSummary", () => {
 			headline: "Acme appears blocked",
 			conversationExternalIds: ["123"],
 		});
+		expect(result.customerSignals[0]).toMatchObject({
+			assigneeName: "Maria",
+			assigneeAvatarUrl: null,
+		});
 		expect(result.customerSignals[0]?.reasons).toContain(
 			"customer may be blocked",
 		);
