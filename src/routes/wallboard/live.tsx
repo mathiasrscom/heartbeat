@@ -200,12 +200,12 @@ function TeammateLoad({ teammates }: { teammates: LiveWallboardTeammate[] }) {
 								{teammate.name}
 							</div>
 							<div className="mt-0.5 text-xs text-muted-foreground">
-								Open cases
+								Active cases
 							</div>
 						</div>
 					</div>
 					<div className="text-3xl font-semibold tabular-nums text-foreground">
-						{teammate.openCaseCount}
+						{teammate.activeCaseCount}
 					</div>
 				</div>
 			))}

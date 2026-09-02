@@ -338,7 +338,7 @@ export interface WallboardTeammateOption {
 }
 
 export interface LiveWallboardTeammate extends WallboardTeammateOption {
-	openCaseCount: number;
+	activeCaseCount: number;
 }
 
 export interface LiveWallboardData {

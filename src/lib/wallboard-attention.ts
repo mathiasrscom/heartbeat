@@ -121,7 +121,7 @@ interface RankedCase {
 	hasConfidenceRisk: boolean;
 }
 
-function isSupportActionable(item: SupportCaseRecord) {
+export function isSupportActionable(item: SupportCaseRecord) {
 	if (
 		item.nextActionOwner &&
 		item.nextActionOwner !== "support" &&
