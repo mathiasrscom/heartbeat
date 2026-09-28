@@ -1,6 +1,14 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { format, formatDistanceToNowStrict } from "date-fns";
-import { HeartPulse, Radar, Settings2 } from "lucide-react";
+import {
+	Ghost,
+	HeartPulse,
+	MoonStar,
+	Radar,
+	Settings2,
+	Snowflake,
+	TreePine,
+} from "lucide-react";
 import {
 	createContext,
 	type RefObject,
@@ -12,6 +20,10 @@ import { useSettingsDialog } from "@/components/settings-dialog-provider";
 import { panelSurfaceClassName } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { shouldReloadForNewDeployment } from "@/lib/wallboard-deployment-refresh";
+import {
+	resolveWallboardSeasonalTheme,
+	type WallboardSeasonalTheme,
+} from "@/lib/wallboard-seasonal-theme";
 
 /**
  * Page indicator mount (from PaginatedContent).
@@ -29,6 +41,8 @@ interface WallboardShellProps {
 	showcase?: React.ReactNode;
 	tickerItems?: string[];
 	theme?: "light" | "dark";
+	seasonalTheme?: WallboardSeasonalTheme;
+	seasonalAnimations?: boolean;
 	children: React.ReactNode;
 }
 
@@ -41,11 +55,14 @@ export function WallboardShell({
 	showcase,
 	tickerItems,
 	theme = "dark",
+	seasonalTheme = "off",
+	seasonalAnimations = true,
 	children,
 }: WallboardShellProps) {
 	const refreshedDate = refreshedAt ? new Date(refreshedAt) : null;
 	const location = useLocation();
 	const { isSettingsOpen, openSettings } = useSettingsDialog();
+	const activeSeasonalTheme = resolveWallboardSeasonalTheme(seasonalTheme);
 
 	useEffect(() => {
 		if (import.meta.env.DEV || isSettingsOpen) return;
@@ -78,12 +95,15 @@ export function WallboardShell({
 	return (
 		<div
 			data-wallboard-theme={theme}
+			data-seasonal-theme={activeSeasonalTheme ?? undefined}
+			data-seasonal-animations={seasonalAnimations ? "on" : "off"}
 			className={cn(
-				"h-[100dvh] overflow-hidden bg-bg-app text-foreground dark:bg-background",
+				"relative isolate h-[100dvh] overflow-hidden bg-bg-app text-foreground dark:bg-background",
 				theme !== "light" && "dark",
 			)}
 		>
-			<div className="flex h-full w-full flex-col px-6 py-5 xl:px-8">
+			<SeasonalDecorations theme={activeSeasonalTheme} />
+			<div className="relative z-10 flex h-full w-full flex-col px-6 py-5 xl:px-8">
 				<header className="border-b border-border/40 pb-3">
 					<div className="flex items-center justify-between">
 						<div className="flex items-baseline gap-4">
@@ -158,6 +178,74 @@ export function WallboardShell({
 				<main className="min-h-0 flex-1 overflow-hidden pt-5">{children}</main>
 				<TickerTape items={tickerItems ?? []} />
 			</div>
+		</div>
+	);
+}
+
+function SeasonalDecorations({
+	theme,
+}: {
+	theme: ReturnType<typeof resolveWallboardSeasonalTheme>;
+}) {
+	if (!theme) return null;
+
+	const decorations =
+		theme === "halloween"
+			? [
+					{ id: "ghost-left", Icon: Ghost },
+					{ id: "moon-left", Icon: MoonStar },
+					{ id: "ghost-center", Icon: Ghost },
+					{ id: "moon-right", Icon: MoonStar },
+					{ id: "ghost-right", Icon: Ghost },
+					{ id: "moon-far-right", Icon: MoonStar },
+					{ id: "ghost-far-left", Icon: Ghost },
+					{ id: "ghost-far-right", Icon: Ghost },
+				]
+			: [
+					{ id: "snow-left", Icon: Snowflake },
+					{ id: "tree-left", Icon: TreePine },
+					{ id: "snow-center", Icon: Snowflake },
+					{ id: "tree-right", Icon: TreePine },
+					{ id: "snow-right", Icon: Snowflake },
+					{ id: "snow-far-right", Icon: Snowflake },
+					{ id: "tree-far-left", Icon: TreePine },
+					{ id: "snow-far-left", Icon: Snowflake },
+					{ id: "tree-far-right", Icon: TreePine },
+				];
+
+	return (
+		<div className="wallboard-seasonal-decor" aria-hidden="true">
+			<div className="wallboard-seasonal-glow" />
+			<div className="wallboard-seasonal-garland">
+				{[
+					"garland-1",
+					"garland-2",
+					"garland-3",
+					"garland-4",
+					"garland-5",
+					"garland-6",
+					"garland-7",
+					"garland-8",
+					"garland-9",
+					"garland-10",
+					"garland-11",
+					"garland-12",
+				].map((id) => (
+					<span key={id} />
+				))}
+			</div>
+			<div className="wallboard-seasonal-corner wallboard-seasonal-corner-left" />
+			<div className="wallboard-seasonal-corner wallboard-seasonal-corner-right" />
+			{decorations.map(({ id, Icon }, index) => (
+				<Icon
+					key={id}
+					className="wallboard-seasonal-icon"
+					style={{
+						left: `${7 + index * (86 / Math.max(1, decorations.length - 1))}%`,
+						animationDelay: `${index * -1.7}s`,
+					}}
+				/>
+			))}
 		</div>
 	);
 }

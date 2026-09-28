@@ -1,3 +1,4 @@
+import type { WallboardSeasonalTheme } from "../wallboard-seasonal-theme";
 import type { SupportPerformanceTargets } from "./targets";
 
 export type SupportHealthStatus = "green" | "yellow" | "red";
@@ -338,7 +339,7 @@ export interface WallboardTeammateOption {
 }
 
 export interface LiveWallboardTeammate extends WallboardTeammateOption {
-	openCaseCount: number;
+	activeCaseCount: number;
 }
 
 export interface LiveWallboardData {
@@ -365,6 +366,8 @@ export interface LiveWallboardData {
 	volumeSlaSeries30d: DailyVolumeSlaPoint[];
 	refreshedAt: string;
 	wallboardTheme: "light" | "dark";
+	wallboardSeasonalTheme: WallboardSeasonalTheme;
+	wallboardSeasonalAnimations: boolean;
 	insights: import("@/lib/wallboard-insights").ProductInsight[];
 	attention: CustomerAttentionSummary;
 }
@@ -458,6 +461,8 @@ export interface TrendsWallboardData {
 	lookupCases: CaseLookupItem[];
 	refreshedAt: string;
 	wallboardTheme: "light" | "dark";
+	wallboardSeasonalTheme: WallboardSeasonalTheme;
+	wallboardSeasonalAnimations: boolean;
 	insights: import("@/lib/wallboard-insights").ProductInsight[];
 	npsSummary: NpsPeriodSummary;
 	npsSeries: TrendPoint[];

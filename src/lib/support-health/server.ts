@@ -6,13 +6,17 @@ import {
 	getDefaultIntercomAppUrl,
 	normalizeIntercomAppUrl,
 } from "@/lib/intercom-links";
-import { buildCustomerAttentionSummary } from "@/lib/wallboard-attention";
+import {
+	buildCustomerAttentionSummary,
+	isSupportActionable,
+} from "@/lib/wallboard-attention";
 import { readLiveWallboardFocusPlan } from "@/lib/wallboard-focus-plan";
 import {
 	buildDeterministicInsights,
 	readWallboardInsights,
 } from "@/lib/wallboard-insights";
 import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
+import { normalizeWallboardSeasonalTheme } from "@/lib/wallboard-seasonal-theme";
 import { readWallboardTickerMessages } from "@/lib/wallboard-ticker-messages";
 import {
 	buildCxSeries,
@@ -439,7 +443,7 @@ export function resolveSupportNextActionOwner(
 
 	const normalizedStates = stateCandidates
 		.filter((value): value is string => typeof value === "string")
-		.map((value) => value.toLowerCase());
+		.map((value) => value.toLowerCase().replace(/[_-]+/g, " "));
 
 	const snoozedUntil = toDate(getNestedValue(raw, ["snoozed_until"]));
 	if (snoozedUntil !== null && snoozedUntil.getTime() > Date.now()) {
@@ -470,6 +474,8 @@ export function resolveSupportNextActionOwner(
 			(value) =>
 				value.includes("waiting on other") ||
 				value.includes("waiting for other") ||
+				value.includes("waiting on colleague") ||
+				value.includes("waiting for colleague") ||
 				value.includes("third party"),
 		)
 	) {
@@ -859,18 +865,6 @@ export async function loadSupportCases() {
 				avatarUrl: row.avatarUrl ?? null,
 			});
 		}
-		const trackedTeammateInboxOpenCounts = new Map<string, number>();
-		for (const row of rows) {
-			if (row.status !== "open") continue;
-			const assigneeExternalId = row.assigneeExternalId?.trim();
-			if (!assigneeExternalId) continue;
-
-			trackedTeammateInboxOpenCounts.set(
-				assigneeExternalId,
-				(trackedTeammateInboxOpenCounts.get(assigneeExternalId) ?? 0) + 1,
-			);
-		}
-
 		return {
 			now,
 			lastSyncAt: syncRows[0]?.lastSyncAt ?? null,
@@ -882,6 +876,11 @@ export async function loadSupportCases() {
 				settings.wallboardTheme === "light"
 					? ("light" as const)
 					: ("dark" as const),
+			wallboardSeasonalTheme: normalizeWallboardSeasonalTheme(
+				settings.wallboardSeasonalTheme,
+			),
+			wallboardSeasonalAnimations:
+				settings.wallboardSeasonalAnimations !== false,
 			wallboardPulsePeriod: normalizeWallboardPulsePeriod(
 				settings.wallboardPulsePeriod,
 			),
@@ -907,7 +906,6 @@ export async function loadSupportCases() {
 			cases,
 			npsRecords,
 			contactProducts,
-			trackedTeammateInboxOpenCounts,
 			teammateLookup,
 		};
 	} catch (error) {
@@ -919,6 +917,8 @@ export async function loadSupportCases() {
 			intercomAppUrl: getDefaultIntercomAppUrl(),
 			supportTargets: readSupportTargetsFromSettings(null),
 			wallboardTheme: "dark" as const,
+			wallboardSeasonalTheme: "off" as const,
+			wallboardSeasonalAnimations: true,
 			wallboardPulsePeriod: "current-week" as const,
 			wallboardProducts: [] as string[],
 			wallboardTrackedTeammates: [] as string[],
@@ -926,7 +926,6 @@ export async function loadSupportCases() {
 			cases: [] as SupportCaseRecord[],
 			npsRecords: [] as NpsRecord[],
 			contactProducts: {} as Record<string, string[]>,
-			trackedTeammateInboxOpenCounts: new Map<string, number>(),
 			teammateLookup: new Map<
 				string,
 				{ name: string; avatarUrl: string | null }
@@ -999,15 +998,15 @@ export function buildTrackedTeammateAssignments(
 	const availableById = new Map(
 		availableTeammates.map((teammate) => [teammate.externalId, teammate]),
 	);
-	const openCounts = new Map<string, number>();
+	const activeCounts = new Map<string, number>();
 
 	for (const item of cases) {
-		if (item.actionableState === "resolved") continue;
+		if (!isSupportActionable(item)) continue;
 		const assigneeExternalId = item.assigneeExternalId?.trim();
 		if (!assigneeExternalId) continue;
-		openCounts.set(
+		activeCounts.set(
 			assigneeExternalId,
-			(openCounts.get(assigneeExternalId) ?? 0) + 1,
+			(activeCounts.get(assigneeExternalId) ?? 0) + 1,
 		);
 	}
 
@@ -1018,44 +1017,10 @@ export function buildTrackedTeammateAssignments(
 		return [
 			{
 				...teammate,
-				openCaseCount: openCounts.get(externalId) ?? 0,
+				activeCaseCount: activeCounts.get(externalId) ?? 0,
 			},
 		];
 	});
-}
-
-export function buildTrackedTeammateInboxAssignments(
-	openCountsByExternalId: Map<string, number>,
-	trackedTeammateIds: string[],
-	availableTeammates: WallboardTeammateOption[],
-): LiveWallboardTeammate[] {
-	if (trackedTeammateIds.length === 0 || availableTeammates.length === 0) {
-		return [];
-	}
-
-	const availableById = new Map(
-		availableTeammates.map((teammate) => [teammate.externalId, teammate]),
-	);
-
-	return trackedTeammateIds
-		.flatMap((externalId) => {
-			const teammate = availableById.get(externalId);
-			if (!teammate) return [];
-
-			return [
-				{
-					...teammate,
-					openCaseCount: openCountsByExternalId.get(externalId) ?? 0,
-				},
-			];
-		})
-		.sort((left, right) => {
-			if (right.openCaseCount !== left.openCaseCount) {
-				return right.openCaseCount - left.openCaseCount;
-			}
-
-			return left.name.localeCompare(right.name);
-		});
 }
 
 export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
@@ -1069,10 +1034,11 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				intercomAppUrl,
 				supportTargets,
 				wallboardTheme,
+				wallboardSeasonalTheme,
+				wallboardSeasonalAnimations,
 				wallboardProducts,
 				wallboardTrackedTeammates,
 				availableWallboardTeammates,
-				trackedTeammateInboxOpenCounts,
 			},
 			storedPeopleMoments,
 			storedInsights,
@@ -1093,8 +1059,8 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 		const filteredCases = filterSupportCasesByProduct(cases, selectedProducts, {
 			includeUnknownWhenAll: true,
 		});
-		const trackedTeammates = buildTrackedTeammateInboxAssignments(
-			trackedTeammateInboxOpenCounts,
+		const trackedTeammates = buildTrackedTeammateAssignments(
+			filteredCases,
 			trackedTeammateIds,
 			availableWallboardTeammates,
 		);
@@ -1157,6 +1123,8 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 			availableProducts,
 			selectedProducts,
 			wallboardTheme,
+			wallboardSeasonalTheme,
+			wallboardSeasonalAnimations,
 			insights:
 				storedInsights?.products ??
 				buildDeterministicInsights(cases, availableProducts).products,
@@ -1186,6 +1154,8 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 				intercomAppUrl,
 				supportTargets,
 				wallboardTheme,
+				wallboardSeasonalTheme,
+				wallboardSeasonalAnimations,
 				wallboardProducts,
 				wallboardPulsePeriod,
 				npsRecords,
@@ -1363,6 +1333,8 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			availableProducts,
 			selectedProducts,
 			wallboardTheme,
+			wallboardSeasonalTheme,
+			wallboardSeasonalAnimations,
 			insights:
 				storedInsights?.products ??
 				buildDeterministicInsights(cases, availableProducts).products,

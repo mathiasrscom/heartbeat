@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
 	buildTrackedTeammateAssignments,
-	buildTrackedTeammateInboxAssignments,
 	resolveSupportCaseSubtype,
 	resolveSupportNextActionOwner,
 } from "./server";
@@ -73,6 +72,14 @@ describe("support health server normalization", () => {
 		).toBe("other");
 		expect(
 			resolveSupportNextActionOwner({
+				ticket: { state: "waiting_on_colleagues" },
+			}),
+		).toBe("other");
+		expect(
+			resolveSupportNextActionOwner({ state: "waiting_on_customer" }),
+		).toBe("customer");
+		expect(
+			resolveSupportNextActionOwner({
 				ticket: { ticket_custom_state_admin_label: "Waiting for support" },
 			}),
 		).toBe("support");
@@ -104,7 +111,7 @@ describe("support health server normalization", () => {
 		expect(resolveSupportCaseSubtype("ticket", {})).toBe("ticket");
 	});
 
-	it("builds tracked teammate open-case counts from scoped actionable work", () => {
+	it("builds tracked teammate active-case counts from scoped actionable work", () => {
 		const rows = buildTrackedTeammateAssignments(
 			[
 				makeCase({
@@ -120,6 +127,22 @@ describe("support health server normalization", () => {
 					assigneeExternalId: "kasper",
 					assigneeName: "Kasper Christensen",
 					actionableState: "resolved",
+				}),
+				makeCase({
+					id: "waiting-development",
+					externalId: "waiting-development",
+					assigneeExternalId: "kasper",
+					assigneeName: "Kasper Christensen",
+					actionableState: "awaiting-customer",
+					nextActionOwner: "development",
+				}),
+				makeCase({
+					id: "waiting-colleague",
+					externalId: "waiting-colleague",
+					assigneeExternalId: "kasper",
+					assigneeName: "Kasper Christensen",
+					actionableState: "awaiting-customer",
+					nextActionOwner: "other",
 				}),
 				makeCase({
 					id: "c",
@@ -152,55 +175,14 @@ describe("support health server normalization", () => {
 				name: "Kasper Christensen",
 				avatarUrl: null,
 				isAvailable: true,
-				openCaseCount: 1,
+				activeCaseCount: 1,
 			},
 			{
 				externalId: "ellinor",
 				name: "Ellinor",
 				avatarUrl: null,
 				isAvailable: false,
-				openCaseCount: 1,
-			},
-		]);
-	});
-
-	it("builds tracked teammate counts from global inbox counters", () => {
-		const rows = buildTrackedTeammateInboxAssignments(
-			new Map([
-				["kasper", 9],
-				["ellinor", 4],
-			]),
-			["kasper", "ellinor"],
-			[
-				{
-					externalId: "ellinor",
-					name: "Ellinor",
-					avatarUrl: null,
-					isAvailable: false,
-				},
-				{
-					externalId: "kasper",
-					name: "Kasper Christensen",
-					avatarUrl: null,
-					isAvailable: true,
-				},
-			],
-		);
-
-		expect(rows).toEqual([
-			{
-				externalId: "kasper",
-				name: "Kasper Christensen",
-				avatarUrl: null,
-				isAvailable: true,
-				openCaseCount: 9,
-			},
-			{
-				externalId: "ellinor",
-				name: "Ellinor",
-				avatarUrl: null,
-				isAvailable: false,
-				openCaseCount: 4,
+				activeCaseCount: 1,
 			},
 		]);
 	});
