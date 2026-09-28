@@ -25,6 +25,10 @@ import {
 	type TickerLlmConfig,
 	type WallboardLlmProvider,
 } from "./wallboard-llm-config";
+import {
+	normalizeWallboardSeasonalTheme,
+	type WallboardSeasonalTheme,
+} from "./wallboard-seasonal-theme";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -57,6 +61,8 @@ export type WallboardPulsePeriod = Exclude<SupportPeriodPreset, "custom">;
 
 interface SaveWallboardDisplayInput {
 	theme: WallboardTheme;
+	seasonalTheme: WallboardSeasonalTheme;
+	seasonalAnimations: boolean;
 	pulsePeriod: WallboardPulsePeriod;
 	products: string[];
 	trackedTeammates: string[];
@@ -132,6 +138,8 @@ export interface IntercomConnectionState {
 	supportTargets: SupportTargetsConfig;
 	supportTargetProducts: string[];
 	wallboardTheme: WallboardTheme;
+	wallboardSeasonalTheme: WallboardSeasonalTheme;
+	wallboardSeasonalAnimations: boolean;
 	wallboardPulsePeriod: WallboardPulsePeriod;
 	wallboardProducts: string[];
 	wallboardTrackedTeammates: string[];
@@ -275,6 +283,8 @@ function emptyState(
 			overrides.supportTargets ?? normalizeSupportTargetsConfig(null),
 		supportTargetProducts: overrides.supportTargetProducts ?? [],
 		wallboardTheme: overrides.wallboardTheme ?? "dark",
+		wallboardSeasonalTheme: overrides.wallboardSeasonalTheme ?? "off",
+		wallboardSeasonalAnimations: overrides.wallboardSeasonalAnimations ?? true,
 		wallboardPulsePeriod: overrides.wallboardPulsePeriod ?? "current-week",
 		wallboardProducts: overrides.wallboardProducts ?? [],
 		wallboardTrackedTeammates: overrides.wallboardTrackedTeammates ?? [],
@@ -459,6 +469,10 @@ async function readIntercomState(): Promise<IntercomConnectionState> {
 		supportTargets,
 		supportTargetProducts: listSupportTargetProducts(supportTargets),
 		wallboardTheme: normalizeWallboardTheme(settings.wallboardTheme),
+		wallboardSeasonalTheme: normalizeWallboardSeasonalTheme(
+			settings.wallboardSeasonalTheme,
+		),
+		wallboardSeasonalAnimations: settings.wallboardSeasonalAnimations !== false,
 		wallboardPulsePeriod: normalizeWallboardPulsePeriod(
 			settings.wallboardPulsePeriod,
 		),
@@ -1049,6 +1063,8 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 	.inputValidator((data: SaveWallboardDisplayInput) => data)
 	.handler(async ({ data }): Promise<IntercomMutationResult> => {
 		const theme = normalizeWallboardTheme(data.theme);
+		const seasonalTheme = normalizeWallboardSeasonalTheme(data.seasonalTheme);
+		const seasonalAnimations = data.seasonalAnimations !== false;
 		const pulsePeriod = normalizeWallboardPulsePeriod(data.pulsePeriod);
 		const products = normalizeWallboardProducts(data.products);
 		const trackedTeammates = normalizeWallboardTrackedTeammates(
@@ -1073,6 +1089,8 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 			settings: {
 				...existingSettings,
 				wallboardTheme: theme,
+				wallboardSeasonalTheme: seasonalTheme,
+				wallboardSeasonalAnimations: seasonalAnimations,
 				wallboardPulsePeriod: pulsePeriod,
 				wallboardProducts: products,
 				wallboardTrackedTeammates: trackedTeammates,
@@ -1093,7 +1111,7 @@ export const saveWallboardDisplaySettings = createServerFn({ method: "POST" })
 		}
 
 		return {
-			message: `Wallboard display updated: ${theme} theme, ${pulsePeriod.replaceAll("-", " ")} Pulse period, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
+			message: `Wallboard display updated: ${theme} mode, ${seasonalTheme} seasonal theme, ${pulsePeriod.replaceAll("-", " ")} Pulse period, ${products.length === 0 ? "all products" : `${products.length} product${products.length === 1 ? "" : "s"}`}, ${trackedTeammates.length} tracked teammate${trackedTeammates.length === 1 ? "" : "s"}.`,
 			state: await readIntercomState(),
 		};
 	});

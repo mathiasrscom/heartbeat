@@ -274,6 +274,262 @@ code {
     transform: translate3d(-50%, 0, 0);
   }
 }
+
+/* Seasonal wallboard themes retain the selected light/dark foundation while
+   shifting accents and adding a quiet, non-interactive decorative layer. */
+[data-seasonal-theme='halloween'] {
+  --bg-app: #fff7ed;
+  --bg-canvas: #fffaf5;
+  --bg-surface: #fff1e6;
+  --bg-surface-elevated: #fff7ed;
+  --bg-surface-hover: #ffedd5;
+  --border-subtle: #fed7aa;
+  --border-default: #fdba74;
+  --border-strong: #f97316;
+  --accent-primary: #f97316;
+  --accent-hover: #fb923c;
+  --accent-active: #ea580c;
+  --accent-soft: color-mix(in srgb, #f97316 14%, var(--bg-surface));
+  --accent-soft-border: color-mix(in srgb, #f97316 40%, var(--border-default));
+  --chart-1: #f97316;
+  --chart-2: #a855f7;
+  --chart-3: #84cc16;
+  --chart-4: #facc15;
+  --chart-5: #ec4899;
+  background-image:
+    radial-gradient(circle at 8% 100%, rgb(249 115 22 / 18%), transparent 32%),
+    radial-gradient(circle at 92% 8%, rgb(168 85 247 / 15%), transparent 30%);
+}
+
+[data-seasonal-theme='christmas'] {
+  --bg-app: #f0fdf4;
+  --bg-canvas: #f8fff9;
+  --bg-surface: #ecfdf3;
+  --bg-surface-elevated: #f7fff9;
+  --bg-surface-hover: #dcfce7;
+  --border-subtle: #bbf7d0;
+  --border-default: #86efac;
+  --border-strong: #16a34a;
+  --accent-primary: #16a34a;
+  --accent-hover: #22c55e;
+  --accent-active: #15803d;
+  --accent-soft: color-mix(in srgb, #16a34a 14%, var(--bg-surface));
+  --accent-soft-border: color-mix(in srgb, #16a34a 40%, var(--border-default));
+  --chart-1: #dc2626;
+  --chart-2: #16a34a;
+  --chart-3: #eab308;
+  --chart-4: #0f766e;
+  --chart-5: #f8fafc;
+  background-image:
+    radial-gradient(circle at 6% 4%, rgb(220 38 38 / 18%), transparent 28%),
+    radial-gradient(circle at 94% 100%, rgb(22 163 74 / 20%), transparent 34%);
+}
+
+.dark[data-seasonal-theme='halloween'] {
+  --bg-app: #160d1f;
+  --bg-canvas: #1d1226;
+  --bg-surface: #26172f;
+  --bg-surface-elevated: #311c3d;
+  --bg-surface-hover: #3b2149;
+  --border-subtle: #452750;
+  --border-default: #63336f;
+  --border-strong: #f97316;
+}
+
+.dark[data-seasonal-theme='christmas'] {
+  --bg-app: #071b13;
+  --bg-canvas: #0a2118;
+  --bg-surface: #0e2a1f;
+  --bg-surface-elevated: #123526;
+  --bg-surface-hover: #17432f;
+  --border-subtle: #1b4935;
+  --border-default: #276749;
+  --border-strong: #22c55e;
+}
+
+.wallboard-seasonal-decor {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.wallboard-seasonal-glow {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 8px;
+  background: linear-gradient(
+    90deg,
+    var(--accent-primary),
+    var(--chart-2),
+    var(--accent-primary),
+    var(--chart-2),
+    var(--accent-primary)
+  );
+  opacity: 0.95;
+  box-shadow: 0 0 32px color-mix(in srgb, var(--accent-primary) 65%, transparent);
+}
+
+.wallboard-seasonal-garland {
+  position: absolute;
+  top: 0.65rem;
+  left: 2.5rem;
+  right: 2.5rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  border-top: 2px solid color-mix(in srgb, var(--accent-primary) 45%, transparent);
+  opacity: 0.82;
+}
+
+.wallboard-seasonal-garland span {
+  display: block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-top: -0.15rem;
+  background: var(--accent-primary);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent-primary) 80%, transparent);
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-garland span {
+  border-radius: 50% 50% 45% 45%;
+  animation: christmas-twinkle 1.8s ease-in-out infinite alternate;
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-garland span:nth-child(3n + 2) {
+  background: #dc2626;
+  box-shadow: 0 0 12px rgb(220 38 38 / 75%);
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-garland span:nth-child(3n) {
+  background: #eab308;
+  box-shadow: 0 0 12px rgb(234 179 8 / 75%);
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-garland span {
+  width: 0;
+  height: 0;
+  border-top: 0.9rem solid #f97316;
+  border-right: 0.55rem solid transparent;
+  border-left: 0.55rem solid transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-garland span:nth-child(even) {
+  border-top-color: #a855f7;
+}
+
+.wallboard-seasonal-corner {
+  position: absolute;
+  top: 2.1rem;
+  font-size: clamp(2.5rem, 5vw, 4.75rem);
+  line-height: 1;
+  opacity: 0.35;
+  filter: drop-shadow(0 0 16px color-mix(in srgb, var(--accent-primary) 60%, transparent));
+}
+
+.wallboard-seasonal-corner-left {
+  left: 1.35rem;
+  transform: rotate(-8deg);
+}
+
+.wallboard-seasonal-corner-right {
+  right: 1.35rem;
+  transform: rotate(8deg);
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-corner-left::before {
+  content: '🕸️';
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-corner-right::before {
+  content: '🦇';
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-corner-left::before {
+  content: '🎄';
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-corner-right::before {
+  content: '🎅';
+}
+
+.wallboard-seasonal-icon {
+  position: absolute;
+  top: -2.5rem;
+  width: 2rem;
+  height: 2rem;
+  color: var(--accent-primary);
+  opacity: 0.48;
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent-primary) 70%, transparent));
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-icon {
+  animation: halloween-float 11s ease-in-out infinite;
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-icon {
+  animation: christmas-fall 15s linear infinite;
+}
+
+[data-seasonal-animations='off'] .wallboard-seasonal-icon {
+  top: 4.5rem;
+  animation: none;
+}
+
+[data-seasonal-animations='off'] .wallboard-seasonal-garland span {
+  animation: none;
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-decor::after,
+[data-seasonal-theme='christmas'] .wallboard-seasonal-decor::after {
+  position: absolute;
+  right: 2.25rem;
+  bottom: 1.25rem;
+  z-index: 0;
+  font-size: clamp(3rem, 7vw, 6rem);
+  line-height: 1;
+  opacity: 0.16;
+  filter: drop-shadow(0 0 20px color-mix(in srgb, var(--accent-primary) 55%, transparent));
+}
+
+[data-seasonal-theme='halloween'] .wallboard-seasonal-decor::after {
+  content: '🎃  👻';
+}
+
+[data-seasonal-theme='christmas'] .wallboard-seasonal-decor::after {
+  content: '🎁  🎄';
+}
+
+@keyframes halloween-float {
+  0% { transform: translate3d(-12px, 0, 0) rotate(-8deg); }
+  45% { transform: translate3d(18px, 42vh, 0) rotate(10deg); }
+  100% { transform: translate3d(-8px, 105vh, 0) rotate(-5deg); }
+}
+
+@keyframes christmas-fall {
+  0% { transform: translate3d(-10px, 0, 0) rotate(0deg); }
+  50% { transform: translate3d(18px, 52vh, 0) rotate(180deg); }
+  100% { transform: translate3d(-4px, 105vh, 0) rotate(360deg); }
+}
+
+@keyframes christmas-twinkle {
+  from { opacity: 0.45; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wallboard-seasonal-icon {
+    top: 4.5rem;
+    animation: none !important;
+  }
+
+  .wallboard-seasonal-garland span {
+    animation: none !important;
+  }
+}
 /* Compact Attention cards are placed in equal-height TV rows. Respond to the
    card's actual height so identity and case details never fall below its edge. */
 .wallboard-live-container {
@@ -308,16 +564,14 @@ code {
 	}
 }
 
-/* Fill equal TV rows only when both columns are visible and vertical space is
-   genuinely constrained. Tall or stacked layouts keep content-sized cards. */
+/* Keep action cards content-sized on TV layouts. Stretching a single grid row
+   made one action consume the whole column and left no useful visual rhythm
+   for additional ranked actions. */
 @container live (min-width: 1000px) and (max-height: 900px) {
 	.attention-card-grid {
-		height: 100%;
-		grid-auto-rows: minmax(0, 1fr);
-	}
-
-	.attention-card-compact {
-		container-type: size;
+		align-content: start;
+		height: auto;
+		grid-auto-rows: max-content;
 	}
 }
 

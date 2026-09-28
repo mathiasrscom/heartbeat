@@ -74,6 +74,8 @@ type LiveWallboardPayload = Omit<
 	| "trackedTeammates"
 	| "focusPlan"
 	| "wallboardTheme"
+	| "wallboardSeasonalTheme"
+	| "wallboardSeasonalAnimations"
 	| "insights"
 	| "attention"
 >;
@@ -88,6 +90,8 @@ type TrendsWallboardPayload = Omit<
 	| "availableProducts"
 	| "selectedProducts"
 	| "wallboardTheme"
+	| "wallboardSeasonalTheme"
+	| "wallboardSeasonalAnimations"
 	| "insights"
 	| "npsSummary"
 	| "npsSeries"

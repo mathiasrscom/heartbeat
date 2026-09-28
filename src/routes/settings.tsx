@@ -47,6 +47,7 @@ import { readIntercomNpsExport } from "@/lib/intercom-nps-export";
 import type { SupportPerformanceTargets } from "@/lib/support-health/targets";
 import { cn } from "@/lib/utils";
 import { DEFAULT_CODEX_MODEL } from "@/lib/wallboard-llm-config";
+import type { WallboardSeasonalTheme } from "@/lib/wallboard-seasonal-theme";
 
 type TickerProvider = "ollama" | "codex";
 
@@ -153,6 +154,10 @@ export function SettingsDialogContent({
 	const [wallboardTheme, setWallboardTheme] = useState<WallboardTheme>(
 		initialState.wallboardTheme,
 	);
+	const [wallboardSeasonalTheme, setWallboardSeasonalTheme] =
+		useState<WallboardSeasonalTheme>(initialState.wallboardSeasonalTheme);
+	const [wallboardSeasonalAnimations, setWallboardSeasonalAnimations] =
+		useState(initialState.wallboardSeasonalAnimations);
 	const [wallboardPulsePeriod, setWallboardPulsePeriod] =
 		useState<WallboardPulsePeriod>(initialState.wallboardPulsePeriod);
 	const [wallboardProducts, setWallboardProducts] = useState<string[]>(
@@ -216,6 +221,8 @@ export function SettingsDialogContent({
 	const supportTargetsAutosaveKey = JSON.stringify(supportTargets);
 	const displayAutosaveKey = JSON.stringify({
 		wallboardTheme,
+		wallboardSeasonalTheme,
+		wallboardSeasonalAnimations,
 		wallboardPulsePeriod,
 		wallboardProducts,
 		wallboardTrackedTeammates,
@@ -699,6 +706,8 @@ export function SettingsDialogContent({
 			const result = await saveWallboardDisplay({
 				data: {
 					theme: wallboardTheme,
+					seasonalTheme: wallboardSeasonalTheme,
+					seasonalAnimations: wallboardSeasonalAnimations,
 					pulsePeriod: wallboardPulsePeriod,
 					products: wallboardProducts,
 					trackedTeammates: wallboardTrackedTeammates,
@@ -1501,6 +1510,60 @@ export function SettingsDialogContent({
 											Dark
 										</Button>
 									</div>
+								</div>
+
+								<div className={settingsSubsectionClassName}>
+									<div className="text-xs font-medium text-foreground mb-1">
+										Seasonal theme
+									</div>
+									<div className="text-[10px] text-muted-foreground mb-3">
+										Automatic starts Halloween on 1 October and Christmas on 1
+										December, ending when each month does.
+									</div>
+									<div className="flex flex-wrap gap-2">
+										{(
+											[
+												["off", "Off"],
+												["auto", "Automatic"],
+												["halloween", "Halloween"],
+												["christmas", "Christmas"],
+											] as const
+										).map(([value, label]) => (
+											<Button
+												key={value}
+												size="sm"
+												type="button"
+												aria-pressed={wallboardSeasonalTheme === value}
+												variant={
+													wallboardSeasonalTheme === value
+														? "default"
+														: "outline"
+												}
+												className="h-7 px-3 text-xs"
+												onClick={() => setWallboardSeasonalTheme(value)}
+											>
+												{label}
+											</Button>
+										))}
+									</div>
+									<label className="mt-4 flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border/60 bg-bg-surface/45 px-3 py-2.5">
+										<span>
+											<span className="block text-xs font-medium text-foreground">
+												Seasonal animations
+											</span>
+											<span className="block text-[10px] text-muted-foreground">
+												Animate snow, ghosts, and decorative accents.
+											</span>
+										</span>
+										<input
+											type="checkbox"
+											className="h-4 w-4 accent-primary"
+											checked={wallboardSeasonalAnimations}
+											onChange={(event) =>
+												setWallboardSeasonalAnimations(event.target.checked)
+											}
+										/>
+									</label>
 								</div>
 
 								<div className={settingsSubsectionClassName}>

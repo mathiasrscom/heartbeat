@@ -16,6 +16,7 @@ import {
 	readWallboardInsights,
 } from "@/lib/wallboard-insights";
 import { getEnglishNpsCommentToDisplay } from "@/lib/wallboard-nps-comment-utils";
+import { normalizeWallboardSeasonalTheme } from "@/lib/wallboard-seasonal-theme";
 import { readWallboardTickerMessages } from "@/lib/wallboard-ticker-messages";
 import {
 	buildCxSeries,
@@ -875,6 +876,11 @@ export async function loadSupportCases() {
 				settings.wallboardTheme === "light"
 					? ("light" as const)
 					: ("dark" as const),
+			wallboardSeasonalTheme: normalizeWallboardSeasonalTheme(
+				settings.wallboardSeasonalTheme,
+			),
+			wallboardSeasonalAnimations:
+				settings.wallboardSeasonalAnimations !== false,
 			wallboardPulsePeriod: normalizeWallboardPulsePeriod(
 				settings.wallboardPulsePeriod,
 			),
@@ -911,6 +917,8 @@ export async function loadSupportCases() {
 			intercomAppUrl: getDefaultIntercomAppUrl(),
 			supportTargets: readSupportTargetsFromSettings(null),
 			wallboardTheme: "dark" as const,
+			wallboardSeasonalTheme: "off" as const,
+			wallboardSeasonalAnimations: true,
 			wallboardPulsePeriod: "current-week" as const,
 			wallboardProducts: [] as string[],
 			wallboardTrackedTeammates: [] as string[],
@@ -1026,6 +1034,8 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 				intercomAppUrl,
 				supportTargets,
 				wallboardTheme,
+				wallboardSeasonalTheme,
+				wallboardSeasonalAnimations,
 				wallboardProducts,
 				wallboardTrackedTeammates,
 				availableWallboardTeammates,
@@ -1113,6 +1123,8 @@ export const getLiveWallboard = createServerFn({ method: "GET" }).handler(
 			availableProducts,
 			selectedProducts,
 			wallboardTheme,
+			wallboardSeasonalTheme,
+			wallboardSeasonalAnimations,
 			insights:
 				storedInsights?.products ??
 				buildDeterministicInsights(cases, availableProducts).products,
@@ -1142,6 +1154,8 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 				intercomAppUrl,
 				supportTargets,
 				wallboardTheme,
+				wallboardSeasonalTheme,
+				wallboardSeasonalAnimations,
 				wallboardProducts,
 				wallboardPulsePeriod,
 				npsRecords,
@@ -1319,6 +1333,8 @@ export const getTrendsWallboard = createServerFn({ method: "GET" })
 			availableProducts,
 			selectedProducts,
 			wallboardTheme,
+			wallboardSeasonalTheme,
+			wallboardSeasonalAnimations,
 			insights:
 				storedInsights?.products ??
 				buildDeterministicInsights(cases, availableProducts).products,

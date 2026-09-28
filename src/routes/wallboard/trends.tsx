@@ -70,6 +70,8 @@ export function CustomerPulseWallboard({
 			stale={data.snapshot.stale}
 			tickerItems={[...themes.map((theme) => theme.headline)]}
 			theme={data.wallboardTheme}
+			seasonalTheme={data.wallboardSeasonalTheme}
+			seasonalAnimations={data.wallboardSeasonalAnimations}
 			navigationControl={
 				<PulsePeriodPicker period={toPickerPeriod(data.period.preset)} />
 			}

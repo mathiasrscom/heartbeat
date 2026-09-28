@@ -56,6 +56,8 @@ export function AttentionWallboard({ live }: { live: LiveWallboardData }) {
 			stale={live.snapshot.stale}
 			tickerItems={tickerItems}
 			theme={live.wallboardTheme}
+			seasonalTheme={live.wallboardSeasonalTheme}
+			seasonalAnimations={live.wallboardSeasonalAnimations}
 			showcase={
 				<span className="text-lg font-medium text-muted-foreground">
 					Shared customer priorities
